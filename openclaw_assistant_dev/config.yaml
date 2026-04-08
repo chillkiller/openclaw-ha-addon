@@ -1,5 +1,5 @@
 name: OpenClaw Dev
-version: "2026.4.8-patch1-3"
+version: "2026.4.8-patch1-4"
 slug: openclaw_dev
 description: OpenClaw Dev with subagent fix (chillkiller/openclaw@v2026.4.8-patch1)
 url: https://github.com/chillkiller/OpenClawHomeAssistant
