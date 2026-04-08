@@ -119,7 +119,7 @@ RUN npm config set fund false && npm config set audit false \
     && curl -fsSL https://github.com/chillkiller/openclaw/archive/refs/tags/v2026.4.8-patch1.tar.gz -o openclaw.tar.gz \
     && tar -xzf openclaw.tar.gz \
     && cd openclaw-* \
-    && npm ci \
+    && npm install \
     && npm run build \
     && npm prune --production \
     && npm pack \
