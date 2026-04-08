@@ -114,7 +114,7 @@ USER root
 
 # Install OpenClaw globally from chillkiller fork with subagent fix
 RUN npm config set fund false && npm config set audit false \
-    && npm install -g github:chillkiller/openclaw#v2026.4.8-patch1
+    && npm install -g github:chillkiller/openclaw#v2026.4.8-patch1 --ignore-scripts
 
 # Shell aliases and color options for interactive use
 RUN tee -a /etc/bash.bashrc <<'EOF'
