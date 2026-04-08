@@ -1,0 +1,68 @@
+#!/usr/bin/env bashio
+# OpenClaw Home Assistant Addon Service Script
+
+set -e
+
+# Home Assistant Logging
+bashio::log.info "Starting OpenClaw Ultimate..."
+
+# Config auslesen
+CONFIG_PATH=/data/options.json
+OPENCLAW_VERSION=$(bashio::config 'openclaw_version')
+GATEWAY_PORT=$(bashio::config 'gateway_port')
+CONTROL_UI_PORT=$(bashio::config 'control_ui_port')
+LOG_LEVEL=$(bashio::config 'log_level')
+
+bashio::log.info "OpenClaw Version: ${OPENCLAW_VERSION}"
+bashio::log.info "Gateway Port: ${GATEWAY_PORT}"
+bashio::log.info "Control UI Port: ${CONTROL_UI_PORT}"
+
+# Workspace-Verzeichnis erstellen
+mkdir -p /config/clawd
+mkdir -p /config/.openclaw
+
+# OpenClaw Config prüfen oder erstellen
+if [ ! -f /config/.openclaw/openclaw.json ]; then
+    bashio::log.info "Creating default OpenClaw configuration..."
+    cat > /config/.openclaw/openclaw.json << 'EOF'
+{
+  "gateway": {
+    "mode": "local",
+    "port": 18790,
+    "bind": "loopback",
+    "auth": {
+      "mode": "none"
+    }
+  },
+  "agents": {
+    "defaults": {
+      "workspace": "/config/clawd"
+    }
+  },
+  "memory": {
+    "backend": "qmd"
+  }
+}
+EOF
+fi
+
+# QMD initialisieren falls aktiviert
+if bashio::config.true 'memory.enabled'; then
+    bashio::log.info "Initializing QMD memory backend..."
+    mkdir -p /config/clawd/memory
+    
+    # QMD Collection initialisieren (falls nicht vorhanden)
+    if [ ! -d /config/.openclaw/qmd ]; then
+        mkdir -p /config/.openclaw/qmd
+    fi
+fi
+
+# OpenClaw Gateway starten
+bashio::log.info "Starting OpenClaw Gateway..."
+export HOME=/config
+export OPENCLAW_CONFIG_DIR=/config/.openclaw
+
+exec openclaw gateway \
+    --port ${GATEWAY_PORT} \
+    --bind loopback \
+    --auth none

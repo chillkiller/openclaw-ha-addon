@@ -1,0 +1,61 @@
+{
+  "name": "OpenClaw Beta",
+  "version": "2026.4.8-patch1-1",
+  "slug": "openclaw_beta",
+  "description": "Beta channel for OpenClaw - Includes fixes for subagent spawning and multi-agent systems.",
+  "url": "https://github.com/chillkiller/OpenClawHomeAssistant",
+  "arch": ["aarch64", "amd64", "armv7"],
+  "map": [
+    "config:rw",
+    "ssl:rw",
+    "share:rw",
+    "media:rw"
+  ],
+  "ports": {
+    "18790/tcp": 18790,
+    "18789/tcp": 18789
+  },
+  "ports_description": {
+    "18790/tcp": "OpenClaw Gateway WebSocket",
+    "18789/tcp": "OpenClaw Control UI"
+  },
+  "options": {
+    "openclaw_version": "2026.4.8-patch1",
+    "gateway_port": 18790,
+    "control_ui_port": 18789,
+    "log_level": "info",
+    "multi_agent": {
+      "enabled": true,
+      "orchestrator": "native"
+    },
+    "memory": {
+      "backend": "qmd",
+      "enabled": true
+    }
+  },
+  "schema": {
+    "openclaw_version": "str",
+    "gateway_port": "int",
+    "control_ui_port": "int",
+    "log_level": "list(trace|debug|info|warning|error)",
+    "multi_agent": {
+      "enabled": "bool",
+      "orchestrator": "list(native|paperclip|antfarm)"
+    },
+    "memory": {
+      "backend": "list(qmd|ollama)",
+      "enabled": "bool"
+    }
+  },
+  "image": "chillkiller/{arch}-openclaw-beta",
+  "init": false,
+  "host_network": false,
+  "privileged": [],
+  "apparmor": false,
+  "full_access": false,
+  "stdin": true,
+  "legacy": false,
+  "startup": "services",
+  "boot": "auto",
+  "timeout": 60
+}

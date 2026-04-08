@@ -1,0 +1,11 @@
+#!/usr/bin/env bashio
+# OpenClaw Home Assistant Addon Finish Script
+
+bashio::log.info "OpenClaw Gateway stopped."
+
+# Cleanup falls nötig
+if [ -f /tmp/openclaw.pid ]; then
+    rm -f /tmp/openclaw.pid
+fi
+
+exit 0
