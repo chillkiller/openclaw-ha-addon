@@ -122,7 +122,6 @@ RUN npm config set fund false \
     && cd openclaw-* \
     && npm install \
     && npm run build \
-    && npm prune --production \
     && npm pack \
     && npm install -g openclaw-*.tgz \
     && cd / \
