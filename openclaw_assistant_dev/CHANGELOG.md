@@ -2,6 +2,12 @@
 
 All notable changes to the OpenClaw Assistant Home Assistant Add-on will be documented in this file.
 
+## [0.5.67] - 2026-04-09
+
+### Changed
+- Bump OpenClaw to v2026.4.8-patch1.
+- Fixed Docker build by correcting tag reference to exist on fork.
+
 ## [0.5.66] - 2026-04-04
 
 ### Fixed
