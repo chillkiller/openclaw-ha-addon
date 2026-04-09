@@ -1,7 +1,7 @@
 name: OpenClaw Dev
-version: "2026.4.8-patch1-1"
+version: "2026.4.9-0"
 slug: openclaw_dev
-description: OpenClaw Dev with subagent fix (chillkiller/openclaw@v2026.4.8-patch1)
+description: OpenClaw Dev with v2026.4.9 + system deps for native modules (sharp, lancedb, opusscript, etc.)
 url: https://github.com/chillkiller/OpenClawHomeAssistant
 arch:
   - amd64
@@ -134,8 +134,7 @@ options:
   gateway_env_vars: []
 
   # Auto-configure MCP (Model Context Protocol) for Home Assistant.
-  # When enabled and homeassistant_token is set, automatically registers HA as an
-  # MCP server in OpenClaw so the AI can control Home Assistant entities/services.
+  # When enabled and homeassistant_token is set, automatically registers HA as an MCP server in OpenClaw so the AI can control Home Assistant entities/services.
   auto_configure_mcp: false
 
 

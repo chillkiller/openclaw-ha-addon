@@ -30,11 +30,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     bat \
     less \
     openssl \
+    libvips-dev \
+    liblapack3 \
+    libopenblas-dev \
+    libopus-dev \
+    ffmpeg \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Node.js 22 LTS from NodeSource (Debian Bookworm ships Node 18, but OpenClaw requires 20+)
-# Use explicit keyring + apt source instead of setup_22.x pipe script for deterministic builds.
+# Use explicit keyring + apt source instead of setup_22.x pipe string for deterministic builds.
 RUN mkdir -p /etc/apt/keyrings \
     && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
     | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
@@ -46,7 +51,8 @@ RUN mkdir -p /etc/apt/keyrings \
     && NODE_VERSION="$(node -v)" \
     && echo "$NODE_VERSION" \
     && echo "$NODE_VERSION" | grep -E '^v22\.' \
-    && rm -f /etc/apt/sources.list.d/nodesource.list /etc/apt/keyrings/nodesource.gpg \
+    && rm -f /etc/apt/sources.list.d/nodesource.list \
+    && rm -f /etc/apt/keyrings/nodesource.gpg \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
 
@@ -88,7 +94,7 @@ RUN /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/instal
     (echo "WARNING: Homebrew installation failed (likely unsupported CPU - requires SSSE3). Some skills may not work." && exit 0)
 RUN if [ -d /home/linuxbrew/.linuxbrew/Homebrew ]; then \
     cd /home/linuxbrew/.linuxbrew/Homebrew && \
-    git config --global --add safe.directory /home/linuxbrew/.linuxbrew/Homebrew && \
+    git config --global --add safe.directory /home/homebrew/.linuxbrew/Homebrew && \
     /home/linuxbrew/.linuxbrew/bin/brew update --force || true; \
     fi
 USER root
@@ -112,9 +118,11 @@ RUN if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then \
     fi
 USER root
 
-# Install OpenClaw globally from chillkiller fork with subagent fix
-RUN npm config set fund false && npm config set audit false \
-    && npm install -g https://github.com/chillkiller/openclaw/archive/refs/tags/v2026.4.8-patch1.tar.gz
+# Install OpenClaw globally
+# Use specific version 2026.4.9 instead of latest to avoid instability
+RUN npm config set fund false \
+    && npm config set audit false \
+    && npm install -g openclaw@2026.4.9
 
 # Shell aliases and color options for interactive use
 RUN tee -a /etc/bash.bashrc <<'EOF'
