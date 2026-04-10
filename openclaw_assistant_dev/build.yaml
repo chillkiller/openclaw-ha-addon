@@ -1,10 +1,10 @@
-# OpenClaw Build Specification v0.6.1
+# OpenClaw Build Specification v0.6.2
 
 build:
   context: .
   dockerfile: Dockerfile
   tags:
-    - openclaw-dev-addon:v0.6.1
+    - openclaw-dev-addon:v0.6.2
     - openclaw-dev-addon:latest
 
 pipeline:
@@ -24,4 +24,4 @@ verification:
   tests:
     - "openclaw --version"
     - "openclaw gateway status"
-  expected_version: "0.6.1"
+  expected_version: "0.6.2"
