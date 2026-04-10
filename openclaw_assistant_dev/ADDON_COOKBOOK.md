@@ -125,11 +125,26 @@ options:
 - [x] **HA Config:** config.yaml with `video: true` and ML-endpoint options
 - [ ] **Disk Cleanup:** Free up space on SD card/host (if needed)
 
-### **Phase 2: The Dev-Power (Toolchains)**
-- [ ] **Node/Brew Setup:** Stable base for skill management
-- [ ] **Go Integration:** Compiler setup for native Go skills
-- [ ] **Python/uv Optimization:** Setup for fast installation of ML skills
-- [ ] **Bun Setup:** Installation and test of QMD
+## 🚀 6. Implementierungs-Phasen (aktualisiert)
+
+### **Phase 1: The Foundation (Hardware & Core)**
+- [x] **Dockerfile 1.0:** Zone 1 with complete APT packages (including voice/media gaps and Bun)
+- [x] **Zone 2 removed:** No GPU libs needed – `video: true` suffices
+- [x] **HA Config:** config.yaml with `video: true` and ML-endpoint options
+- [ ] **Disk Cleanup:** Free up space on SD card/host (if needed)
+
+### **Phase 2: The Dev-Power (Toolchains) & Space Optimization**
+- [ ] **Node/Brew Setup:** Stable base for skill management.
+- [ ] **Multi-Stage Build Implementation:** 
+  - Mandatory separation of `Build-Stage` and `Runtime-Stage`.
+  - Heavy toolchains (gcc, cmake, dev-headers) stay in Build-Stage.
+  - Only final binaries and runtime libs are copied to the final image.
+- [ ] **Layer Hygiene:** Strict requirement to combine `apt-get install` and `rm -rf /var/lib/apt/lists/*` in a single layer to prevent invisible bloat.
+- [ ] **Sovereign Build-Flow:** Manage build cache to prevent "no space left on device" during layer extraction on SD cards.
+- [ ] **Go Integration:** Compiler setup for native Go skills.
+- [ ] **Python/uv Optimization:** Setup for fast installation of ML skills.
+- [ ] **Bun Setup:** Installation and test of QMD.
+
 
 ### **Phase 3: The Knowledge-Base (Data Layer)**
 - [ ] **Postgres Integration:** Client tools for pgvector connection

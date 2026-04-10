@@ -110,6 +110,12 @@ configuration:
   gateway_env_vars:
     name: Zmienne środowiskowe gateway
     description: Zmienne środowiskowe przekazywane do procesu gateway OpenClaw podczas uruchamiania (lista wpisow name/value w UI Home Assistant; maks. 50 zmiennych, klucze do 255 znakow, wartosci do 10000 znakow).
+  mdns_host_name:
+    name: Nazwa hosta mDNS
+    description: Opcjonalna nazwa hosta dla reklamy mDNS (np. homeassistant.local). Jeśli puste, wykrywana automatycznie z nazwy hosta kontenera.
+  mdns_service_port:
+    name: Port usługi mDNS
+    description: Port reklamowany przez mDNS do wykrywania. Domyślnie port gateway (18789). Powinien odpowiadać zewnętrznemu portowi proxy w trybie lan_https.
   auto_configure_mcp:
     name: Automatyczna konfiguracja MCP dla Home Assistant
     description: "Gdy WŁĄCZONE i token Home Assistant jest ustawiony, automatycznie rejestruje Home Assistant jako serwer MCP przy każdym starcie. Pozwala to OpenClaw kontrolować urządzenia HA, usługi i automatyzacje przez Model Context Protocol. Wyłącz tylko jeśli zarządzasz konfiguracją mcporter ręcznie."

@@ -1,5 +1,5 @@
 name: OpenClaw Assistant Dev (Sovereign)
-version: "0.6.0"
+version: "0.6.1"
 slug: openclaw_assistant_dev
 description: Run OpenClaw Assistant Dev (Sovereign Edition) as a Home Assistant add-on.
 url: https://github.com/chillkiller/OpenClawHomeAssistant
@@ -134,4 +134,5 @@ schema:
   nginx_log_level: list(full|minimal)?
   auto_configure_mcp: bool?
   mdns_mode: list(off|minimal|full)?
+  mdns_host_name: str?
   mdns_service_port: int(1,65535)?

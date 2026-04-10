@@ -110,6 +110,12 @@ configuration:
   gateway_env_vars:
     name: Gateway Environment Variables
     description: Environment variables passed to the OpenClaw gateway process at startup (list entries with name/value in Home Assistant UI; max 50 variables, keys up to 255 characters, values up to 10,000 characters).
+  mdns_host_name:
+    name: mDNS Host Name
+    description: Optional hostname for mDNS advertisement (e.g., homeassistant.local). If empty, auto-detected from container hostname.
+  mdns_service_port:
+    name: mDNS Service Port
+    description: Port advertised by mDNS for discovery. Defaults to the gateway port (18789). Should match the external proxy port in lan_https mode.
   auto_configure_mcp:
     name: Auto-Configure MCP for Home Assistant
     description: "When ON and Home Assistant Token is set, automatically registers Home Assistant as an MCP server on each startup. This lets OpenClaw control HA entities, services, and automations via the Model Context Protocol. Disable only if you manage mcporter configuration manually."

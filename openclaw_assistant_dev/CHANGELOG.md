@@ -2,6 +2,24 @@
 
 All notable changes to the OpenClaw Assistant Home Assistant Add-on will be documented in this file.
 
+## [0.6.1] - 2026-04-10
+
+### Added
+- `mdns_host_name` add-on option with full translations in all 6 languages (EN, BG, DE, ES, PL, PT-BR) for explicit mDNS hostname control.
+- `mdns_service_port` translations in all 6 languages (was only defined in config defaults).
+
+### Fixed
+- `mdns_host_name` missing from `config.yaml` schema — was read in `run.sh` and passed to `oc_config_helper.py set-mdns-settings` but had no schema entry, causing HA to reject it in strict validation.
+- DOCS.md maintenance table: `auto_configure_mcp` row was incorrectly merged with `clean_session_locks_on_exit` due to a missing table row separator.
+
+### Changed
+- Upgrade OpenClaw to v2026.4.9 (official npm release).
+- Dockerfile uses Debian Trixie base image (`ghcr.io/home-assistant/{arch}-base-debian:trixie`) with updated packages (Python 3.13, ffmpeg 7.x, Go 1.23, GStreamer 1.24).
+- Dockerfile: Added `python3-venv` to Zone 1 APT packages for Python venv support.
+- Dockerfile: Replaced NodeSource installer with explicit keyring + apt source configuration for Node.js 22.
+- Dockerfile: Added `gh` and `golang-go` via APT (Debian-first strategy) reducing Homebrew footprint.
+- Landing page: CA certificate download button now uses the detected hostname instead of hardcoded fallback.
+
 ## [0.5.68] - 2026-04-09
 
 ### Changed
