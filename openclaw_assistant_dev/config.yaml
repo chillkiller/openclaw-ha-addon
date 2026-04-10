@@ -1,89 +1,137 @@
 name: OpenClaw Assistant Dev (Sovereign)
 version: 0.6.0
 slug: openclaw_assistant_dev
-description: Ultimate OpenClaw Dev-Addon mit Debian Trixie, mDNS-Fix und Sovereign-Konfiguration
+description: Run OpenClaw Assistant Dev (Sovereign Edition) as a Home Assistant add-on.
 url: https://github.com/chillkiller/OpenClawHomeAssistant
 arch:
   - amd64
   - aarch64
-boot: application
+startup: services
+boot: auto
 init: false
-startup: application
-homeassistant: 2024.1.0
-hassio_api: true
-hassio_role: manager
-host_dbus: true
+hassio_api: false
+homeassistant_api: false
 host_network: true
-host_pid: false
-host_uts: false
-privileged: []
-groups:
-  - video
-  - render
-  - input
-  - tty
-devices:
-  - /dev/dri:/dev/dri
+
+# Home Assistant Ingress (UI inside the add-on page)
+ingress: true
+ingress_port: 48099
+panel_title: OpenClaw Dev
+panel_icon: mdi:robot
+
 map:
-  - config:rw
-  - data:rw
+  - addon_config:rw
   - share:rw
-  - ssl:ro
-  - addons:ro
-ports:
-  48099/tcp: 48099
-  7681/tcp: null
-  18789/tcp: null
-schema:
-  timezone: str
-  gateway_mode: list(local|remote)
-  gateway_remote_url: str?
-  gateway_bind_mode: list(loopback|lan|tailnet)
-  gateway_port: int(1,65535)
-  gateway_auth_mode: list(token|trusted-proxy)
-  gateway_trusted_proxies: str?
-  gateway_additional_allowed_origins: str?
-  gateway_public_url: str?
-  enable_openai_api: bool
-  access_mode: list(local_only|lan_https|lan_reverse_proxy|tailnet_https|custom)
-  nginx_log_level: list(minimal|standard)
-  enable_terminal: bool
-  terminal_port: int(1024,65535)
-  http_proxy: str?
-  force_ipv4_dns: bool
-  clean_session_locks_on_start: bool
-  clean_session_locks_on_exit: bool
-  auto_configure_mcp: bool
-  homeassistant_token: str?
-  controlui_disable_device_auth: bool
-  router_ssh_host: str?
-  router_ssh_user: str?
-  router_ssh_key_path: str?
-  gateway_env_vars:
-    - name: str
-      value: str
-  # mDNS Konfiguration (NEU - Sovereign Fix)
-  mdns_mode: list(off|minimal|full)
-  mdns_interface_name: str?
-  mdns_service_port: int(1,65535)
-  mdns_host_name: str?
+  - media:rw
 options:
   timezone: Europe/Berlin
-  gateway_mode: local
-  gateway_bind_mode: loopback
-  gateway_port: 18789
-  gateway_auth_mode: token
-  access_mode: lan_https
-  nginx_log_level: minimal
+
+  # Enable web terminal inside Home Assistant (Ingress) via ttyd
   enable_terminal: true
+
+  # Terminal port (change if 7681 conflicts with another service)
   terminal_port: 7681
-  force_ipv4_dns: true
+
+  # Public base URL for opening the Gateway Web UI in a new tab (not embedded).
+  # Recommended: NO trailing slash.
+  gateway_public_url: ""
+
+  # Optional: Home Assistant long-lived token (for local HA API scripts/tools)
+  homeassistant_token: ""
+
+  # Optional: outbound HTTP/HTTPS proxy for OpenClaw network access.
+  http_proxy: ""
+
+  # Optional: Router SSH defaults (leave empty if you don't need router automation)
+  router_ssh_host: ""
+  router_ssh_user: ""
+  router_ssh_key_path: "/data/keys/router_ssh"
+
+  # Cleanup stale session lock files left after crashes/restarts
   clean_session_locks_on_start: true
   clean_session_locks_on_exit: true
-  auto_configure_mcp: false
+
+  # Gateway mode:
+  gateway_mode: local
+  gateway_remote_url: ""
+
+  # Gateway network bind mode:
+  # - loopback: bind to 127.0.0.1 only (local access only, most secure)
+  # - lan: bind to all interfaces (accessible from local network)
+  # - tailnet: bind to Tailscale IP only (accessible only via Tailscale)
+  gateway_bind_mode: loopback
+
+  # Gateway port to listen on
+  gateway_port: 18789
+
+  # Access mode preset:
+  # custom: use individual gateway_bind_mode / auth_mode settings
+  # local_only: loopback + token auth (Ingress / terminal only, most secure)
+  # lan_https: Built-in HTTPS reverse proxy for LAN access
+  # lan_reverse_proxy: LAN bind + trusted-proxy for an external reverse proxy
+  # tailnet_https: Tailscale interface bind + token auth
+  access_mode: custom
+
+  # Gateway authentication mode:
+  gateway_auth_mode: token
+
+  # Comma-separated trusted proxy IP/CIDR list for trusted-proxy mode.
+  gateway_trusted_proxies: ""
+
+  # Additional allowed origins for gateway.controlUi.allowedOrigins.
+  gateway_additional_allowed_origins: ""
+
+  # In lan_https mode, disable per-device Control UI auth ceremony.
   controlui_disable_device_auth: true
+
+  # Enable OpenAI-compatible Chat Completions API endpoint
   enable_openai_api: false
-  # mDNS Konfiguration (NEU)
+
+  # Force IPv4-first DNS result ordering for Node fetch/network calls.
+  force_ipv4_dns: true
+
+  # Nginx access log verbosity:
+  nginx_log_level: minimal
+
+  # Environment variables to pass to the gateway process at startup.
+  gateway_env_vars: []
+
+  # Auto-configure MCP (Model Context Protocol) for Home Assistant.
+  auto_configure_mcp: false
+
+  # mDNS Konfiguration (Sovereign Edition)
   mdns_mode: minimal
   mdns_service_port: 18789
-stage: stable
+
+schema:
+  timezone: str
+  enable_terminal: bool?
+  terminal_port: int(1024,65535)?
+  gateway_public_url: str?
+  homeassistant_token: str?
+  http_proxy: str?
+
+  router_ssh_host: str
+  router_ssh_user: str
+  router_ssh_key_path: str
+
+  clean_session_locks_on_start: bool?
+  clean_session_locks_on_exit: bool?
+  gateway_mode: list(local|remote)?
+  gateway_remote_url: str?
+  gateway_bind_mode: list(loopback|lan|tailnet)?
+  gateway_port: int(1,65535)?
+  access_mode: list(custom|local_only|lan_https|lan_reverse_proxy|tailnet_https)?
+  gateway_auth_mode: list(token|trusted-proxy)?
+  gateway_trusted_proxies: str?
+  gateway_additional_allowed_origins: str?
+  controlui_disable_device_auth: bool?
+  enable_openai_api: bool?
+  force_ipv4_dns: bool?
+  gateway_env_vars:
+    - name: "match(^[A-Z_][A-Z0-9_]*$)"
+      value: str
+  nginx_log_level: list(full|minimal)?
+  auto_configure_mcp: bool?
+  mdns_mode: list(off|minimal|full)?
+  mdns_service_port: int(1,65535)?
