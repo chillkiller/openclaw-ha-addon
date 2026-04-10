@@ -256,6 +256,65 @@ def set_control_ui_origins(origins_csv: str, additional_origins_csv: str = "", d
     return False
 
 
+
+def set_mdns_settings(mode: str, service_port: int, host_name: str = "", interface_name: str = ""):
+    """
+    Configure mDNS/Bonjour discovery settings for the gateway.
+
+    CRITICAL FIX: The gateway binds to loopback (127.0.0.1:18790) but mDNS
+    must advertise the PUBLIC HTTPS proxy port (18789), NOT the internal
+    gateway port. Clients on the LAN use mDNS to find the addon's IP:port
+    and then connect via the nginx HTTPS proxy.
+
+    Args:
+        mode: mDNS mode - "off", "minimal", or "full"
+        service_port: The port to advertise in mDNS (should be the PUBLIC
+                     HTTPS proxy port, e.g. 18789, NOT the internal 18790)
+        host_name: Optional hostname (e.g. "homeassistant.local").
+                   If empty, uses the container's existing hostname.
+        interface_name: Optional network interface (e.g. "eth0").
+                        If empty, auto-detected.
+    """
+    cfg = read_config()
+    if cfg is None:
+        cfg = {}
+
+    if "discovery" not in cfg:
+        cfg["discovery"] = {}
+    if "mDNS" not in cfg["discovery"]:
+        cfg["discovery"]["mDNS"] = {}
+
+    mdns = cfg["discovery"]["mDNS"]
+    changes = []
+
+    if mdns.get("mode") != mode:
+        changes.append(f"mode: {mdns.get('mode')} -> {mode}")
+        mdns["mode"] = mode
+
+    if mdns.get("servicePort") != service_port:
+        changes.append(f"servicePort: {mdns.get('servicePort')} -> {service_port}")
+        mdns["servicePort"] = service_port
+
+    if host_name and mdns.get("hostName") != host_name:
+        changes.append(f"hostName: {mdns.get('hostName')} -> {host_name}")
+        mdns["hostName"] = host_name
+
+    if interface_name and mdns.get("interfaceName") != interface_name:
+        changes.append(f"interfaceName: {mdns.get('interfaceName')} -> {interface_name}")
+        mdns["interfaceName"] = interface_name
+
+    if not changes:
+        print(f"INFO: mDNS settings already correct: mode={mode}, port={service_port}")
+        return True
+
+    if write_config(cfg):
+        print(f"INFO: Updated mDNS settings: {', '.join(changes)}")
+        return True
+    print("ERROR: Failed to write config")
+    return False
+
+
+
 def main():
     """CLI entry point for use by run.sh"""
     if len(sys.argv) < 2:

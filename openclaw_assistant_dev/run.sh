@@ -59,6 +59,11 @@ FORCE_IPV4_DNS=$(jq -r '.force_ipv4_dns // true' "$OPTIONS_FILE")
 ACCESS_MODE=$(jq -r '.access_mode // "custom"' "$OPTIONS_FILE")
 NGINX_LOG_LEVEL=$(jq -r '.nginx_log_level // "minimal"' "$OPTIONS_FILE")
 AUTO_CONFIGURE_MCP=$(jq -r '.auto_configure_mcp // false' "$OPTIONS_FILE")
+# mDNS/Bonjour configuration (Sovereign Fix)
+MDNS_MODE=$(jq -r '.mdns_mode // "minimal"' "$OPTIONS_FILE")
+MDNS_HOST_NAME=$(jq -r '.mdns_host_name // ""' "$OPTIONS_FILE")
+MDNS_SERVICE_PORT=$(jq -r '.mdns_service_port // "'"$GATEWAY_PORT"'"' "$OPTIONS_FILE")
+MDNS_INTERFACE_NAME=$(jq -r '.mdns_interface_name // ""' "$OPTIONS_FILE")
 GW_ENV_VARS_TYPE=$(jq -r 'if .gateway_env_vars == null then "null" else (.gateway_env_vars | type) end' "$OPTIONS_FILE")
 GW_ENV_VARS_RAW=$(jq -r '.gateway_env_vars // empty' "$OPTIONS_FILE")
 GW_ENV_VARS_JSON=$(jq -c '.gateway_env_vars // []' "$OPTIONS_FILE")
@@ -1044,6 +1049,30 @@ if kill -0 "$NGINX_PID" 2>/dev/null; then
   echo "nginx started with PID $NGINX_PID"
 else
   echo "WARN: nginx failed to start (PID $NGINX_PID exited); ingress UI may be unavailable"
+fi
+
+# =============================================================================
+# SOVEREIGN mDNS FIX: Advertise the PUBLIC HTTPS proxy port, not internal
+# gateway port. Ciao advertises the wrong port (18790 loopback) by default.
+# We must override it to advertise 18789 (nginx public HTTPS) so clients
+# on the LAN can find the addon's mDNS service and connect via the proxy.
+# =============================================================================
+if [ "$ENABLE_HTTPS_PROXY" = "true" ]; then
+  # Detect LAN hostname (prefer HA's hostname, fallback to container's)
+  MDNS_HOSTNAME="${MDNS_HOST_NAME:-$(hostname -f 2>/dev/null || hostname)}"
+
+  if [ -f "$HELPER_PATH" ] && [ -f "$OPENCLAW_CONFIG_PATH" ]; then
+    echo "INFO: Configuring mDNS to advertise public HTTPS port ${GATEWAY_PORT} (not internal ${GATEWAY_INTERNAL_PORT})..."
+    if python3 "$HELPER_PATH" set-mdns-settings minimal "$GATEWAY_PORT" "$MDNS_HOSTNAME" 2>&1; then
+      echo "INFO: mDNS correctly configured to advertise port ${GATEWAY_PORT}"
+    else
+      echo "WARN: mDNS configuration failed (mDNS may still work with wrong port)"
+    fi
+  else
+    echo "WARN: oc_config_helper.py not found, skipping mDNS fix"
+  fi
+else
+  echo "INFO: HTTPS proxy disabled; mDNS will advertise internal gateway port"
 fi
 
 # If the token was not available at startup (first boot / pre-onboard), schedule
