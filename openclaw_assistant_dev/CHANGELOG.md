@@ -2,10 +2,12 @@
 
 All notable changes to the OpenClaw Assistant Home Assistant Add-on will be documented in this file.
 
-## [0.6.3] - 2026-04-11
+## [0.6.4] - 2026-04-11
 
 ### Fixed
-- Docker build failure: Fixed 'brew: command not found' by using absolute paths and added missing Chromium system dependencies.
+- Fixed silent Homebrew installation failure by adding NONINTERACTIVE=1 and explicit environment sourcing.
+
+## [0.6.3] - 2026-04-11
 
 ## [0.6.2] - 2026-04-11
 
