@@ -1,5 +1,5 @@
 name: OpenClaw Assistant Dev (Sovereign)
-version: 0.5.68
+version: 0.6.0
 slug: openclaw_assistant_dev
 description: Ultimate OpenClaw Dev-Addon mit Debian Trixie, mDNS-Fix und Sovereign-Konfiguration
 url: https://github.com/chillkiller/OpenClawHomeAssistant
