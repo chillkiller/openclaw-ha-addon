@@ -2,6 +2,14 @@
 
 All notable changes to the OpenClaw Assistant Home Assistant Add-on will be documented in this file.
 
+## [0.6.5] - 2026-04-11
+
+### Fixed
+- Fixed silent Homebrew installation failure by downloading install script first, then executing as linuxbrew user
+- Added explicit verification that brew binary exists after installation
+- Ensured proper PATH includes /usr/sbin for useradd command during installation
+- Improved Dockerfile reliability with step-by-step Homebrew installation process
+
 ## [0.6.4] - 2026-04-11
 
 ### Fixed

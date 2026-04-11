@@ -1,4 +1,4 @@
-# Dockerfile for OpenClaw Dev-Addon v0.6.1 (Trixie)
+# Dockerfile for OpenClaw Dev-Addon v0.6.5 (Trixie)
 
 FROM debian:trixie-slim
 
@@ -52,9 +52,18 @@ RUN mkdir -p /etc/apt/keyrings \
 # Install Homebrew (Linuxbrew)
 RUN useradd -m -s /bin/bash linuxbrew \
     && echo "linuxbrew ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers \
-    && sudo -u linuxbrew -i /bin/bash -c "NONINTERACTIVE=1 $(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)" \
+    # Download and verify Homebrew install script
+    && curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh -o /tmp/install_homebrew.sh \
+    && chmod +x /tmp/install_homebrew.sh \
+    # Install Homebrew as linuxbrew user with proper environment and verbose output
+    && sudo -u linuxbrew -i /bin/bash -c "NONINTERACTIVE=1 /tmp/install_homebrew.sh 2>&1 | tee /tmp/homebrew_install.log" \
+    # Verify installation
     && sudo -u linuxbrew -i /bin/bash -c 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)" && brew --version' \
-    && echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /home/linuxbrew/.bashrc
+    && echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /home/linuxbrew/.bashrc \
+    # Show installation log for debugging
+    && cat /tmp/homebrew_install.log \
+    # Cleanup
+    && rm -f /tmp/install_homebrew.sh /tmp/homebrew_install.log
 
 # Set Homebrew path for root and other users
 ENV PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}"
@@ -63,7 +72,7 @@ ENV HOMEBREW_BREW_FILE="/home/linuxbrew/.linuxbrew/Homebrew"
 # Install Chromium via Brew (running as linuxbrew user)
 RUN sudo -u linuxbrew -i /bin/bash -c "eval \"\$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)\" && brew install chromium"
 
-# Install OpenClaw v0.6.1
+# Install OpenClaw v0.6.5
 RUN npm install -g openclaw@latest
 
 # Fix safe.directory
