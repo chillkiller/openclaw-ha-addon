@@ -69,8 +69,10 @@ RUN useradd -m -s /bin/bash linuxbrew \
 ENV PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}"
 ENV HOMEBREW_BREW_FILE="/home/linuxbrew/.linuxbrew/Homebrew"
 
-# Install Chromium via Brew (running as linuxbrew user)
-RUN sudo -u linuxbrew -i /bin/bash -c "eval \"\$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)\" && brew install chromium"
+# Install Chromium via APT (Debian Trixie)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    chromium \
+    && rm -rf /var/lib/apt/lists/*
 
 # Install OpenClaw v0.6.5
 RUN npm install -g openclaw@latest
