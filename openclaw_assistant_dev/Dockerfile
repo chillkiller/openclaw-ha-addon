@@ -1,4 +1,4 @@
-# Dockerfile for OpenClaw Dev-Addon v0.6.1.5
+# Dockerfile for OpenClaw Dev-Addon v0.6.1.6
 # Multi-stage build for disk space optimization
 FROM debian:trixie-slim AS builder
 
@@ -132,8 +132,12 @@ RUN mkdir -p /etc/apt/keyrings \
 
 # =============================================================================
 # Discord Plugin Dependency (P1)
+# NOTE: Removed from build-time install. @discordjs/opus@0.10.0 has a known
+# NEON intrinsic compile bug on aarch64 with GCC 14+ (celt_inner_prod_neon
+# implicit declaration). OpenClaw installs its own npm deps at runtime, and
+# the system libopus-dev (already installed) provides the shared library.
+# If Discord voice is needed, opusscript works as a JS-only fallback.
 # =============================================================================
-RUN npm install -g @discordjs/opus@^0.10.0
 
 # =============================================================================
 # Install Homebrew (Linuxbrew)
