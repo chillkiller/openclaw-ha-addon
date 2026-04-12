@@ -1,7 +1,8 @@
-# OpenClaw Dev-Addon v0.6.1.6 Configuration
+# OpenClaw Dev-Addon v0.6.1.7 Configuration
+# FIXED: Added sudo package to Dockerfile (caused Homebrew install failure)
 
 name: OpenClaw Assistant (Dev)
-version: "0.6.1.6"
+version: "0.6.1.7"
 slug: openclaw_assistant_dev
 description: OpenClaw Home Assistant Addon (Development Branch - Trixie)
 url: https://github.com/chillkiller/OpenClawHomeAssistant

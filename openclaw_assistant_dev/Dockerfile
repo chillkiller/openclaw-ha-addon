@@ -1,5 +1,6 @@
-# Dockerfile for OpenClaw Dev-Addon v0.6.1.6
+# Dockerfile for OpenClaw Dev-Addon v0.6.1.7
 # Multi-stage build for disk space optimization
+# FIXED: Added sudo package (was missing causing Homebrew install failure)
 FROM debian:trixie-slim AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -37,8 +38,10 @@ ENV CHROME_FLAGS="--disk-cache-dir=/tmp/openclaw/chromium_cache --disk-cache-siz
 # =============================================================================
 # Zone 1: Core APT Dependencies (Audio/Media, Database, Dev-Tools)
 # =============================================================================
+# FIXED: Added sudo package for Homebrew installation
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Core utilities
+    # Core utilities (INCLUDES sudo - FIX!)
+    sudo \
     curl \
     git \
     wget \
