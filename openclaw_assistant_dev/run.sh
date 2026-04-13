@@ -14,6 +14,10 @@ echo "=== RUN.SH START: $(date -Iseconds) ==="
 
 # Ensure Homebrew and brew-installed binaries are in PATH
 export PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}"
+# Force lookup of shared libraries in Homebrew (Critical for native modules!)
+export LD_LIBRARY_PATH="/home/linuxbrew/.linuxbrew/lib:${LD_LIBRARY_PATH:-}"
+# Force Python package paths in persistent config
+export PYTHONPATH="/config/.local/lib/python3.11/site-packages:${PYTHONPATH:-}"
 
 # ------------------------------------------------------------------------------
 # Section 1: Read HA Add-on Options
@@ -316,7 +320,7 @@ export PATH="/usr/local/go/bin:${GOPATH}/bin:${PATH}"
 # uv persistent (coollabsio pattern)
 export UV_TOOL_DIR=/config/.uv-tools
 export UV_CACHE_DIR=/config/.uv-cache
-export PATH="/root/.local/bin:${UV_TOOL_DIR}/bin:${PATH}"
+export PATH="/config/.local/bin:${UV_TOOL_DIR}/bin:${PATH}"
 mkdir -p "$UV_TOOL_DIR" "$UV_CACHE_DIR"
 
 echo "INFO: Section 5 done (paths + persistence dirs)"
@@ -360,7 +364,7 @@ echo "INFO: Section 6 done (Homebrew persistence)"
 # Section 7: OpenClaw Skills Sync (Best-of-All-Worlds)
 # ------------------------------------------------------------------------------
 # Sync built-in skills from image to persistent storage so they survive rebuilds.
-IMAGE_SKILLS_DIR="$(HOME=/root npm root -g 2>/dev/null)/openclaw/skills"
+IMAGE_SKILLS_DIR="/config/.npm-global/lib/node_modules/openclaw/skills"
 PERSISTENT_SKILLS_DIR="/config/.openclaw/skills"
 
 if [ -d "$IMAGE_SKILLS_DIR" ] && [ ! -L "$IMAGE_SKILLS_DIR" ]; then
@@ -642,7 +646,7 @@ echo "INFO: Section 15 done (control UI origins)"
 # ------------------------------------------------------------------------------
 # Section 16: Proxy Shim
 # ------------------------------------------------------------------------------
-OPENCLAW_GLOBAL_NODE_MODULES="$(HOME=/root npm root -g 2>/dev/null || true)"
+OPENCLAW_GLOBAL_NODE_MODULES="/config/.npm-global/lib/node_modules"
 if [ -f /usr/local/lib/openclaw-proxy-shim.cjs ]; then
   export NODE_OPTIONS="--require /usr/local/lib/openclaw-proxy-shim.cjs ${NODE_OPTIONS}"
   export OPENCLAW_GLOBAL_NODE_MODULES
@@ -791,6 +795,18 @@ if ! start_openclaw_runtime; then
   echo "ERROR: Failed to start OpenClaw runtime"
   exit 1
 fi
+
+# Wait for gateway to actually bind the port before proceeding to Nginx/ttyd
+echo "INFO: Waiting for gateway to bind port ${GATEWAY_INTERNAL_PORT}..."
+MAX_WAIT=30
+COUNT=0
+while ! ss -tlnp 2>/dev/null | grep -q ":${GATEWAY_INTERNAL_PORT} "; do
+  [ "$COUNT" -ge "$MAX_WAIT" ] && { echo "WARN: Gateway took too long to bind port; proceeding anyway"; break; }
+  sleep 1
+  COUNT=$((COUNT + 1))
+done
+echo "INFO: Gateway port bound."
+
 start_gw_relay
 echo "INFO: Section 20 done (gateway started, PID=$GW_PID)"
 
