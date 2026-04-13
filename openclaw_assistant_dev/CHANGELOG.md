@@ -4,7 +4,7 @@
 - Fix run.sh: Lowered virtual memory limit ulimit -v from 8GB to 4GB.
 - Fix run.sh: Added --experimental-wasm-max-mem-pages=65536 to NODE_OPTIONS to stabilize undici/llhttp Wasm instance.
 
-## [0.6.1.5] - 2026-04-13
+## [0.6.1.6] - 2026-04-13
 
 ## [0.6.0.9] - 2026-04-11
 - Fix Dockerfile: Changed CMD to /run.sh to resolve systemd startup loop.
