@@ -272,8 +272,11 @@ export CHROMIUM_CACHE=/tmp/openclaw/chromium_cache
 mkdir -p "$CHROMIUM_CACHE"
 
 # Resource limits: prevent WASM virtual memory exhaustion
-echo "INFO: Virtual memory limit: 4GB (ulimit -v 4194304)"
-ulimit -v 4194304
+# Virtual memory: NO hard ulimit -v (WASM needs large virtual address space)
+# Container cgroups enforce real memory limits anyway
+# Old: ulimit -v 4194304 caused WASM OOM in undici/llhttp
+ulimit -v unlimited 2>/dev/null || true
+echo "INFO: Virtual memory unlimited (WASM-safe, cgroups enforce real limits)"
 
 # Create essential persistent directories
 mkdir -p \
@@ -918,6 +921,9 @@ echo "INFO: Section 23 done (sovereign mDNS fix)"
 echo "INFO: Section 24 done (background token re-render)"
 
 GW_IS_CHILD=true
+GW_RESTART_COUNT=0
+GW_MAX_BACKOFF=120  # max seconds between restarts
+
 while true; do
   if [ "$GW_IS_CHILD" = "true" ]; then
     wait "$GW_PID" 2>/dev/null || GW_EXIT_CODE=$?
@@ -947,6 +953,7 @@ while true; do
     echo "INFO: OpenClaw runtime active (PID $RESTARTED_PID); monitoring."
     GW_PID="$RESTARTED_PID"
     GW_IS_CHILD=false
+    GW_RESTART_COUNT=0  # reset on successful detection
     continue
   fi
 
@@ -961,16 +968,21 @@ while true; do
       echo "INFO: Gateway port $GATEWAY_INTERNAL_PORT occupied by PID ${PORT_PID:-unknown}; monitoring."
       GW_PID="${PORT_PID:-$GW_PID}"
       GW_IS_CHILD=false
+      GW_RESTART_COUNT=0
       continue
     fi
   fi
 
-  echo "WARN: OpenClaw runtime exited (code $GW_EXIT_CODE); restarting in 2s..."
-  sleep 2
+  # Exponential backoff: 5s, 10s, 20s, 40s, 80s, 120s (max)
+  GW_RESTART_COUNT=$((GW_RESTART_COUNT + 1))
+  GW_BACKOFF=$(( 5 * (2 ** (GW_RESTART_COUNT - 1)) ))
+  [ "$GW_BACKOFF" -gt "$GW_MAX_BACKOFF" ] && GW_BACKOFF=$GW_MAX_BACKOFF
+
+  echo "WARN: OpenClaw runtime exited (code $GW_EXIT_CODE); restart #$GW_RESTART_COUNT in ${GW_BACKOFF}s (exponential backoff)"
+  sleep "$GW_BACKOFF"
   stop_gw_relay
   if ! start_openclaw_runtime; then
-    echo "ERROR: Failed to restart; retrying in 5s..."
-    sleep 5
+    echo "ERROR: Failed to restart (attempt #$GW_RESTART_COUNT)"
   else
     GW_IS_CHILD=true
     start_gw_relay
