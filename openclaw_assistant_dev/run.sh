@@ -526,7 +526,7 @@ echo "DEBUG: Passed SINGLE-INSTANCE GUARD"
 # ZOMBIE CLEANUP: Remove any zombie processes from previous runs
 # ------------------------------------------------------------------------------
 echo "DEBUG: Entering ZOMBIE CLEANUP section"
-ZOMBIE_PIDS=$(ps aux | grep -E '\[sh\] <defunct>' | awk '{print $2}')
+ZOMBIE_PIDS=$(ps aux | grep -E '<defunct>' | awk '{print $2}')
 if [ -n "$ZOMBIE_PIDS" ]; then
   echo "INFO: Cleaning up $(($(echo "$ZOMBIE_PIDS" | wc -w))) zombie process(es) from previous run"
   for zp in $ZOMBIE_PIDS; do
@@ -591,6 +591,11 @@ fi
 echo "DEBUG: Entering TOKEN STORE section"
 # Store tokens / export env vars (optional)
 # ------------------------------------------------------------------------------
+
+DEBUG_LOG="/config/clawd/logs/run_debug.log"
+mkdir -p "$(dirname "$DEBUG_LOG")"
+exec > >(tee -a "$DEBUG_LOG") 2>&1
+echo "=== DEBUG LOG START: $(date -Iseconds) ===" >> "$DEBUG_LOG"
 
 if [ -n "$HA_TOKEN" ]; then
   umask 077
