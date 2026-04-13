@@ -252,6 +252,8 @@ fi
 
 mkdir -p /config/.openclaw /config/.openclaw/identity /config/clawd /config/keys /config/secrets
 
+echo "DEBUG: Reached after mkdir -p dirs section"
+
 # Setup tmpfs mounts for RAM disks based on RAM mode
 # Power mode: 4x 2GB = 8GB total (npm_cache, node_tmp, chromium_cache, logs)
 # Safe mode: 1.4GB total (npm_cache 256MB, node_tmp 384MB, chromium_cache 512MB, logs 256MB)
@@ -499,9 +501,13 @@ if [ ! -e /data ]; then
   ln -s /config /data || true
 fi
 
+echo "DEBUG: Reached after back-compat symlink section"
+
 # Ensure the agents base directory exists so cleanup scans work even before first run.
 # Do NOT pre-create agent-specific directories; OpenClaw creates them as needed.
 mkdir -p /config/.openclaw/agents || true
+
+echo "DEBUG: Reached before SINGLE-INSTANCE GUARD"
 
 # ------------------------------------------------------------------------------
 # SINGLE-INSTANCE GUARD (prevents multiple gateway runs racing each other)
@@ -513,6 +519,8 @@ if ! flock -n 9; then
   echo "If this is wrong, check for stuck processes or remove the lock file."
   exit 1
 fi
+
+echo "DEBUG: Passed SINGLE-INSTANCE GUARD"
 
 # ------------------------------------------------------------------------------
 # ZOMBIE CLEANUP: Remove any zombie processes from previous runs
@@ -576,21 +584,7 @@ else
   echo "INFO: clean_session_locks_on_start=false; skipping session lock cleanup."
 fi
 
-# =============================================================================
-# ZOMBIE PREVENTION: SIGCHLD handler for proper child process reaping
-# =============================================================================
-# This prevents zombie processes when child processes (like shell commands
-# spawned by the gateway) exit. The handler waits for any dead children.
-reap_zombies() {
-  while wait -n 2>/dev/null; do
-    : # Wait for any child process to exit, preventing zombies
-  done
-}
-# Start background reaper (only works in bash, not sh)
-if [ -n "${BASH_VERSION:-}" ]; then
-  trap reap_zombies SIGCHLD
-  echo "INFO: SIGCHLD handler enabled for zombie prevention"
-fi
+
 
 # ------------------------------------------------------------------------------
 # Store tokens / export env vars (optional)
@@ -669,13 +663,6 @@ fi
 # Bootstrap minimal OpenClaw config ONLY if missing.
 # We do not overwrite or patch existing configs; onboarding owns everything else.
 OPENCLAW_CONFIG_PATH="/config/.openclaw/openclaw.json"
-
-# Clean up stale/invalid config keys on startup (e.g. deprecated discovery.mDNS)
-if [ -f "$OPENCLAW_CONFIG_PATH" ]; then
-  if python3 /oc_config_helper.py cleanup-stale-config 2>&1; then
-    echo "INFO: Config cleanup completed"
-  fi
-fi
 
 if [ ! -f "$OPENCLAW_CONFIG_PATH" ]; then
   echo "INFO: OpenClaw config missing; bootstrapping minimal config at $OPENCLAW_CONFIG_PATH"
@@ -1200,36 +1187,12 @@ echo "Starting ingress proxy (nginx) on :48099 ..."
 nginx -g 'daemon off;' &
 NGINX_PID=$!
 NGINX_PORT=48099
-
-# Port-Guard: 30 retry attempts with 1s pause
-for _n in $(seq 1 30); do
-  if ss -tlnp 2>/dev/null | grep -q ":${NGINX_PORT} "; then
-    break
-  fi
-  if ! kill -0 "$NGINX_PID" 2>/dev/null; then
-    echo "WARN: nginx exited prematurely; ingress UI may be unavailable"
-    break
-  fi
-  sleep 1
-done
-
-# 3s pause after daemon detection
-sleep 3
-
-# 10s final binding check for port 48099
-for _final_check in 1 2 3 4 5 6 7 8 9 10; do
-  if ss -tlnp 2>/dev/null | grep -q ":${NGINX_PORT} "; then
-    break
-  fi
-  sleep 1
-done
-
-# Nginx-Validierung: Verify port 48099 is actually bound
-if ss -tlnp 2>/dev/null | grep -q ":${NGINX_PORT} "; then
+sleep 1
+if kill -0 "$NGINX_PID" 2>/dev/null; then
   echo "$NGINX_PID" > "$NGINX_PID_FILE"
-  echo "nginx started with PID $NGINX_PID (port ${NGINX_PORT} bound)"
+  echo "nginx started with PID $NGINX_PID"
 else
-  echo "WARN: nginx failed to bind port ${NGINX_PORT}; ingress UI may be unavailable"
+  echo "WARN: nginx failed to start (PID $NGINX_PID exited); ingress UI may be unavailable"
 fi
 
 # =============================================================================
