@@ -6,7 +6,7 @@
 #   - Added custom init script option (coollabsio pattern)
 #   - Version bump to trigger HA rebuild
 name: OpenClaw Assistant (Dev)
-version: "0.7.0"
+version: "0.7.1"
 slug: openclaw_assistant_dev
 description: OpenClaw Home Assistant Addon (Development Branch - Trixie Full-Stack)
 url: https://github.com/chillkiller/OpenClawHomeAssistant
