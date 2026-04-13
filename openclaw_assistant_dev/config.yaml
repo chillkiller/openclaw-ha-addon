@@ -5,7 +5,7 @@
 # FIXED: Changed gateway run to background process with log capture to prevent silent exits
 
 name: OpenClaw Assistant (Dev)
-version: "0.6.1.11"
+version: "0.6.1.12"
 slug: openclaw_assistant_dev
 description: OpenClaw Home Assistant Addon (Development Branch - Trixie)
 url: https://github.com/chillkiller/OpenClawHomeAssistant
