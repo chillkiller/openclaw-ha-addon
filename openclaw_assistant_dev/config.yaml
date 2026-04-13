@@ -1,11 +1,12 @@
-# OpenClaw Dev-Addon v0.6.1.4 Configuration
+# OpenClaw Dev-Addon v0.6.1.13 Configuration
+# FIXED: Version bump to trigger HA update (HA ignored 0.6.1.4, last broken was 0.6.1.12)
 # FIXED: Removed problematic SIGCHLD trap that could cause boot-loops
 # FIXED: Removed cleanup-stale-config call that could fail silently  
 # FIXED: Optimized nginx startup (was adding 43s unnecessary delays)
 # FIXED: Changed gateway run to background process with log capture to prevent silent exits
 
 name: OpenClaw Assistant (Dev)
-version: "0.6.1.4"
+version: "0.6.1.13"
 slug: openclaw_assistant_dev
 description: OpenClaw Home Assistant Addon (Development Branch - Trixie)
 url: https://github.com/chillkiller/OpenClawHomeAssistant
