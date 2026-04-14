@@ -182,9 +182,9 @@ RUN ARCH=$(echo ${TARGETARCH:-$(dpkg --print-architecture)} | sed 's|arm64|aarch
     && chmod +x /usr/local/bin/ttyd
 
 # =============================================================================
-# Install OpenClaw v0.6.6 (pinned version)
+# Install OpenClaw v0.7.0 (pinned version)
 # =============================================================================
-RUN npm install -g openclaw@2026.4.10 \
+RUN npm install -g openclaw@2026.4.14 \
     && npm install -g pnpm \
     && npm cache clean --force
 
