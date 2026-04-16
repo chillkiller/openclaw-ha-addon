@@ -34,6 +34,7 @@ ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 ENV NODE_COMPILE_CACHE=/config/.node-compile-cache
 ENV CHROMIUM_CACHE=/tmp/openclaw/chromium_cache
+ENV PLAYWRIGHT_BROWSERS_PATH=/config/.cache/ms-playwright
 ENV CHROME_FLAGS="--disk-cache-dir=/tmp/openclaw/chromium_cache --disk-cache-size=524288000"
 
 # =============================================================================
@@ -141,6 +142,16 @@ RUN mkdir -p /etc/apt/keyrings \
     && rm -rf /var/lib/apt/lists/*
 
 # =============================================================================
+# Playwright Chromium - Single source for browser binaries
+# Replaces system chromium to avoid duplication
+# =============================================================================
+RUN pip install playwright && \
+    playwright install chromium --with-deps && \
+    # Create symlink for compatibility with scripts expecting chromium-browser
+    ln -sf /config/.cache/ms-playwright/chromium-*/chrome-linux/chrome /usr/bin/chromium-browser 2>/dev/null || \
+    ln -sf /config/.cache/ms-playwright/chromium-*/chrome-linux/chrome /usr/bin/chromium 2>/dev/null || echo "Warning: Could not symlink chromium-browser"
+
+# =============================================================================
 # Discord Plugin Dependency (P1)
 # NOTE: Removed from build-time install. @discordjs/opus@0.10.0 has a known
 # NEON intrinsic compile bug on aarch64 with GCC 14+ (celt_inner_prod_neon
@@ -170,7 +181,6 @@ ENV HOMEBREW_BREW_FILE="/home/linuxbrew/.linuxbrew/Homebrew"
 # If video processing is needed, keep. Otherwise can be removed.
 # =============================================================================
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    chromium \
     && rm -rf /var/lib/apt/lists/*
 
 # =============================================================================
