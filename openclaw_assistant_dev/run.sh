@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ==============================================================================
-# OpenClaw Home Assistant Dev-Addon run.sh (v0.7.1.0)
+# OpenClaw Home Assistant Dev-Addon run.sh (v0.7.2)
 # Best-of-All-Worlds: Trixie Full-Stack + coollabsio Persistence + techartdev HA-Integration
 # ==============================================================================
 
@@ -34,6 +34,21 @@ export PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PA
 export LD_LIBRARY_PATH="/home/linuxbrew/.linuxbrew/lib:${LD_LIBRARY_PATH:-}"
 # Force Python package paths in persistent config
 export PYTHONPATH="/config/.local/lib/python3.11/site-packages:${PYTHONPATH:-}"
+
+# ------------------------------------------------------------------------------
+# Section 0b: Playwright Browser Cache
+# Playwright is installed in the image at /opt/ms-playwright.
+# Symlink it to /config/.cache/ms-playwright so tools (crawl4ai etc.)
+# find the browser binary at the expected location.
+# ------------------------------------------------------------------------------
+if [ -d /opt/ms-playwright ] && [ ! -e /config/.cache/ms-playwright ]; then
+  mkdir -p /config/.cache
+  ln -sf /opt/ms-playwright /config/.cache/ms-playwright
+  echo "Playwright browsers symlinked: /config/.cache/ms-playwright -> /opt/ms-playwright"
+elif [ -d /opt/ms-playwright ] && [ -L /config/.cache/ms-playwright ]; then
+  echo "Playwright browsers symlink already present"
+fi
+export PLAYWRIGHT_BROWSERS_PATH=/config/.cache/ms-playwright
 
 # ------------------------------------------------------------------------------
 # Section 1: Read HA Add-on Options

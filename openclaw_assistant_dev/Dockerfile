@@ -34,7 +34,9 @@ ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 ENV NODE_COMPILE_CACHE=/config/.node-compile-cache
 ENV CHROMIUM_CACHE=/tmp/openclaw/chromium_cache
-ENV PLAYWRIGHT_BROWSERS_PATH=/config/.cache/ms-playwright
+# Playwright browsers are installed to /opt/ms-playwright during build.
+# At runtime, run.sh symlinks /config/.cache/ms-playwright -> /opt/ms-playwright
+# so that crawl4ai and other tools find them in the expected location.
 ENV CHROME_FLAGS="--disk-cache-dir=/tmp/openclaw/chromium_cache --disk-cache-size=524288000"
 
 # =============================================================================
@@ -144,12 +146,15 @@ RUN mkdir -p /etc/apt/keyrings \
 # =============================================================================
 # Playwright Chromium - Single source for browser binaries
 # Replaces system chromium to avoid duplication
+# Installs to /opt/ms-playwright (inside the image, NOT /config which is runtime-only)
 # =============================================================================
+ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
 RUN pip install playwright && \
     playwright install chromium --with-deps && \
-    # Create symlink for compatibility with scripts expecting chromium-browser
-    ln -sf /config/.cache/ms-playwright/chromium-*/chrome-linux/chrome /usr/bin/chromium-browser 2>/dev/null || \
-    ln -sf /config/.cache/ms-playwright/chromium-*/chrome-linux/chrome /usr/bin/chromium 2>/dev/null || echo "Warning: Could not symlink chromium-browser"
+    # Create symlinks for compatibility with scripts expecting chromium-browser
+    ln -sf /opt/ms-playwright/chromium-*/chrome-linux/chrome /usr/bin/chromium-browser && \
+    ln -sf /opt/ms-playwright/chromium-*/chrome-linux/chrome /usr/bin/chromium && \
+    echo "Playwright Chromium installed: $(/opt/ms-playwright/chromium-*/chrome-linux/chrome --version 2>/dev/null || echo 'version check failed')"
 
 # =============================================================================
 # Discord Plugin Dependency (P1)
