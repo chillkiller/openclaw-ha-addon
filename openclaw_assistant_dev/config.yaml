@@ -1,4 +1,4 @@
-# OpenClaw Dev-Addon v0.7.2 Configuration
+# OpenClaw Dev-Addon v0.7.3 Configuration
 # BEST-OF-ALL-WORLDS BUILD: Trixie Full-Stack + coollabsio Persistence + techartdev HA-Integration
 # CHANGELOG v0.7.0:
 #   - Added mDNS configuration options for LAN discovery
@@ -6,7 +6,7 @@
 #   - Added custom init script option (coollabsio pattern)
 #   - Version bump to trigger HA rebuild
 name: OpenClaw Assistant (Dev)
-version: "0.7.2"
+version: "0.7.3"
 slug: openclaw_assistant_dev
 description: OpenClaw Home Assistant Addon (Development Branch - Trixie Full-Stack)
 url: https://github.com/chillkiller/OpenClawHomeAssistant
