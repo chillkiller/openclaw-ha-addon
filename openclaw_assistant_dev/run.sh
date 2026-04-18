@@ -129,6 +129,13 @@ CUSTOM_INIT_SCRIPT=$(jq -r '.custom_init_script // empty' "$OPTIONS_FILE")
 
 export TZ="$TZNAME"
 
+# When mDNS/Avahi handles service discovery at the OS level,
+# disable OpenClaw's built-in Bonjour/Zeroconf to avoid duplicate advertisements.
+if [ "$MDNS_MODE" != "off" ]; then
+  export OPENCLAW_DISABLE_BONJOUR=1
+  echo "INFO: OPENCLAW_DISABLE_BONJOUR=1 (Avahi handles mDNS at OS level)"
+fi
+
 echo "INFO: Options loaded (timezone=$TZNAME, gateway_mode=$GATEWAY_MODE, access_mode=$ACCESS_MODE)"
 
 # ------------------------------------------------------------------------------
