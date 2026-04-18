@@ -1,0 +1,4 @@
+build_from:
+  amd64: debian:trixie-slim
+  aarch64: debian:trixie-slim
+  armv7: debian:trixie-slim
