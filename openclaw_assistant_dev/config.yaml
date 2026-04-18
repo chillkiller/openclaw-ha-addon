@@ -35,7 +35,7 @@ options:
   # Also used for allowedOrigins and TLS certificate SANs.
   # NO trailing slash.
   # LAN: "https://192.168.1.10:18789" | DynDNS: "https://openclaw.example.com:18789"
-  gateway_public_url: "
+  gateway_public_url: ""
 
   # Optional: Home Assistant long-lived token (for local HA API scripts/tools)
   homeassistant_token: ""
