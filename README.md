@@ -36,12 +36,6 @@ A powerful Home Assistant add-on that brings OpenClaw's agentic AI capabilities 
 5. Click **Add**
 6. Find "OpenClaw Assistant" in the store and install it
 
-### Method 2: Manual Installation
-
-1. Clone this repository to your Home Assistant's `/addons` directory
-2. Restart Home Assistant
-3. Install the add-on from the local store
-
 ## ⚙️ Configuration
 
 ### Basic Setup
@@ -83,16 +77,14 @@ For detailed configuration options, see [DOCS.md](openclaw_ha_addon/DOCS.md).
 
 ### Via Home Assistant Ingress
 
-1. Go to **Settings** → **Add-ons** → **OpenClaw Assistant (Dev)**
+1. Go to **Settings** → **Add-ons** → **OpenClaw Assistant**
 2. Click **Open Web UI**
-3. The OpenClaw interface opens in a new tab
 
 ### Via Web Terminal
 
 1. Enable `enable_terminal: true` in configuration
-2. Go to **Settings** → **Add-ons** → **OpenClaw Assistant (Dev)**
+2. Go to **Settings** → **Add-ons** → **OpenClaw Assistant**
 3. Click **Open Terminal**
-4. Access the command line directly
 
 ### Via Network
 
