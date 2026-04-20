@@ -19,7 +19,7 @@ https://github.com/chillkiller/openclaw-ha-addon/
 
 ## Documentation
 
-See [DOCS.md](openclaw_assistant/DOCS.md) for detailed documentation.
+See [DOCS.md](openclaw_ha_addon/DOCS.md) for detailed documentation.
 
 ## License
 

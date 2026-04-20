@@ -7,7 +7,7 @@
 #   - Version bump to trigger HA rebuild
 name: OpenClaw Assistant (Dev)
 version: "0.7.5.2"
-slug: openclaw_assistant_dev
+slug: openclaw_ha_addon_dev
 description: OpenClaw Home Assistant Addon (Development Branch - Trixie Full-Stack)
 url: https://github.com/chillkiller/OpenClawHomeAssistant
 arch:
