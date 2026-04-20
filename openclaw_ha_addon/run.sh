@@ -2,13 +2,13 @@
 set -euo pipefail
 
 # ==============================================================================
-# OpenClaw Home Assistant Dev-Addon run.sh (v0.7.5.1)
+# OpenClaw Home Assistant Addon run.sh (v0.7.5.1)
 # Best-of-All-Worlds: Trixie Full-Stack + coollabsio Persistence + techartdev HA-Integration
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
 # Section 0: Log Rotation + Startup Trace File
-# Dev-addon only: log everything to file for debugging startup issues.
+# Add-on only: log everything to file for debugging startup issues.
 # Console output is NOT touched — it flows naturally like the upstream repo.
 # ------------------------------------------------------------------------------
 LOG_DIR="/config/clawd/logs"

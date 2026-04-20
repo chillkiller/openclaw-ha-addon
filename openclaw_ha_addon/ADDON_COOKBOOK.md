@@ -1,4 +1,4 @@
-# 📘 Project: Ultimate OpenClaw Dev-Addon (Sovereign Edition)
+# 📘 Project: Ultimate OpenClaw Home Assistant Addon (Sovereign Edition)
 
 ## 🎯 Vision
 Ein Home Assistant Addon, das OpenClaw in seiner maximalen Leistungsfähigkeit bereitstellt. Es ist **Hardware-aware**, **lokal-fokussiert** und dient als Brücke zu einer lokalen AI-Infrastruktur innerhalb von Home Assistant.
@@ -34,7 +34,7 @@ Ein Home Assistant Addon, das OpenClaw in seiner maximalen Leistungsfähigkeit b
 - Keine GPU-Bibliotheken im Dockerfile nötig.
 - Optionales GPU-Feature: `video: true` in config.yaml für ffmpeg-VAAPI-Encoding (Nice-to-Have).
 
-#### **Zone 3: Dev-Toolchain & ML-Runtimes**
+#### **Zone 3: Toolchain & ML-Runtimes**
 *Werkzeuge zur Skill-Installation und Ausführung.*
 - **Node.js 22 LTS:** Die Basis für OpenClaw.
 - **Python 3.11+ & uv:** High-Performance Package Manager for ML-Skills.
@@ -133,11 +133,11 @@ options:
 - [x] **HA Config:** config.yaml with `video: true` and ML-endpoint options
 - [ ] **Disk Cleanup:** Free up space on SD card/host (if needed)
 
-### **Phase 2: The Dev-Power (Toolchains) & Space Optimization**
+### **Phase 2: The Toolchain Power & Space Optimization**
 - [ ] **Node/Brew Setup:** Stable base for skill management.
 - [ ] **Multi-Stage Build Implementation:** 
   - Mandatory separation of `Build-Stage` and `Runtime-Stage`.
-  - Heavy toolchains (gcc, cmake, dev-headers) stay in Build-Stage.
+  - Heavy toolchains (gcc, cmake, build-headers) stay in Build-Stage.
   - Only final binaries and runtime libs are copied to the final image.
 - [ ] **Layer Hygiene:** Strict requirement to combine `apt-get install` and `rm -rf /var/lib/apt/lists/*` in a single layer to prevent invisible bloat.
 - [ ] **Sovereign Build-Flow:** Manage build cache to prevent "no space left on device" during layer extraction on SD cards.

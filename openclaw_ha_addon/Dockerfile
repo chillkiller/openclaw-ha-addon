@@ -1,4 +1,4 @@
-# Dockerfile for OpenClaw Dev-Addon v0.7.5.1
+# Dockerfile for OpenClaw Home Assistant Addon v0.7.5.1
 # Multi-stage build for disk space optimization
 # FIXED: Version bump to trigger HA update (HA ignored 0.6.1.4, last broken was 0.6.1.12)
 # FIXED: Added sudo package, HEALTHCHECK for HA Watchdog, run.sh root-safety

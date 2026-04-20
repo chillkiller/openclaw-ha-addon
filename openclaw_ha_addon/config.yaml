@@ -1,14 +1,14 @@
-# OpenClaw Dev-Addon v0.7.5 Configuration
+# OpenClaw Home Assistant Addon v0.7.5 Configuration
 # BEST-OF-ALL-WORLDS BUILD: Trixie Full-Stack + coollabsio Persistence + techartdev HA-Integration
 # CHANGELOG v0.7.0:
 #   - Added mDNS configuration options for LAN discovery
 #   - Added runtime apt packages option (coollabsio pattern)
 #   - Added custom init script option (coollabsio pattern)
 #   - Version bump to trigger HA rebuild
-name: OpenClaw Assistant (Dev)
+name: OpenClaw Assistant
 version: "0.7.5.2"
 slug: openclaw_ha_addon
-description: OpenClaw Home Assistant Addon (Development Branch - Trixie Full-Stack)
+description: OpenClaw Home Assistant Addon (Trixie Full-Stack)
 url: https://github.com/chillkiller/OpenClawHomeAssistant
 arch:
   - amd64
@@ -23,7 +23,7 @@ host_network: true
 # Home Assistant Ingress (UI inside the add-on page)
 ingress: true
 ingress_port: 48099
-panel_title: OpenClaw Assistant (Dev)
+panel_title: OpenClaw Assistant
 panel_icon: mdi:robot
 
 map:

@@ -34,7 +34,7 @@ A powerful Home Assistant add-on that brings OpenClaw's agentic AI capabilities 
 3. Select **Add repository**
 4. Enter: `https://github.com/chillkiller/openclaw-ha-addon`
 5. Click **Add**
-6. Find "OpenClaw Assistant (Dev)" in the store and install it
+6. Find "OpenClaw Assistant" in the store and install it
 
 ### Method 2: Manual Installation
 
@@ -183,6 +183,6 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 
 ---
 
-**Note**: This is the development version of the add-on. For production use, consider using the stable release when available.
+**Note**: This is the production version of the add-on.
 
 Made with ❤️ by the OpenClaw community
