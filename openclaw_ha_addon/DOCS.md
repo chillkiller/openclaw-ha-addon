@@ -57,9 +57,10 @@ When you open the add-on page in Home Assistant, nginx serves a landing page wit
 ## 2. Installation
 
 1. In Home Assistant, go to **Settings → Add-ons → Add-on store**
-2. Click ⋮ (top-right) → **Repositories** → paste one of:
-   - **Stable**: `https://github.com/techartdev/OpenClawHomeAssistant`
-   - **Dev/Experimental**: `https://github.com/techartdev/OpenClawHomeAssistant-dev`
+2. Click ⋮ (top-right) → **Repositories** → paste:
+   ```
+   https://github.com/chillkiller/openclaw-ha-addon
+   ```
 3. Find and install **OpenClaw Assistant**
 4. Click **Start**
 
@@ -390,11 +391,8 @@ openclaw config set gateway.http.endpoints.chatCompletions.enabled true
 
 Via HACS:
 1. In HACS, add as a custom repository:
-   - Repository: `https://github.com/techartdev/OpenClawHomeAssistantIntegration`
+   - Repository: `https://github.com/chillkiller/openclaw-home-assistant-integration`
    - Category: **Integration**
-2. Install and restart Home Assistant
-
-Or manually: copy `custom_components/openclaw` from the repo into your HA config directory.
 
 **Step 3 — Add the integration**
 
@@ -424,7 +422,7 @@ type: custom:openclaw-chat-card
 
 The card includes message history, typing indicator, voice input, wake-word support, and TTS responses.
 
-> **Works with standalone OpenClaw too.** The integration doesn't require the HA addon — it connects to any reachable OpenClaw gateway over HTTP/HTTPS. See the [integration README](https://github.com/techartdev/OpenClawHomeAssistantIntegration) for remote connection details.
+> **Works with standalone OpenClaw too.** The integration doesn't require the HA addon — it connects to any reachable OpenClaw gateway over HTTP/HTTPS. See the [integration README](https://github.com/chillkiller/openclaw-home-assistant-integration) for remote connection details.
 
 ---
 
