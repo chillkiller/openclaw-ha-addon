@@ -391,7 +391,7 @@ openclaw config set gateway.http.endpoints.chatCompletions.enabled true
 
 Via HACS:
 1. In HACS, add as a custom repository:
-   - Repository: `https://github.com/chillkiller/openclaw-home-assistant-integration`
+   - Repository: `https://github.com/chillkiller/openclaw-ha-addon`
    - Category: **Integration**
 
 **Step 3 — Add the integration**
@@ -422,7 +422,7 @@ type: custom:openclaw-chat-card
 
 The card includes message history, typing indicator, voice input, wake-word support, and TTS responses.
 
-> **Works with standalone OpenClaw too.** The integration doesn't require the HA addon — it connects to any reachable OpenClaw gateway over HTTP/HTTPS. See the [integration README](https://github.com/chillkiller/openclaw-home-assistant-integration) for remote connection details.
+> **Works with standalone OpenClaw too.** The integration doesn't require the HA addon — it connects to any reachable OpenClaw gateway over HTTP/HTTPS. See the [integration README](https://github.com/chillkiller/openclaw-ha-addon) for remote connection details.
 
 ---
 
