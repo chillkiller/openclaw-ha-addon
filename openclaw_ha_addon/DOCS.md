@@ -260,7 +260,7 @@ All options are set via **Settings → Apps/Add-ons → OpenClaw Assistant → C
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `timezone` | string | `Europe/Sofia` | Timezone for the add-on (e.g., `America/New_York`, `Europe/London`) |
+| `timezone` | string | `Europe/Berlin` | Timezone for the add-on (e.g., `America/New_York`, `Europe/London`) |
 
 ### Gateway
 

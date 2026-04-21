@@ -4,7 +4,7 @@
 
 | Addon Version | OpenClaw Version | Release Date |
 |--------------|------------------|---------------|
-| 0.6.0.9      | 2026.4.10      | 2026-04-12   |
+| 0.7.5.1   | See [CHANGELOG.md](CHANGELOG.md) for current OpenClaw version | 2026-04-20 |
 
 ## RAM Modes
 

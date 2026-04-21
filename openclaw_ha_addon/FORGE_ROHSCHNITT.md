@@ -102,7 +102,7 @@ echo "INFO: FORGE memory limits: HEAP=${MAX_HEAP}MB, TMPFS_TOTAL=${MAX_TMPFS_TOT
 | eMMC-I/O-Blockierung | Mittel | Gateway-Timeout | tmpfs auf 1.4GB reduziert |
 | Bootzeit > 120s | Niedrig | Startup-Failure | sync nur bei Änderung |
 
-##empfohlene Tests
+## Empfohlene Tests
 
 - [ ] Pi3 1GB RAM: Heap 1GB + tmpfs 512MB → Start ohne OOM
 - [ ] Pi4 4GB RAM: Heap 2GB + tmpfs 1.4GB → Startup < 90s
