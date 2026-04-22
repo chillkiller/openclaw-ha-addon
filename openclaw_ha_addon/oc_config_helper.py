@@ -201,31 +201,46 @@ def set_mdns_settings(
     """
     Configure mDNS/Bonjour discovery for the gateway.
 
-    Always writes discovery.mdns.mode='off' to config to disable the built-in
-    Bonjour advertiser (causes infinite probing loops in loopback-bound containers).
-    Avahi handles mDNS at the OS level when mdns_mode is not 'off'.
+    EXCLUSIVE MODE LOGIC:
+    - off: discovery.mdns.mode='off' (no mDNS)
+    - minimal/full: discovery.mdns.mode set to requested value (Gateway internal mDNS)
+    - avahi: discovery.mdns.mode='off' (Avahi handles mDNS, Gateway disabled)
     """
     cfg = read_config() or {}
 
-    # Always disable built-in Bonjour — it conflicts with Avahi and
-    # cannot reach mDNS multicast groups in loopback-bound containers.
+    # Validate mode
+    valid_modes = ["off", "minimal", "full", "avahi"]
+    if mode not in valid_modes:
+        print(f"ERROR: Invalid mDNS mode '{mode}'. Must be one of: {', '.join(valid_modes)}")
+        return False
+
     cfg.setdefault("discovery", {})
-    cfg["discovery"]["mdns"] = {"mode": "off"}
 
-    if write_config(cfg):
-        print("INFO: Set discovery.mdns.mode=off in config (Bonjour advertiser disabled)")
-    else:
-        print("WARN: Failed to write discovery.mdns.mode to config")
-
-    if mode == "off":
-        print("INFO: mDNS disabled (mode=off)")
+    # EXCLUSIVE MODE HANDLING
+    if mode == "avahi":
+        # Avahi mode: Gateway mDNS explicitly OFF to prevent collisions
+        cfg["discovery"]["mdns"] = {"mode": "off"}
+        if write_config(cfg):
+            print("INFO: Avahi mode - Gateway mDNS disabled (discovery.mdns.mode=off)")
+        else:
+            print("WARN: Failed to write discovery.mdns.mode to config")
         return True
-
-    print(f"INFO: mDNS requested (mode={mode}, port={service_port})")
-    print("INFO: Built-in Bonjour disabled — Avahi handles mDNS at OS level")
-    print("INFO: Ensure gateway.bind is 'lan' or 'tailnet' for LAN discovery")
-
-    return True
+    elif mode == "off":
+        # Off mode: No mDNS at all
+        cfg["discovery"]["mdns"] = {"mode": "off"}
+        if write_config(cfg):
+            print("INFO: mDNS disabled (discovery.mdns.mode=off)")
+        else:
+            print("WARN: Failed to write discovery.mdns.mode to config")
+        return True
+    else:
+        # minimal/full: Gateway internal mDNS mode active
+        cfg["discovery"]["mdns"] = {"mode": mode}
+        if write_config(cfg):
+            print(f"INFO: Gateway mDNS enabled (discovery.mdns.mode={mode})")
+        else:
+            print("WARN: Failed to write discovery.mdns.mode to config")
+        return True
 
 
 def cleanup_stale_config_keys():

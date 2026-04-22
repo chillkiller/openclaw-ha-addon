@@ -96,8 +96,9 @@ options:
 
   # mDNS/Bonjour configuration for LAN discovery
   # off: no mDNS advertisement
-  # minimal: advertise gateway service (default)
-  # full: verbose mDNS with all metadata
+  # minimal: advertise gateway service via internal Gateway mode (default)
+  # full: verbose mDNS with all metadata via internal Gateway mode
+  # avahi: use Avahi daemon for OS-level mDNS (no Gateway mode)
   mdns_mode: minimal
   # Hostname to advertise (empty = auto-detect from HA hostname)
   mdns_host_name: ""
@@ -160,7 +161,7 @@ schema:
   enable_openai_api: bool?
   force_ipv4_dns: bool?
   nginx_log_level: list(full|minimal)?
-  mdns_mode: list(off|minimal|full)?
+  mdns_mode: list(off|minimal|full|avahi)?
   mdns_host_name: str?
   mdns_service_port: int(1,65535)?
   mdns_interface_name: str?

@@ -971,53 +971,128 @@ fi
 echo "INFO: Section 22 done (nginx started)"
 
 # ------------------------------------------------------------------------------
-# Section 23: mDNS / Avahi Configuration
+# Section 23: mDNS / Avahi Configuration (EXCLUSIVE MODES)
 # ------------------------------------------------------------------------------
-if [ "$MDNS_MODE" != "off" ]; then
-  # Start D-Bus system bus (required by avahi-daemon in containers)
-  if ! pgrep dbus-daemon >/dev/null 2>&1; then
-    if command -v dbus-daemon >/dev/null 2>&1; then
-      mkdir -p /run/dbus
-      dbus-daemon --system --fork 2>/dev/null || echo "WARN: dbus-daemon failed to start"
-      # Fix: avahi-daemon (user 'avahi') needs access to D-Bus socket
-      if [ -S /run/dbus/system_bus_socket ]; then
-        chmod 755 /run/dbus/ 2>/dev/null || echo "WARN: Failed to chmod /run/dbus/"
-        echo "INFO: D-Bus system bus started"
+# STRICT EXCLUSIVITY: Only ONE mDNS mechanism can be active at a time
+# - off: nothing runs
+# - minimal/full: ONLY Gateway internal mDNS mode (no Avahi, no D-Bus)
+# - avahi: ONLY Avahi daemon + D-Bus (Gateway mDNS explicitly OFF)
+# ------------------------------------------------------------------------------
+
+# Determine hostname for mDNS (used by both Gateway and Avahi modes)
+# Priority: user-provided mdns_host_name > container hostname
+if [ -n "$MDNS_HOST_NAME" ] && [[ "$MDNS_HOST_NAME" =~ ^[a-zA-Z0-9-]+$ ]]; then
+  MDNS_HOSTNAME="$MDNS_HOST_NAME"
+else
+  # Auto-detect from container hostname (NO random generation)
+  CONTAINER_HOSTNAME=$(hostname 2>/dev/null || echo "openclaw")
+  # Sanitize: remove special chars, keep only alphanumeric and hyphens
+  MDNS_HOSTNAME=$(echo "$CONTAINER_HOSTNAME" | sed 's/[^a-zA-Z0-9-]//g')
+fi
+# Ensure .local suffix
+MDNS_HOSTNAME="${MDNS_HOSTNAME}.local"
+
+# Add .local entry to avahi hosts file (used by Avahi mode)
+LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+if [ -n "$LAN_IP" ] && [ -n "$MDNS_HOSTNAME" ]; then
+  mkdir -p /etc/avahi
+  # Update hosts file (replace existing entry for this hostname)
+  if grep -q "$MDNS_HOSTNAME" /etc/avahi/hosts 2>/dev/null; then
+    sed -i "s/^.*$MDNS_HOSTNAME.*$/$LAN_IP $MDNS_HOSTNAME/" /etc/avahi/hosts
+  else
+    echo "$LAN_IP $MDNS_HOSTNAME" >> /etc/avahi/hosts
+  fi
+  echo "INFO: Hostname set to $MDNS_HOSTNAME for mDNS (IP: $LAN_IP)"
+fi
+
+# EXCLUSIVE MODE HANDLING
+case "$MDNS_MODE" in
+  off)
+    # MODE 1: OFF - Nothing runs
+    echo "INFO: mDNS mode is OFF - no mDNS services active"
+    
+    # Ensure Gateway mDNS is explicitly disabled
+    if [ -f "$HELPER_PATH" ] && [ -f "$OPENCLAW_CONFIG_PATH" ]; then
+      python3 "$HELPER_PATH" set-mdns-settings "off" 0 "" 2>/dev/null || true
+    fi
+    ;;
+    
+  minimal|full)
+    # MODE 2: GATEWAY INTERNAL ONLY - No Avahi, no D-Bus
+    echo "INFO: mDNS mode is $MDNS_MODE - using Gateway internal mDNS only (Avahi disabled)"
+    
+    # Configure Gateway internal mDNS mode
+    MDNS_HOSTNAME_FOR_OC="${MDNS_HOSTNAME%.local}"
+    MDNS_PORT="${MDNS_SERVICE_PORT:-$GATEWAY_PORT}"
+    if [ "$ENABLE_HTTPS_PROXY" = "true" ]; then
+      MDNS_PORT="$GATEWAY_PORT"
+      echo "INFO: mDNS advertising public HTTPS port $MDNS_PORT"
+    fi
+    
+    if [ -f "$HELPER_PATH" ] && [ -f "$OPENCLAW_CONFIG_PATH" ]; then
+      if python3 "$HELPER_PATH" set-mdns-settings "$MDNS_MODE" "$MDNS_PORT" "$MDNS_HOSTNAME_FOR_OC" 2>/dev/null; then
+        echo "INFO: Gateway mDNS configured (mode=$MDNS_MODE, port=$MDNS_PORT, host=$MDNS_HOSTNAME_FOR_OC)"
       else
-        echo "WARN: D-Bus socket not found after start"
+        echo "WARN: Gateway mDNS configuration via helper failed"
       fi
     else
-      echo "WARN: dbus-daemon not installed; avahi may fail to start"
+      echo "WARN: oc_config_helper.py not found; skipping mDNS config"
     fi
-  else
-    echo "INFO: D-Bus system bus already running"
-  fi
-
-  # Add .local entry to avahi hosts if MDNS_HOST_NAME is configured
-  if [ -n "$MDNS_HOST_NAME" ]; then
-    # Add .local entry to avahi hosts file for proper resolution
-    LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
-    if [ -n "$LAN_IP" ]; then
-      grep -q "$MDNS_HOST_NAME.local" /etc/avahi/hosts 2>/dev/null || \
-        echo "$LAN_IP $MDNS_HOST_NAME.local" >> /etc/avahi/hosts
+    ;;
+    
+  avahi)
+    # MODE 3: AVAHI ONLY - Avahi + D-Bus, Gateway mDNS OFF
+    echo "INFO: mDNS mode is avahi - using Avahi daemon only (Gateway mDNS disabled)"
+    
+    # Ensure Gateway mDNS is explicitly OFF to prevent collisions
+    if [ -f "$HELPER_PATH" ] && [ -f "$OPENCLAW_CONFIG_PATH" ]; then
+      python3 "$HELPER_PATH" set-mdns-settings "off" 0 "" 2>/dev/null || true
+      echo "INFO: Gateway mDNS explicitly disabled (collision prevention)"
     fi
-    echo "INFO: Hostname set to $MDNS_HOST_NAME for mDNS"
-  fi
-
-  # Start avahi-daemon if available
-  if command -v avahi-daemon >/dev/null 2>&1; then
-    if ! pgrep avahi-daemon >/dev/null 2>&1; then
-      echo "INFO: Starting avahi-daemon for mDNS discovery..."
-      # Ensure avahi socket dir exists
-      mkdir -p /run/avahi-daemon 2>/dev/null || true
-      # Generate minimal avahi config if missing
-      if [ ! -f /etc/avahi/avahi-daemon.conf ]; then
-        mkdir -p /etc/avahi
-        cat > /etc/avahi/avahi-daemon.conf << 'AVAHI_CONF'
+    
+    # Start D-Bus system bus (required by avahi-daemon in containers)
+    if ! pgrep dbus-daemon >/dev/null 2>&1; then
+      if command -v dbus-daemon >/dev/null 2>&1; then
+        mkdir -p /run/dbus
+        # Clean up stale pid file and socket from previous runs
+        rm -f /run/dbus/pid /run/dbus/system_bus_socket 2>/dev/null || true
+        dbus-daemon --system --fork 2>/dev/null || echo "WARN: dbus-daemon failed to start"
+        # Wait for D-Bus socket to be available (up to 5 seconds)
+        for _i in $(seq 1 10); do
+          if [ -S /run/dbus/system_bus_socket ]; then
+            echo "INFO: D-Bus system bus started"
+            break
+          fi
+          sleep 0.5
+        done
+        if [ ! -S /run/dbus/system_bus_socket ]; then
+          echo "WARN: D-Bus socket not found after start (avahi may fail)"
+        fi
+      else
+        echo "WARN: dbus-daemon not installed; avahi may fail to start"
+      fi
+    else
+      echo "INFO: D-Bus system bus already running"
+    fi
+    
+    # Start avahi-daemon
+    if command -v avahi-daemon >/dev/null 2>&1; then
+      if ! pgrep avahi-daemon >/dev/null 2>&1; then
+        echo "INFO: Starting avahi-daemon for mDNS discovery..."
+        # Ensure avahi socket dir exists with correct permissions
+        mkdir -p /run/avahi-daemon 2>/dev/null || true
+        chmod 755 /run/avahi-daemon 2>/dev/null || true
+        # Clean up stale pid file
+        rm -f /run/avahi-daemon/pid 2>/dev/null || true
+        # Generate minimal avahi config if missing
+        if [ ! -f /etc/avahi/avahi-daemon.conf ]; then
+          mkdir -p /etc/avahi
+          cat > /etc/avahi/avahi-daemon.conf << 'AVAHI_CONF'
 [server]
 use-ipv4=yes
 use-ipv6=no
 disallow-other-stacks=yes
+host-name=auto
 
 [wide-area]
 enable-wide-area=no
@@ -1026,57 +1101,33 @@ enable-wide-area=no
 publish-hinfo=no
 publish-addresses=yes
 publish-domain=yes
+publish-workstation=no
 AVAHI_CONF
-      fi
-      avahi-daemon -D 2>/dev/null || echo "WARN: avahi-daemon failed to start (mDNS may not work)"
-      sleep 1
-      if pgrep avahi-daemon >/dev/null 2>&1; then
-        echo "INFO: avahi-daemon started successfully"
+        fi
+        # Start avahi-daemon with --no-drop-root (required in containers)
+        # and --no-chroot to avoid chroot issues
+        avahi-daemon -D --no-drop-root --no-chroot 2>/dev/null || echo "WARN: avahi-daemon failed to start (mDNS may not work)"
+        sleep 2
+        if pgrep avahi-daemon >/dev/null 2>&1; then
+          echo "INFO: avahi-daemon started successfully"
+        else
+          echo "WARN: avahi-daemon not running after start attempt"
+        fi
       else
-        echo "WARN: avahi-daemon not running after start attempt"
+        echo "INFO: avahi-daemon already running"
       fi
     else
-      echo "INFO: avahi-daemon already running"
+      echo "WARN: avahi-daemon not installed — mDNS will not work. Install avahi-daemon in the Dockerfile."
     fi
-  else
-    echo "WARN: avahi-daemon not installed — mDNS will not work. Install avahi-daemon in the Dockerfile."
-  fi
+    ;;
+    
+  *)
+    echo "WARN: Unknown mdns_mode '$MDNS_MODE' - treating as OFF"
+    ;;
 
-  # Configure mDNS in OpenClaw config
-  MDNS_HOSTNAME="${MDNS_HOST_NAME:-$(hostname -f 2>/dev/null || hostname)}"
-  MDNS_PORT="${MDNS_SERVICE_PORT:-$GATEWAY_PORT}"
-  if [ "$ENABLE_HTTPS_PROXY" = "true" ]; then
-    # In HTTPS mode, mDNS must advertise GATEWAY_PORT (the public HTTPS port, e.g. 18789)
-    # NOT NGINX_PORT (which is the Ingress port 48099)
-    MDNS_PORT="$GATEWAY_PORT"
-    echo "INFO: mDNS advertising public HTTPS port $MDNS_PORT"
-  fi
+esac
 
-  if [ -f "$HELPER_PATH" ] && [ -f "$OPENCLAW_CONFIG_PATH" ]; then
-    if python3 "$HELPER_PATH" set-mdns-settings "$MDNS_MODE" "$MDNS_PORT" "$MDNS_HOSTNAME" 2>/dev/null; then
-      echo "INFO: mDNS configured (mode=$MDNS_MODE, port=$MDNS_PORT, host=$MDNS_HOSTNAME)"
-    else
-      echo "WARN: mDNS configuration via helper failed"
-    fi
-  else
-    echo "WARN: oc_config_helper.py not found; skipping mDNS config"
-  fi
-
-  # Optional: publish _openclaw._tcp service via avahi if avahi-publish is available
-  if [ "$MDNS_MODE" != "off" ] && command -v avahi-publish-service >/dev/null 2>&1; then
-    MDNS_IFACE_FLAG=""
-    if [ -n "$MDNS_INTERFACE_NAME" ]; then
-      MDNS_IFACE_FLAG="--iface=$MDNS_INTERFACE_NAME"
-    fi
-    avahi-publish-service $MDNS_IFACE_FLAG "OpenClaw Gateway" _openclaw._tcp "$MDNS_PORT" \
-      "mode=$MDNS_MODE" "hostname=$MDNS_HOSTNAME" &
-    echo "INFO: mDNS service _openclaw._tcp published (port=$MDNS_PORT)"
-  fi
-else
-  echo "INFO: mDNS mode is off; skipping avahi and mDNS configuration"
-fi
-
-echo "INFO: Section 23 done (mDNS/avahi)"
+echo "INFO: Section 23 done (mDNS/avahi - exclusive mode: $MDNS_MODE)"
 # ------------------------------------------------------------------------------
 # Section 24: Background Token Re-render
 # ------------------------------------------------------------------------------
