@@ -1055,7 +1055,9 @@ case "$MDNS_MODE" in
         mkdir -p /run/dbus
         chmod 755 /run/dbus 2>/dev/null || true
         # Clean up stale pid file and socket from previous runs
+        # IMPORTANT: Also clean Homebrew dbus paths (conflicts with system dbus)
         rm -f /run/dbus/pid /run/dbus/system_bus_socket 2>/dev/null || true
+        rm -f /home/linuxbrew/.linuxbrew/var/run/dbus/pid /home/linuxbrew/.linuxbrew/var/run/dbus/system_bus_socket 2>/dev/null || true
         # Start dbus-daemon with explicit config and verbose error output
         if dbus-daemon --system --fork 2>&1; then
           echo "INFO: D-Bus system bus started"
