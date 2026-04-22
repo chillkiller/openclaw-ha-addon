@@ -1,12 +1,14 @@
-# OpenClaw Home Assistant Addon v0.7.6 Configuration
+# OpenClaw Home Assistant Addon v0.7.5.2 Configuration
 # BEST-OF-ALL-WORLDS BUILD: Trixie Full-Stack + coollabsio Persistence + techartdev HA-Integration
-# CHANGELOG v0.7.0:
-#   - Added mDNS configuration options for LAN discovery
-#   - Added runtime apt packages option (coollabsio pattern)
-#   - Added custom init script option (coollabsio pattern)
-#   - Version bump to trigger HA rebuild
+# CHANGELOG v0.7.5.2:
+#   - FIXED: dbus-daemon startup - wait for socket availability before proceeding
+#   - FIXED: avahi-daemon startup - use --no-drop-root --no-chroot for container compatibility
+#   - FIXED: mDNS hostname collision - generate unique hostname from container name
+#   - FIXED: avahi socket directory permissions (chmod 755)
+#   - FIXED: stale pid file cleanup for both dbus and avahi
+#   - FIXED: exclusive mDNS mode selection (off | minimal/full | avahi) - no collisions
 name: OpenClaw Assistant
-version: "0.7.5.1"
+version: "0.7.5.2"
 slug: openclaw_ha_addon
 description: OpenClaw Home Assistant Addon (Trixie Full-Stack)
 url: https://github.com/chillkiller/OpenClawHomeAssistant
