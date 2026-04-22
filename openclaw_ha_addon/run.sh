@@ -1056,14 +1056,42 @@ case "$MDNS_MODE" in
         # IMPORTANT: chmod 777 required because dbus-daemon runs as 'message+' user
         chmod 777 /run/dbus 2>/dev/null || true
         # Clean up stale pid file and socket from previous runs
-        # IMPORTANT: Also clean Homebrew dbus paths (conflicts with system dbus)
         rm -f /run/dbus/pid /run/dbus/system_bus_socket 2>/dev/null || true
         rm -f /home/linuxbrew/.linuxbrew/var/run/dbus/pid /home/linuxbrew/.linuxbrew/var/run/dbus/system_bus_socket 2>/dev/null || true
-        # Start dbus-daemon with explicit config and verbose error output
-        # IMPORTANT: Force socket path to /run/dbus/system_bus_socket
-        # (Homebrew dbus may try to use /home/linuxbrew/.linuxbrew/var/run/dbus/)
-        DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket \
-          dbus-daemon --system --fork 2>&1 || echo "WARN: dbus-daemon failed to start"
+        # IMPORTANT: Create Homebrew dbus path (required by Homebrew dbus config)
+        mkdir -p /home/linuxbrew/.linuxbrew/var/run/dbus 2>/dev/null || true
+        chown messagebus:messagebus /home/linuxbrew/.linuxbrew/var/run/dbus 2>/dev/null || true
+        chmod 755 /home/linuxbrew/.linuxbrew/var/run/dbus 2>/dev/null || true
+        # IMPORTANT: Create custom dbus config to override Homebrew defaults
+        # (Homebrew dbus config uses /home/linuxbrew/.linuxbrew/var/run/dbus/)
+        mkdir -p /etc/dbus-1 2>/dev/null || true
+        cat > /etc/dbus-1/system.conf << 'DBUS_CONF'
+<!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd"
+<busconfig>
+  <type>system</type>
+  <user>messagebus</user>
+  <fork/>
+  <pidfile>/run/dbus/pid</pidfile>
+  <listen>unix:path=/run/dbus/system_bus_socket</listen>
+  <auth>EXTERNAL</auth>
+  <policy context="default">
+    <allow user="*"/>
+    <deny own="*"/>
+    <deny send_type="method_call"/>
+    <allow send_type="signal"/>
+    <allow send_requested_reply="true" send_type="method_return"/>
+    <allow send_requested_reply="true" send_type="error"/>
+    <allow receive_type="method_call"/>
+    <allow receive_type="method_return"/>
+    <allow receive_type="error"/>
+    <allow receive_type="signal"/>
+    <allow send_destination="org.freedesktop.DBus" send_interface="org.freedesktop.DBus" />
+  </policy>
+</busconfig>
+DBUS_CONF
+        # Start dbus-daemon with custom config
+        dbus-daemon --system --fork 2>&1 || echo "WARN: dbus-daemon failed to start"
         # Wait for D-Bus socket to be available (up to 5 seconds)
         for _i in $(seq 1 10); do
           if [ -S /run/dbus/system_bus_socket ]; then
