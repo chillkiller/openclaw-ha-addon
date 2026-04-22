@@ -1053,21 +1053,21 @@ case "$MDNS_MODE" in
     if ! pgrep dbus-daemon >/dev/null 2>&1; then
       if command -v dbus-daemon >/dev/null 2>&1; then
         mkdir -p /run/dbus
-        chmod 755 /run/dbus 2>/dev/null || true
+        # IMPORTANT: chmod 777 required because dbus-daemon runs as 'message+' user
+        chmod 777 /run/dbus 2>/dev/null || true
         # Clean up stale pid file and socket from previous runs
         # IMPORTANT: Also clean Homebrew dbus paths (conflicts with system dbus)
         rm -f /run/dbus/pid /run/dbus/system_bus_socket 2>/dev/null || true
         rm -f /home/linuxbrew/.linuxbrew/var/run/dbus/pid /home/linuxbrew/.linuxbrew/var/run/dbus/system_bus_socket 2>/dev/null || true
         # Start dbus-daemon with explicit config and verbose error output
-        if dbus-daemon --system --fork 2>&1; then
-          echo "INFO: D-Bus system bus started"
-        else
-          echo "WARN: dbus-daemon failed to start (avahi may fail)"
-        fi
+        # IMPORTANT: Force socket path to /run/dbus/system_bus_socket
+        # (Homebrew dbus may try to use /home/linuxbrew/.linuxbrew/var/run/dbus/)
+        DBUS_SYSTEM_BUS_ADDRESS=unix:path=/run/dbus/system_bus_socket \
+          dbus-daemon --system --fork 2>&1 || echo "WARN: dbus-daemon failed to start"
         # Wait for D-Bus socket to be available (up to 5 seconds)
         for _i in $(seq 1 10); do
           if [ -S /run/dbus/system_bus_socket ]; then
-            echo "INFO: D-Bus socket available"
+            echo "INFO: D-Bus system bus started"
             break
           fi
           sleep 0.5
@@ -1088,7 +1088,7 @@ case "$MDNS_MODE" in
         echo "INFO: Starting avahi-daemon for mDNS discovery..."
         # Ensure avahi socket dir exists with correct permissions
         mkdir -p /run/avahi-daemon 2>/dev/null || true
-        chmod 755 /run/avahi-daemon 2>/dev/null || true
+        chmod 777 /run/avahi-daemon 2>/dev/null || true
         # Clean up stale pid file
         rm -f /run/avahi-daemon/pid 2>/dev/null || true
         # Generate minimal avahi config if missing
