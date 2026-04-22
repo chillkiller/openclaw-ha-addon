@@ -404,7 +404,7 @@ echo "INFO: Section 6 done (Homebrew persistence)"
 # Section 7: OpenClaw Skills Sync (Best-of-All-Worlds)
 # ------------------------------------------------------------------------------
 # Sync built-in skills from image to persistent storage so they survive rebuilds.
-IMAGE_SKILLS_DIR="/config/.npm-global/lib/node_modules/openclaw/skills"
+IMAGE_SKILLS_DIR="/usr/lib/node_modules/openclaw/skills"
 PERSISTENT_SKILLS_DIR="/config/.openclaw/skills"
 
 if [ -d "$IMAGE_SKILLS_DIR" ] && [ ! -L "$IMAGE_SKILLS_DIR" ]; then
@@ -420,7 +420,7 @@ if [ -d "$IMAGE_SKILLS_DIR" ] && [ ! -L "$IMAGE_SKILLS_DIR" ]; then
 elif [ -L "$IMAGE_SKILLS_DIR" ]; then
   echo "INFO: Skills already linked to persistent storage"
 else
-  echo "WARN: Skills directory not found at $IMAGE_SKILLS_DIR"
+  echo "INFO: Skills directory not found at $IMAGE_SKILLS_DIR (may be installed elsewhere)"
 fi
 
 echo "INFO: Section 7 done (skills sync)"
