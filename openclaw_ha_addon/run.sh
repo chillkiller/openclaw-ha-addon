@@ -981,13 +981,12 @@ echo "INFO: Section 22 done (nginx started)"
 
 # Determine hostname for mDNS (used by both Gateway and Avahi modes)
 # Priority: user-provided mdns_host_name > container hostname
-if [ -n "$MDNS_HOST_NAME" ] && [[ "$MDNS_HOST_NAME" =~ ^[a-zA-Z0-9-]+$ ]]; then
+if [ -n "$MDNS_HOST_NAME" ]; then
+  # Use user-provided hostname
   MDNS_HOSTNAME="$MDNS_HOST_NAME"
 else
-  # Auto-detect from container hostname (NO random generation)
-  CONTAINER_HOSTNAME=$(hostname 2>/dev/null || echo "openclaw")
-  # Sanitize: remove special chars, keep only alphanumeric and hyphens
-  MDNS_HOSTNAME=$(echo "$CONTAINER_HOSTNAME" | sed 's/[^a-zA-Z0-9-]//g')
+  # Auto-detect from container hostname (NO random generation, NO sanitization)
+  MDNS_HOSTNAME=$(hostname 2>/dev/null || echo "openclaw")
 fi
 # Ensure .local suffix
 MDNS_HOSTNAME="${MDNS_HOSTNAME}.local"
