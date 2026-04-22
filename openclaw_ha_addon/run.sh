@@ -979,8 +979,9 @@ if [ "$MDNS_MODE" != "off" ]; then
     if command -v dbus-daemon >/dev/null 2>&1; then
       mkdir -p /run/dbus
       dbus-daemon --system --fork 2>/dev/null || echo "WARN: dbus-daemon failed to start"
-      sleep 1
+      # Fix: avahi-daemon (user 'avahi') needs access to D-Bus socket
       if [ -S /run/dbus/system_bus_socket ]; then
+        chmod 755 /run/dbus/ 2>/dev/null || echo "WARN: Failed to chmod /run/dbus/"
         echo "INFO: D-Bus system bus started"
       else
         echo "WARN: D-Bus socket not found after start"
