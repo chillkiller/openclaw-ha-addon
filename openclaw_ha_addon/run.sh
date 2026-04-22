@@ -1053,13 +1053,19 @@ case "$MDNS_MODE" in
     if ! pgrep dbus-daemon >/dev/null 2>&1; then
       if command -v dbus-daemon >/dev/null 2>&1; then
         mkdir -p /run/dbus
+        chmod 755 /run/dbus 2>/dev/null || true
         # Clean up stale pid file and socket from previous runs
         rm -f /run/dbus/pid /run/dbus/system_bus_socket 2>/dev/null || true
-        dbus-daemon --system --fork 2>/dev/null || echo "WARN: dbus-daemon failed to start"
+        # Start dbus-daemon with explicit config and verbose error output
+        if dbus-daemon --system --fork 2>&1; then
+          echo "INFO: D-Bus system bus started"
+        else
+          echo "WARN: dbus-daemon failed to start (avahi may fail)"
+        fi
         # Wait for D-Bus socket to be available (up to 5 seconds)
         for _i in $(seq 1 10); do
           if [ -S /run/dbus/system_bus_socket ]; then
-            echo "INFO: D-Bus system bus started"
+            echo "INFO: D-Bus socket available"
             break
           fi
           sleep 0.5
