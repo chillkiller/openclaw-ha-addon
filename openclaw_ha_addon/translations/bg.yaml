@@ -120,7 +120,7 @@ configuration:
 
   mdns_host_name:
     name: mDNS име на хост
-    description: Опционално име на хост за mDNS реклама (напр. homeassistant.local). Ако е празно, автоматично се открива от контейнера.
+    description: Опционално име на хост за mDNS реклама (напр. homeassistant.local). По подразбиране е "openclaw-ha-addon". Ако е празно, автоматично се открива от контейнера.
 
   mdns_service_port:
     name: mDNS порт на услуга

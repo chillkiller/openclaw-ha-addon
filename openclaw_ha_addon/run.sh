@@ -122,7 +122,7 @@ AUTO_CONFIGURE_MCP=$(jq -r 'if .auto_configure_mcp == null then false else .auto
 
 # mDNS/Bonjour configuration
 MDNS_MODE=$(jq -r '.mdns_mode // "minimal"' "$OPTIONS_FILE")
-MDNS_HOST_NAME=$(jq -r '.mdns_host_name // ""' "$OPTIONS_FILE")
+MDNS_HOST_NAME=$(jq -r '.mdns_host_name // "openclaw-ha-addon"' "$OPTIONS_FILE")
 MDNS_SERVICE_PORT_RAW=$(jq -r '.mdns_service_port // empty' "$OPTIONS_FILE")
 MDNS_SERVICE_PORT="${MDNS_SERVICE_PORT_RAW:-$GATEWAY_PORT}"
 MDNS_INTERFACE_NAME=$(jq -r '.mdns_interface_name // ""' "$OPTIONS_FILE")
