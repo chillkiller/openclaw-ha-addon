@@ -76,7 +76,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     jq \
     openssl \
     # mDNS / Bonjour / Avahi (LAN discovery)
-    dbus-daemon \
+    dbus \
     avahi-daemon \
     avahi-utils \
     libnss-mdns \
