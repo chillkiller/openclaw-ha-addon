@@ -1096,32 +1096,38 @@ case "$MDNS_MODE" in
         # (Homebrew dbus config uses /home/linuxbrew/.linuxbrew/var/run/dbus/)
         mkdir -p /etc/dbus-1 2>/dev/null || true
         # IMPORTANT: Always overwrite existing config to avoid syntax errors
+        # PRODUCTION-SAFE CONFIG: Minimal, validated, no silent crashes
         cat > /etc/dbus-1/system.conf << 'DBUS_CONF'
 <!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
  "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
 <busconfig>
-  <type>system</type>
-  <user>messagebus</user>
-  <fork/>
-  <pidfile>/run/dbus/pid</pidfile>
-  <listen>unix:path=/run/dbus/system_bus_socket</listen>
-  <auth>EXTERNAL</auth>
-  <policy context="default">
-    <allow user="*"/>
-    <deny own="*"/>
-    <!-- FIXED: Allow method_call for Avahi and other services -->
-    <allow send_type="method_call"/>
-    <allow send_type="signal"/>
-    <allow send_requested_reply="true" send_type="method_return"/>
-    <allow send_requested_reply="true" send_type="error"/>
-    <allow receive_type="method_call"/>
-    <allow receive_type="method_return"/>
-    <allow receive_type="error"/>
-    <allow receive_type="signal"/>
-    <allow send_destination="org.freedesktop.DBus" send_interface="org.freedesktop.DBus" />
-  </policy>
+ <type>system</type>
+ <user>messagebus</user>
+ <fork/>
+ <pidfile>/run/dbus/pid</pidfile>
+ <listen>unix:path=/run/dbus/system_bus_socket</listen>
+ <auth>EXTERNAL</auth>
+ <policy context="default">
+ <allow send_destination="org.freedesktop.DBus"/>
+ <allow receive_sender="org.freedesktop.DBus"/>
+ </policy>
+ <policy user="avahi">
+ <allow own="org.freedesktop.Avahi"/>
+ <allow send_destination="*"/>
+ <allow receive_sender="*"/>
+ </policy>
+ <policy user="root">
+ <allow send_destination="*"/>
+ <allow receive_sender="*"/>
+ <allow own="*"/>
+ </policy>
 </busconfig>
 DBUS_CONF
+        # D-Bus Permission Documentation:
+        # - default policy: Minimal access to org.freedesktop.DBus only
+        # - avahi user: Full send/receive, can own org.freedesktop.Avahi
+        # - root user: Full access (for system services and debugging)
+        # This config prevents silent crashes while maintaining security
         # Start dbus-daemon with custom config
         dbus-daemon --system --fork 2>&1 || echo "WARN: dbus-daemon failed to start"
         # Wait for D-Bus socket to be available (up to 5 seconds)
@@ -1177,7 +1183,83 @@ AVAHI_CONF
         sleep 2
         if pgrep avahi-daemon >/dev/null 2>&1; then
           echo "INFO: avahi-daemon started successfully"
+
+          # ------------------------------------------------------------------------------
+          # Avahi Service Advertisement (OpenClaw Gateway)
+          # ------------------------------------------------------------------------------
+          echo "INFO: Configuring Avahi service advertisement..."
+
+          AVAHI_SERVICES_DIR="/etc/avahi/services"
+          mkdir -p "$AVAHI_SERVICES_DIR"
+
+          # Determine service type + port
+          SERVICE_TYPE="_http._tcp"
+          SERVICE_PORT="$GATEWAY_PORT"
+
+          if [ "$ENABLE_HTTPS_PROXY" = "true" ] || [ "$ENABLE_HTTPS_PROXY" = "1" ]; then
+            SERVICE_TYPE="_https._tcp"
+            SERVICE_PORT="$GATEWAY_PORT"
+            echo "INFO: Avahi advertising HTTPS service on port $SERVICE_PORT"
+          else
+            echo "INFO: Avahi advertising HTTP service on port $SERVICE_PORT"
+          fi
+
+          # KORREKTUR PRIO 1: Dynamic port extraction from GW_PUBLIC_URL using Python
+          if [ -n "$GW_PUBLIC_URL" ]; then
+            EXTRACTED_PORT=$(python3 -c "
+import urllib.parse
+import sys
+url = sys.argv[1]
+parsed = urllib.parse.urlparse(url)
+port = parsed.port
+if port is None:
+    port = 443 if parsed.scheme == 'https' else 80
+print(port, end='')
+" "$GW_PUBLIC_URL" 2>/dev/null || echo "")
+            if [ -n "$EXTRACTED_PORT" ] && [ "$EXTRACTED_PORT" -ge 1 ] 2>/dev/null; then
+              SERVICE_PORT="$EXTRACTED_PORT"
+              echo "INFO: Port extracted from GW_PUBLIC_URL: $SERVICE_PORT"
+            fi
+          fi
+
+          # Service name (clean, no .local here!)
+          SERVICE_NAME="OpenClaw Gateway"
+
+          # KORREKTUR PRIO 3: XML-escaping for SERVICE_NAME
+          ESCAPED_SERVICE_NAME=$(python3 -c "
+import sys
+import xml.sax.saxutils
+name = sys.argv[1]
+print(xml.sax.saxutils.escape(name), end='')
+" "$SERVICE_NAME" 2>/dev/null || echo "OpenClaw Gateway")
+
+          # Generate service file
+          cat > "${AVAHI_SERVICES_DIR}/openclaw.service" <<EOF
+<?xml version="1.0" standalone='no'?>
+<!DOCTYPE service-group SYSTEM "avahi-service.dtd">
+
+<service-group>
+ <name replace-wildcards="yes">${ESCAPED_SERVICE_NAME}</name>
+
+ <service>
+ <type>${SERVICE_TYPE}</type>
+ <port>${SERVICE_PORT}</port>
+ <txt-record>path=/<txt-record>
+ <txt-record>version=1<txt-record>
+ <txt-record>addon=openclaw-ha<txt-record>
+ </service>
+</service-group>
+EOF
+
+          # Fix permissions (Avahi is picky)
+          chmod 644 "${AVAHI_SERVICES_DIR}/openclaw.service"
+
+          # Reload Avahi to pick up new service
+          killall -HUP avahi-daemon 2>/dev/null || true
+          echo "INFO: Avahi service advertisement loaded"
         else
+          echo "WARN: avahi-daemon not running after start attempt"
+        fi
           echo "WARN: avahi-daemon not running after start attempt"
         fi
       else
