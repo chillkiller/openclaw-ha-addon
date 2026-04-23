@@ -75,6 +75,18 @@ ADDON_HTTP_PROXY=$(jq -r '.http_proxy // empty' "$OPTIONS_FILE")
 ENABLE_TERMINAL=$(jq -r 'if .enable_terminal == null then true else .enable_terminal end' "$OPTIONS_FILE")
 TERMINAL_PORT_RAW=$(jq -r '.terminal_port // 7681' "$OPTIONS_FILE")
 
+# Gateway configuration
+GATEWAY_MODE=$(jq -r '.gateway_mode // "local"' "$OPTIONS_FILE")
+GATEWAY_REMOTE_URL=$(jq -r '.gateway_remote_url // empty' "$OPTIONS_FILE")
+GATEWAY_BIND_MODE=$(jq -r '.gateway_bind_mode // "loopback"' "$OPTIONS_FILE")
+GATEWAY_PORT=$(jq -r '.gateway_port // 18789' "$OPTIONS_FILE")
+
+# Port safety
+if [ "$GATEWAY_PORT" -ge 65535 ]; then
+  echo "WARN: gateway_port $GATEWAY_PORT at max, using $((GATEWAY_PORT - 1))"
+  GATEWAY_PORT=$((GATEWAY_PORT - 1))
+fi
+
 # SECURITY: Validate TERMINAL_PORT
 if [[ "$TERMINAL_PORT_RAW" =~ ^[0-9]+$ ]] && [ "$TERMINAL_PORT_RAW" -ge 1024 ] && [ "$TERMINAL_PORT_RAW" -le 65535 ]; then
   TERMINAL_PORT="$TERMINAL_PORT_RAW"
@@ -97,18 +109,6 @@ ROUTER_KEY=$(jq -r '.router_ssh_key_path // "/data/keys/router_ssh"' "$OPTIONS_F
 # Lock cleanup
 CLEAN_LOCKS_ON_START=$(jq -r 'if .clean_session_locks_on_start == null then true else .clean_session_locks_on_start end' "$OPTIONS_FILE")
 CLEAN_LOCKS_ON_EXIT=$(jq -r 'if .clean_session_locks_on_exit == null then true else .clean_session_locks_on_exit end' "$OPTIONS_FILE")
-
-# Gateway configuration
-GATEWAY_MODE=$(jq -r '.gateway_mode // "local"' "$OPTIONS_FILE")
-GATEWAY_REMOTE_URL=$(jq -r '.gateway_remote_url // empty' "$OPTIONS_FILE")
-GATEWAY_BIND_MODE=$(jq -r '.gateway_bind_mode // "loopback"' "$OPTIONS_FILE")
-GATEWAY_PORT=$(jq -r '.gateway_port // 18789' "$OPTIONS_FILE")
-
-# Port safety
-if [ "$GATEWAY_PORT" -ge 65535 ]; then
-  echo "WARN: gateway_port $GATEWAY_PORT at max, using $((GATEWAY_PORT - 1))"
-  GATEWAY_PORT=$((GATEWAY_PORT - 1))
-fi
 
 ENABLE_OPENAI_API=$(jq -r 'if .enable_openai_api == null then false else .enable_openai_api end' "$OPTIONS_FILE")
 GATEWAY_AUTH_MODE=$(jq -r '.gateway_auth_mode // "token"' "$OPTIONS_FILE")
