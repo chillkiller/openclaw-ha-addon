@@ -134,6 +134,14 @@ configuration:
     name: Pokazuj log Gateway w logu HA
     description: Gdy WŁĄCZONE, wyjście gateway (stdout/stderr) jest duplikowane w oknie logu dodatku Home Assistant oprócz pliku log. Przydatne do diagnostyki w czasie rzeczywistym. Gdy WYŁĄCZONE, logi zapisywane są tylko do pliku.
 
+  gateway_log_level:
+    name: Poziom logu Gateway
+    description: "Szczegółowość logu Gateway. 'off' pokazuje tylko błędy, 'info' (domyślne) pokazuje normalną operację, 'debug' pokazuje szczegóły do rozwiązywania problemów."
+    options:
+      off: "Wyłączone (tylko błędy)"
+      info: "Info (domyślne)"
+      debug: "Debug (szczegółowe)"
+
   trace_log_to_console:
     name: Pokazuj śledzenie startu w logu HA
     description: Gdy WŁĄCZONE, szczegółowe śledzenie sekwencji startowej (wyjście set -x) jest duplikowane w oknie logu dodatku Home Assistant. Bardzo szczegółowe — włącz tylko do debugowania.

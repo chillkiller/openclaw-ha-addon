@@ -132,6 +132,20 @@ MDNS_INTERFACE_NAME=$(jq -r '.mdns_interface_name // ""' "$OPTIONS_FILE")
 # When true: gateway output also visible on HA console (useful for debugging)
 GATEWAY_LOG_TO_CONSOLE=$(jq -r 'if .gateway_log_to_console == null then false else .gateway_log_to_console end' "$OPTIONS_FILE")
 
+# Gateway log level option
+# Default: info — normal operation
+# Options: off (error only), info (default), debug (verbose)
+GATEWAY_LOG_LEVEL=$(jq -r '.gateway_log_level // "info"' "$OPTIONS_FILE")
+# Map gateway_log_level to OpenClaw's LOG_LEVEL env var
+# off → error, info → info, debug → debug
+LOG_LEVEL="error"
+if [ "$GATEWAY_LOG_LEVEL" = "info" ]; then
+  LOG_LEVEL="info"
+elif [ "$GATEWAY_LOG_LEVEL" = "debug" ]; then
+  LOG_LEVEL="debug"
+fi
+export LOG_LEVEL
+
 # Gateway environment variables
 GW_ENV_VARS_TYPE=$(jq -r 'if .gateway_env_vars == null then "null" else (.gateway_env_vars | type) end' "$OPTIONS_FILE")
 GW_ENV_VARS_RAW=$(jq -r '.gateway_env_vars // empty' "$OPTIONS_FILE")
