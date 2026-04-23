@@ -2,7 +2,7 @@ name: OpenClaw Assistant
 slug: openclaw-ha-addon
 description: OpenClaw Home Assistant Addon — Trixie Full-Stack with mDNS, HTTPS proxy and multi-agent support
 url: https://github.com/chillkiller/openclaw-ha-addon
-version: "0.7.5.2"
+version: "0.7.5.3"
 arch:
   - amd64
   - aarch64
