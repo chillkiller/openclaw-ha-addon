@@ -1,3 +1,13 @@
+## [0.7.5.2] - 2026-04-23
+- **FIX:** Dockerfile version bump to match config.yaml
+- **FIX:** CHANGELOG.md missing v0.7.5.2 entry
+- **FIX:** dbus-daemon startup - wait for socket availability before proceeding
+- **FIX:** avahi-daemon startup - use --no-drop-root --no-chroot for container compatibility
+- **FIX:** mDNS hostname collision - generate unique hostname from container name
+- **FIX:** avahi socket directory permissions (chmod 755)
+- **FIX:** stale pid file cleanup for both dbus and avahi
+- **FIX:** exclusive mDNS mode selection (off | minimal/full | avahi) - no collisions
+
 ## [0.7.5.1] - 2026-04-19
 - **FIX:** Gateway-Bonjour/mDNS abgeschaltet — `OPENCLAW_DISABLE_BONJOUR=1` immer setzen und `discovery.mdns.mode="off"` in openclaw.json schreiben (verhindert Endlosschleife im Container)
 - **FIX:** D-Bus system bus wird vor Avahi gestartet (Container haben kein systemd)
