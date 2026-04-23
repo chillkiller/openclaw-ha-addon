@@ -8,7 +8,7 @@
 #   - FIXED: stale pid file cleanup for both dbus and avahi
 #   - FIXED: exclusive mDNS mode selection (off | minimal/full | avahi) - no collisions
 name: OpenClaw Assistant
-version: "0.7.5.1"
+version: "0.7.5.2"
 slug: openclaw_ha_addon
 description: OpenClaw Home Assistant Addon (Trixie Full-Stack)
 url: https://github.com/chillkiller/OpenClawHomeAssistant
