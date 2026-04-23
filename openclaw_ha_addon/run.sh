@@ -2,12 +2,21 @@
 set -euo pipefail
 
 # ==============================================================================
-# OpenClaw Home Assistant Addon run.sh (v0.7.5.1)
+# OpenClaw Home Assistant Addon run.sh (v0.7.5.2)
 # Best-of-All-Worlds: Trixie Full-Stack + coollabsio Persistence + techartdev HA-Integration
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
-# Section 0: Log Rotation + Startup Trace File
+# Section 0: Error Handler
+# ------------------------------------------------------------------------------
+error_handler() {
+  echo "ERROR: Command failed at line $LINENO: $BASH_COMMAND"
+  exit 1
+}
+trap error_handler ERR
+
+# ------------------------------------------------------------------------------
+# Section 0a: Log Rotation + Startup Trace File
 # Add-on only: log everything to file for debugging startup issues.
 # Console output is NOT touched — it flows naturally like the upstream repo.
 # ------------------------------------------------------------------------------
@@ -71,6 +80,12 @@ if [[ "$TERMINAL_PORT_RAW" =~ ^[0-9]+$ ]] && [ "$TERMINAL_PORT_RAW" -ge 1024 ] &
   TERMINAL_PORT="$TERMINAL_PORT_RAW"
 else
   echo "ERROR: Invalid terminal_port '$TERMINAL_PORT_RAW'. Must be numeric 1024-65535. Using default 7681."
+  TERMINAL_PORT="7681"
+fi
+
+# SECURITY: Check for port conflicts with Gateway
+if [ "$TERMINAL_PORT" -eq "$GATEWAY_PORT" ]; then
+  echo "ERROR: terminal_port conflicts with gateway_port ($GATEWAY_PORT). Using default 7681."
   TERMINAL_PORT="7681"
 fi
 
@@ -1079,7 +1094,8 @@ case "$MDNS_MODE" in
   <policy context="default">
     <allow user="*"/>
     <deny own="*"/>
-    <deny send_type="method_call"/>
+    <!-- FIXED: Allow method_call for Avahi and other services -->
+    <allow send_type="method_call"/>
     <allow send_type="signal"/>
     <allow send_requested_reply="true" send_type="method_return"/>
     <allow send_requested_reply="true" send_type="error"/>
