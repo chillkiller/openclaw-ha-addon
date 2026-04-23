@@ -134,6 +134,14 @@ configuration:
     name: Mostrar log del Gateway en log de HA
     description: Cuando está ACTIVADO, la salida del gateway (stdout/stderr) se refleja en la ventana de log del complemento de Home Assistant además del archivo de log. Útil para diagnóstico en tiempo real. Cuando está DESACTIVADO, los logs se escriben solo en el archivo.
 
+  gateway_log_level:
+    name: Nivel de log del Gateway
+    description: "Verbosidad del log del Gateway. 'off' muestra solo errores, 'info' (predeterminado) muestra operación normal, 'debug' muestra detalles detallados para solución de problemas."
+    options:
+      off: "Desactivado (solo errores)"
+      info: "Info (predeterminado)"
+      debug: "Debug (detallado)"
+
   trace_log_to_console:
     name: Mostrar traza de arranque en log de HA
     description: Cuando está ACTIVADO, la secuencia de arranque detallada (salida set -x) se refleja en la ventana de log del complemento de Home Assistant. Muy detallado — activar solo para depuración.
