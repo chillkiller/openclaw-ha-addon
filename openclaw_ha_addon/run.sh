@@ -611,11 +611,11 @@ fi
 # ------------------------------------------------------------------------------
 # Section 14: TLS Certificate Generation (lan_https mode)
 # ------------------------------------------------------------------------------
-LAN_IP=""
+CERT_LAN_IP=""
 if [ "$ENABLE_HTTPS_PROXY" = "true" ]; then
   CERT_DIR="/config/certs"
   mkdir -p "$CERT_DIR"
-  LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+  CERT_LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
   STORED_IP=$(cat "$CERT_DIR/.cert_ip" 2>/dev/null || echo "")
 
   # Generate CA if missing
@@ -632,7 +632,7 @@ if [ "$ENABLE_HTTPS_PROXY" = "true" ]; then
   EXTRA_SANS=""
   EXTRA_SAN_SOURCES="${GATEWAY_ADDITIONAL_ALLOWED_ORIGINS},${GW_PUBLIC_URL}"
   if [ "$EXTRA_SAN_SOURCES" != "," ]; then
-    EXTRA_SANS="$(python3 - "$EXTRA_SAN_SOURCES" "${LAN_IP:-}" <<'PY'
+    EXTRA_SANS="$(python3 - "$EXTRA_SAN_SOURCES" "${CERT_LAN_IP:-}" <<'PY'
 import sys, re
 from urllib.parse import urlparse
 raw = sys.argv[1] if len(sys.argv) > 1 else ""
@@ -655,13 +655,13 @@ PY
 
   # Generate server cert if needed
   STORED_EXTRA_SANS=$(cat "$CERT_DIR/.cert_extra_sans" 2>/dev/null || echo "")
-  if [ ! -f "$CERT_DIR/gateway.crt" ] || [ "$LAN_IP" != "$STORED_IP" ] || [ "$EXTRA_SANS" != "$STORED_EXTRA_SANS" ]; then
-    echo "INFO: Generating server TLS certificate (LAN IP: ${LAN_IP:-unknown})..."
+  if [ ! -f "$CERT_DIR/gateway.crt" ] || [ "$CERT_LAN_IP" != "$STORED_IP" ] || [ "$EXTRA_SANS" != "$STORED_EXTRA_SANS" ]; then
+    echo "INFO: Generating server TLS certificate (LAN IP: ${CERT_LAN_IP:-unknown})..."
     openssl genrsa -out "$CERT_DIR/gateway.key" 2048 2>/dev/null
     openssl req -new -key "$CERT_DIR/gateway.key" -out "$CERT_DIR/gateway.csr" \
       -subj "/CN=OpenClaw Gateway" 2>/dev/null
     cat > "$CERT_DIR/_san.ext" <<SANEOF
-subjectAltName=IP:${LAN_IP:-127.0.0.1},IP:127.0.0.1,DNS:localhost,DNS:homeassistant,DNS:homeassistant.local${MDNS_HOST_NAME:+,DNS:${MDNS_HOST_NAME}.local}${EXTRA_SANS:+,${EXTRA_SANS}}
+subjectAltName=IP:${CERT_LAN_IP:-127.0.0.1},IP:127.0.0.1,DNS:localhost,DNS:homeassistant,DNS:homeassistant.local${MDNS_HOST_NAME:+,DNS:${MDNS_HOST_NAME}.local}${EXTRA_SANS:+,${EXTRA_SANS}}
 SANEOF
     openssl x509 -req -in "$CERT_DIR/gateway.csr" \
       -CA "$CERT_DIR/ca.crt" -CAkey "$CERT_DIR/ca.key" -CAcreateserial \
@@ -669,7 +669,7 @@ SANEOF
       -extfile "$CERT_DIR/_san.ext" 2>/dev/null
     rm -f "$CERT_DIR/gateway.csr" "$CERT_DIR/_san.ext" "$CERT_DIR/ca.srl"
     chmod 600 "$CERT_DIR/gateway.key"
-    printf '%s' "$LAN_IP" > "$CERT_DIR/.cert_ip"
+    printf '%s' "$CERT_LAN_IP" > "$CERT_DIR/.cert_ip"
     printf '%s' "$EXTRA_SANS" > "$CERT_DIR/.cert_extra_sans"
   fi
   # Make CA cert downloadable
@@ -685,8 +685,8 @@ echo "INFO: Section 14 done (TLS certificates)"
 # ------------------------------------------------------------------------------
 if [ -f "$HELPER_PATH" ] && [ -f "$OPENCLAW_CONFIG_PATH" ]; then
   ALLOWED_ORIGINS=""
-  if [ "$ENABLE_HTTPS_PROXY" = "true" ] && [ -n "$LAN_IP" ]; then
-    ALLOWED_ORIGINS="https://${LAN_IP}:${GATEWAY_PORT},https://homeassistant.local:${GATEWAY_PORT},https://homeassistant:${GATEWAY_PORT}"
+  if [ "$ENABLE_HTTPS_PROXY" = "true" ] && [ -n "$CERT_LAN_IP" ]; then
+    ALLOWED_ORIGINS="https://${CERT_LAN_IP}:${GATEWAY_PORT},https://homeassistant.local:${GATEWAY_PORT},https://homeassistant:${GATEWAY_PORT}"
     # Add mDNS hostname to allowed origins if configured
     if [ -n "$MDNS_HOST_NAME" ]; then
       ALLOWED_ORIGINS="${ALLOWED_ORIGINS},https://${MDNS_HOST_NAME}.local:${GATEWAY_PORT}"
@@ -1008,16 +1008,16 @@ fi
 MDNS_HOSTNAME="${MDNS_HOSTNAME}.local"
 
 # Add .local entry to avahi hosts file (used by Avahi mode)
-LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
-if [ -n "$LAN_IP" ] && [ -n "$MDNS_HOSTNAME" ]; then
+MDNS_LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+if [ -n "$MDNS_LAN_IP" ] && [ -n "$MDNS_HOSTNAME" ]; then
   mkdir -p /etc/avahi
   # Update hosts file (replace existing entry for this hostname)
   if grep -q "$MDNS_HOSTNAME" /etc/avahi/hosts 2>/dev/null; then
-    sed -i "s/^.*$MDNS_HOSTNAME.*$/$LAN_IP $MDNS_HOSTNAME/" /etc/avahi/hosts
+    sed -i "s/^.*$MDNS_HOSTNAME.*$/$MDNS_LAN_IP $MDNS_HOSTNAME/" /etc/avahi/hosts
   else
-    echo "$LAN_IP $MDNS_HOSTNAME" >> /etc/avahi/hosts
+    echo "$MDNS_LAN_IP $MDNS_HOSTNAME" >> /etc/avahi/hosts
   fi
-  echo "INFO: Hostname set to $MDNS_HOSTNAME for mDNS (IP: $LAN_IP)"
+  echo "INFO: Hostname set to $MDNS_HOSTNAME for mDNS (IP: $MDNS_LAN_IP)"
 fi
 
 # EXCLUSIVE MODE HANDLING
