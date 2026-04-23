@@ -120,7 +120,7 @@ configuration:
 
   mdns_host_name:
     name: Nombre de host mDNS
-    description: Nombre de host opcional para anuncio mDNS (ej. homeassistant.local). Si está vacío, se detecta automáticamente desde el nombre de host del contenedor.
+    description: Nombre de host opcional para anuncio mDNS (ej. homeassistant.local). El valor predeterminado es "openclaw-ha-addon". Si está vacío, se detecta automáticamente desde el nombre de host del contenedor.
 
   mdns_service_port:
     name: Puerto de servicio mDNS

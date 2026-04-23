@@ -102,8 +102,8 @@ options:
   # full: verbose mDNS with all metadata via internal Gateway mode
   # avahi: use Avahi daemon for OS-level mDNS (no Gateway mode)
   mdns_mode: minimal
-  # Hostname to advertise (empty = auto-detect from HA hostname)
-  mdns_host_name: ""
+  # Hostname to advertise (default: openclaw-ha-addon)
+  mdns_host_name: "openclaw-ha-addon"
   # Service port to advertise in mDNS (default: gateway_port)
   # IMPORTANT: In lan_https mode, this should match the public HTTPS port
   mdns_service_port: 18789
@@ -114,6 +114,14 @@ options:
   # When false (default), gateway logs go to /config/clawd/logs/gateway_startup.log only
   # When true, gateway output also visible on HA console (useful for debugging)
   gateway_log_to_console: false
+
+  # Gateway log level: off (error only), info (default), debug (verbose)
+  gateway_log_level: "info"
+
+  # Trace log output: mirror trace stdout/stderr to HA add-on log window
+  # When false (default), trace logs go to /config/clawd/logs/trace_startup.log only
+  # When true, trace output also visible on HA console (useful for debugging)
+  trace_log_to_console: false
 
   # Environment variables to pass to the gateway process at startup.
   # Format: list of objects with name/value fields.
@@ -168,6 +176,8 @@ schema:
   mdns_service_port: int(1,65535)?
   mdns_interface_name: str?
   gateway_log_to_console: bool?
+  gateway_log_level: list(off|info|debug)?
+  trace_log_to_console: bool?
   gateway_env_vars:
     - name: "match(^[A-Z_][A-Z0-9_]*$)"
       value: str

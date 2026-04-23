@@ -120,7 +120,7 @@ configuration:
 
   mdns_host_name:
     name: mDNS-Hostname
-    description: Optionaler Hostname für mDNS-Advertisements (z.B. homeassistant.local). Wenn leer, wird der Container-Hostname automatisch erkannt.
+    description: Optionaler Hostname für mDNS-Advertisements (z.B. homeassistant.local). Standard ist "openclaw-ha-addon". Wenn leer, wird der Container-Hostname automatisch erkannt.
 
   mdns_service_port:
     name: mDNS-Dienst-Port
@@ -133,6 +133,14 @@ configuration:
   gateway_log_to_console:
     name: Gateway-Log in HA-Log anzeigen
     description: Wenn EIN, wird die Gateway-Ausgabe (stdout/stderr) zusätzlich zur Log-Datei auch im Home Assistant Add-on-Log-Fenster angezeigt. Nützlich für Echtzeit-Diagnose. Bei AUS werden Logs nur in die Datei geschrieben.
+
+  gateway_log_level:
+    name: Gateway-Log-Level
+    description: "Gateway-Log-Ausführlichkeit. 'off' zeigt nur Fehler, 'info' (Standard) zeigt normalen Betrieb, 'debug' zeigt ausführliche Details zur Fehlerbehebung."
+    options:
+      off: "Aus (nur Fehler)"
+      info: "Info (Standard)"
+      debug: "Debug (ausführlich)"
 
   trace_log_to_console:
     name: Boot-Trace in HA-Log anzeigen
