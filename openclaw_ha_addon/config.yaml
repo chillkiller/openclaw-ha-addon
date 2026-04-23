@@ -11,7 +11,7 @@ name: OpenClaw Assistant
 version: "0.7.5.2"
 slug: openclaw_ha_addon
 description: OpenClaw Home Assistant Addon (Trixie Full-Stack)
-url: https://github.com/chillkiller/OpenClawHomeAssistant
+url: https://github.com/chillkiller/openclaw-ha-addon
 arch:
   - amd64
   - aarch64
