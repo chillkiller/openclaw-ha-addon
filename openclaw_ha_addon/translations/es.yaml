@@ -117,6 +117,7 @@ configuration:
       off: "Desactivado (sin mDNS)"
       minimal: "Mínimo (anunciar servicio gateway, predeterminado)"
       full: "Completo (anunciar con todos los metadatos)"
+      avahi: "Avahi (OS-level mDNS, modo gateway desactivado)"
 
   mdns_host_name:
     name: Nombre de host mDNS

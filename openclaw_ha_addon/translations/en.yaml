@@ -117,6 +117,7 @@ configuration:
       off: "Off (no mDNS)"
       minimal: "Minimal (advertise gateway service, default)"
       full: "Full (advertise with all metadata)"
+      avahi: "Avahi (OS-level mDNS, gateway mode off)"
 
   mdns_host_name:
     name: mDNS Host Name
