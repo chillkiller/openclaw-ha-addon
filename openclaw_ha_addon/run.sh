@@ -1083,7 +1083,7 @@ case "$MDNS_MODE" in
         # IMPORTANT: Always overwrite existing config to avoid syntax errors
         cat > /etc/dbus-1/system.conf << 'DBUS_CONF'
 <!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
- "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd"
+ "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
 <busconfig>
   <type>system</type>
   <user>messagebus</user>
