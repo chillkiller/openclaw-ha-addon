@@ -117,6 +117,7 @@ configuration:
       off: "Изключено (без mDNS)"
       minimal: "Минимално (рекламиране на gateway услуга, по подразбиране)"
       full: "Пълно (рекламиране с всички метаданни)"
+      avahi: "Avahi (OS-level mDNS, режим gateway изключен)"
 
   mdns_host_name:
     name: mDNS име на хост

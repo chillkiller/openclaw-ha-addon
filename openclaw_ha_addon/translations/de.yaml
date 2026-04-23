@@ -117,6 +117,7 @@ configuration:
       off: "Aus (kein mDNS)"
       minimal: "Minimal (Gateway-Dienst bewerben, Standard)"
       full: "Vollständig (alle Metadaten bewerben)"
+      avahi: "Avahi (OS-level mDNS, Gateway-Modus ausgeschaltet)"
 
   mdns_host_name:
     name: mDNS-Hostname
