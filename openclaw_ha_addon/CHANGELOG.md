@@ -1,3 +1,9 @@
+## [0.7.6.0] - 2026-04-24
+- **UPGRADE:** OpenClaw 2026.4.21 → 2026.4.22 (fixes compaction/streaming issues)
+- **FIX:** D-Bus "Scorched Earth" start sequence (killall, clean dirs, fresh socket)
+- **FIX:** Skills sync now uses COPY instead of symlink (Jiti loader compatibility)
+- **ADD:** ENV OPENCLAW_CHILD_OOM_SCORE_ADJ=0 (OOM shim disabled for Trixie stability)
+
 ## [0.7.5.2] - 2026-04-23
 - **FIX:** GATEWAY_PORT vor TERMINAL_PORT-Validierung verschoben (Crash "unbound variable")
 - **FIX:** MDNS_SERVICE_PORT jq-Interpolation durch bash-Default ersetzt (fragil → robust)

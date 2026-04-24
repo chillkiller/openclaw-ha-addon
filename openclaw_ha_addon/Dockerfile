@@ -1,4 +1,4 @@
-# Dockerfile for OpenClaw Home Assistant Addon v0.7.5.2
+# Dockerfile for OpenClaw Home Assistant Addon v0.7.6.0
 # Multi-stage build for disk space optimization
 # FIXED: Version bump to trigger HA update (HA ignored 0.6.1.4, last broken was 0.6.1.12)
 # FIXED: Added sudo package, HEALTHCHECK for HA Watchdog, run.sh root-safety
@@ -196,9 +196,12 @@ RUN ARCH=$(echo ${TARGETARCH:-$(dpkg --print-architecture)} | sed 's|arm64|aarch
 # =============================================================================
 # Install OpenClaw v0.7.5.2 (pinned version)
 # =============================================================================
-RUN npm install -g openclaw@2026.4.21 \
+RUN npm install -g openclaw@2026.4.22 \
     && npm install -g pnpm \
     && npm cache clean --force
+
+# OOM Fix for Trixie: Disable child OOM score adj shim (causes silent freeze in containers)
+ENV OPENCLAW_CHILD_OOM_SCORE_ADJ=0
 
 # Fix safe.directory
 RUN git config --global safe.directory /home/linuxbrew/.linuxbrew/Homebrew
