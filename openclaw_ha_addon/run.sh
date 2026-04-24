@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # ==============================================================================
-# OpenClaw Home Assistant Addon run.sh (v0.7.5.2)
+# OpenClaw Home Assistant Addon run.sh (v0.7.6.0)
 # Best-of-All-Worlds: Trixie Full-Stack + coollabsio Persistence + techartdev HA-Integration
 # ==============================================================================
 
@@ -431,29 +431,44 @@ git config --global --add safe.directory /home/linuxbrew/.linuxbrew/Homebrew 2>/
 echo "INFO: Section 6 done (Homebrew persistence)"
 
 # ------------------------------------------------------------------------------
-# Section 7: OpenClaw Skills Sync (Best-of-All-Worlds)
+# Section 7: OpenClaw Skills Sync (Jiti-Safe: Copy NOT Symlink)
 # ------------------------------------------------------------------------------
-# Sync built-in skills from image to persistent storage so they survive rebuilds.
+# v4.22+ compatible: Copy skills to persistent storage (Jiti loader needs stable paths, NO symlinks)
 IMAGE_SKILLS_DIR="/usr/lib/node_modules/openclaw/skills"
 PERSISTENT_SKILLS_DIR="/config/.openclaw/skills"
 
-if [ -d "$IMAGE_SKILLS_DIR" ] && [ ! -L "$IMAGE_SKILLS_DIR" ]; then
+if [ -d "$IMAGE_SKILLS_DIR" ]; then
   mkdir -p "$PERSISTENT_SKILLS_DIR"
-  if command -v rsync >/dev/null 2>&1; then
-    rsync -a --update "$IMAGE_SKILLS_DIR/" "$PERSISTENT_SKILLS_DIR/" 2>/dev/null || true
-  else
-    cp -ru "$IMAGE_SKILLS_DIR/"* "$PERSISTENT_SKILLS_DIR/" 2>/dev/null || true
+  if [ ! -L "$IMAGE_SKILLS_DIR" ]; then
+    # First-time sync: copy (don't delete original, don't symlink)
+    if command -v rsync >/dev/null 2>&1; then
+      rsync -a --update "$IMAGE_SKILLS_DIR/" "$PERSISTENT_SKILLS_DIR/" 2>/dev/null || true
+    else
+      cp -ru "$IMAGE_SKILLS_DIR/"* "$PERSISTENT_SKILLS_DIR/" 2>/dev/null || true
+    fi
+    echo "INFO: Skills copied to persistent storage at $PERSISTENT_SKILLS_DIR"
+  elif [ -L "$IMAGE_SKILLS_DIR" ]; then
+    # Already linked, check if target exists
+    if [ -d "$IMAGE_SKILLS_DIR" ]; then
+      echo "INFO: Skills symlink already present and valid"
+    else
+      # Fix broken symlink by re-copying
+      rm -f "$IMAGE_SKILLS_DIR"
+      if command -v rsync >/dev/null 2>&1; then
+        rsync -a --update "$IMAGE_SKILLS_DIR/" "$PERSISTENT_SKILLS_DIR/" 2>/dev/null || true
+      else
+        cp -ru "$IMAGE_SKILLS_DIR/"* "$PERSISTENT_SKILLS_DIR/" 2>/dev/null || true
+      fi
+      echo "INFO: Skills re-copied to persistent storage (fixed broken symlink)"
+    fi
   fi
-  rm -rf "$IMAGE_SKILLS_DIR"
-  ln -sf "$PERSISTENT_SKILLS_DIR" "$IMAGE_SKILLS_DIR"
-  echo "INFO: Skills synced to persistent storage at $PERSISTENT_SKILLS_DIR"
-elif [ -L "$IMAGE_SKILLS_DIR" ]; then
-  echo "INFO: Skills already linked to persistent storage"
+elif [ -d "$PERSISTENT_SKILLS_DIR" ]; then
+  echo "INFO: Skills already in persistent storage"
 else
   echo "INFO: Skills directory not found at $IMAGE_SKILLS_DIR (may be installed elsewhere)"
 fi
 
-echo "INFO: Section 7 done (skills sync)"
+echo "INFO: Section 7 done (skills sync - Jiti-safe, no symlinks)"
 
 # ------------------------------------------------------------------------------
 # Section 8: Custom Init Script (coollabsio pattern)
@@ -1080,24 +1095,28 @@ case "$MDNS_MODE" in
     fi
     
     # Start D-Bus system bus (required by avahi-daemon in containers)
-    if ! pgrep dbus-daemon >/dev/null 2>&1; then
-      if command -v dbus-daemon >/dev/null 2>&1; then
-        mkdir -p /run/dbus
-        # IMPORTANT: chmod 777 required because dbus-daemon runs as 'message+' user
-        chmod 777 /run/dbus 2>/dev/null || true
-        # Clean up stale pid file and socket from previous runs
-        rm -f /run/dbus/pid /run/dbus/system_bus_socket 2>/dev/null || true
-        rm -f /home/linuxbrew/.linuxbrew/var/run/dbus/pid /home/linuxbrew/.linuxbrew/var/run/dbus/system_bus_socket 2>/dev/null || true
-        # IMPORTANT: Create Homebrew dbus path (required by Homebrew dbus config)
-        mkdir -p /home/linuxbrew/.linuxbrew/var/run/dbus 2>/dev/null || true
-        chown messagebus:messagebus /home/linuxbrew/.linuxbrew/var/run/dbus 2>/dev/null || true
-        chmod 755 /home/linuxbrew/.linuxbrew/var/run/dbus 2>/dev/null || true
-        # IMPORTANT: Create custom dbus config to override Homebrew defaults
-        # (Homebrew dbus config uses /home/linuxbrew/.linuxbrew/var/run/dbus/)
-        mkdir -p /etc/dbus-1 2>/dev/null || true
-        # IMPORTANT: Always overwrite existing config to avoid syntax errors
-        # PRODUCTION-SAFE CONFIG: Minimal, validated, no silent crashes
-        cat > /etc/dbus-1/system.conf << 'DBUS_CONF'
+    # D-BUS SCORCHED EARTH: Nuke all stale instances and start fresh
+    echo "INFO: D-Bus Scorched Earth (killing all dbus-daemon instances)..."
+    killall -9 dbus-daemon 2>/dev/null || true
+    sleep 1
+    
+    # Clean recreate /run/dbus
+    rm -rf /run/dbus && mkdir -p /run/dbus
+    chown messagebus:messagebus /run/dbus
+    chmod 755 /run/dbus
+    
+    # Remove stale sockets/pids from all possible locations
+    rm -f /run/dbus/pid /run/dbus/system_bus_socket 2>/dev/null || true
+    rm -f /var/run/dbus/pid /var/run/dbus/system_bus_socket 2>/dev/null || true
+    rm -f /home/linuxbrew/.linuxbrew/var/run/dbus/pid /home/linuxbrew/.linuxbrew/var/run/dbus/system_bus_socket 2>/dev/null || true
+    
+    # Ensure Homebrew dbus path exists
+    mkdir -p /home/linuxbrew/.linuxbrew/var/run/dbus 2>/dev/null || true
+    chown messagebus:messagebus /home/linuxbrew/.linuxbrew/var/run/dbus 2>/dev/null || true
+    
+    # Create clean minimal system.conf (proven working config)
+    mkdir -p /etc/dbus-1
+    cat > /etc/dbus-1/system.conf << 'DBUS_CONF'
 <!DOCTYPE busconfig PUBLIC "-//freedesktop//DTD D-Bus Bus Configuration 1.0//EN"
  "http://www.freedesktop.org/standards/dbus/1.0/busconfig.dtd">
 <busconfig>
@@ -1123,29 +1142,30 @@ case "$MDNS_MODE" in
  </policy>
 </busconfig>
 DBUS_CONF
-        # D-Bus Permission Documentation:
-        # - default policy: Minimal access to org.freedesktop.DBus only
-        # - avahi user: Full send/receive, can own org.freedesktop.Avahi
-        # - root user: Full access (for system services and debugging)
-        # This config prevents silent crashes while maintaining security
-        # Start dbus-daemon with custom config
-        dbus-daemon --system --fork 2>&1 || echo "WARN: dbus-daemon failed to start"
-        # Wait for D-Bus socket to be available (up to 5 seconds)
-        for _i in $(seq 1 10); do
-          if [ -S /run/dbus/system_bus_socket ]; then
-            echo "INFO: D-Bus system bus started"
-            break
-          fi
-          sleep 0.5
-        done
-        if [ ! -S /run/dbus/system_bus_socket ]; then
-          echo "WARN: D-Bus socket not found after start (avahi may fail)"
-        fi
-      else
-        echo "WARN: dbus-daemon not installed; avahi may fail to start"
-      fi
+    chown root:root /etc/dbus-1/system.conf
+    chmod 644 /etc/dbus-1/system.conf
+    
+    # Start dbus-daemon with explicit /usr/bin path
+    if command -v /usr/bin/dbus-daemon >/dev/null 2>&1; then
+      /usr/bin/dbus-daemon --system --fork --nopidfile 2>&1 || echo "WARN: dbus-daemon failed to start"
+    elif command -v dbus-daemon >/dev/null 2>&1; then
+      dbus-daemon --system --fork --nopidfile 2>&1 || echo "WARN: dbus-daemon failed to start"
     else
-      echo "INFO: D-Bus system bus already running"
+      echo "WARN: dbus-daemon not found in PATH"
+    fi
+    
+    # Wait for socket in loop (max 10s)
+    echo "INFO: Waiting for D-Bus socket..."
+    DBUS_WAIT_COUNT=0
+    while [ ! -S /run/dbus/system_bus_socket ] && [ "$DBUS_WAIT_COUNT" -lt 20 ]; do
+      sleep 0.5
+      DBUS_WAIT_COUNT=$((DBUS_WAIT_COUNT + 1))
+    done
+    
+    if [ -S /run/dbus/system_bus_socket ]; then
+      echo "INFO: D-Bus system bus started successfully"
+    else
+      echo "WARN: D-Bus socket not found after 10s (avahi may fail)"
     fi
     
     # Start avahi-daemon
@@ -1258,8 +1278,6 @@ EOF
           killall -HUP avahi-daemon 2>/dev/null || true
           echo "INFO: Avahi service advertisement loaded"
         else
-          echo "WARN: avahi-daemon not running after start attempt"
-        fi
           echo "WARN: avahi-daemon not running after start attempt"
         fi
       else
