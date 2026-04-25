@@ -1,7 +1,5 @@
-# Dockerfile for OpenClaw Home Assistant Addon v0.7.6.0
-# Multi-stage build for disk space optimization
-# FIXED: Version bump to trigger HA update (HA ignored 0.6.1.4, last broken was 0.6.1.12)
-# FIXED: Added sudo package, HEALTHCHECK for HA Watchdog, run.sh root-safety
+# OpenClaw HA-Addon v4.22 (Trixie Baseline)
+# Chunk 2: OOM-Shim implemented
 FROM debian:trixie-slim AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -27,6 +25,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 FROM debian:trixie-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
+ENV OOM_SCORE_ADJ=0
 ENV HOME=/config
 ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
@@ -196,12 +195,9 @@ RUN ARCH=$(echo ${TARGETARCH:-$(dpkg --print-architecture)} | sed 's|arm64|aarch
 # =============================================================================
 # Install OpenClaw v0.7.5.2 (pinned version)
 # =============================================================================
-RUN npm install -g openclaw@2026.4.22 \
+RUN npm install -g openclaw@2026.4.23 \
     && npm install -g pnpm \
     && npm cache clean --force
-
-# OOM Fix for Trixie: Disable child OOM score adj shim (causes silent freeze in containers)
-ENV OPENCLAW_CHILD_OOM_SCORE_ADJ=0
 
 # Fix safe.directory
 RUN git config --global safe.directory /home/linuxbrew/.linuxbrew/Homebrew
@@ -213,11 +209,12 @@ COPY run.sh /run.sh
 COPY oc_config_helper.py /oc_config_helper.py
 COPY render_nginx.py /render_nginx.py
 COPY oc-cleanup.sh /usr/local/bin/oc-cleanup
+COPY oom-shim.cjs /usr/local/lib/oom-shim.cjs
 COPY openclaw-proxy-shim.cjs /usr/local/lib/openclaw-proxy-shim.cjs
 COPY nginx.conf.tpl /etc/nginx/nginx.conf.tpl
 COPY landing.html.tpl /etc/nginx/landing.html.tpl
 
-RUN chmod +x /run.sh /oc_config_helper.py /render_nginx.py /usr/local/bin/oc-cleanup \
+RUN chmod +x /run.sh /oc_config_helper.py /render_nginx.py /usr/local/bin/oc-cleanup /usr/local/lib/oom-shim.cjs \
     && mkdir -p /run/nginx
 
 RUN mkdir -p /config/.local/lib/python3.11/site-packages
