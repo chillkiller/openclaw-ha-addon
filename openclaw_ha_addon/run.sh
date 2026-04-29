@@ -319,12 +319,14 @@ else
   NODE_HEAP_SIZE=2048
 fi
 
+# FIX: Added --max-semi-space-size and --gc-interval to mitigate Wasm OOM in containers
+# Wasm requires stable memory chunks. Increasing semi-space helps with allocation pressure.
 if [ -z "${NODE_OPTIONS:-}" ]; then
-  export NODE_OPTIONS="--max-old-space-size=${NODE_HEAP_SIZE}"
+  export NODE_OPTIONS="--max-old-space-size=${NODE_HEAP_SIZE} --max-semi-space-size=128"
 else
-  export NODE_OPTIONS="${NODE_OPTIONS} --max-old-space-size=${NODE_HEAP_SIZE}"
+  export NODE_OPTIONS="${NODE_OPTIONS} --max-old-space-size=${NODE_HEAP_SIZE} --max-semi-space-size=128"
 fi
-echo "INFO: Node.js memory: max-old-space-size=${NODE_HEAP_SIZE}"
+echo "INFO: Node.js memory: max-old-space-size=${NODE_HEAP_SIZE}, max-semi-space-size=128"
 echo "INFO: Section 4 done (RAM + Node.js memory)"
 
 # ------------------------------------------------------------------------------
@@ -524,7 +526,7 @@ EOF
 echo "INFO: Section 10 done (locks + HA token)"
 
 # ------------------------------------------------------------------------------
-# Section 11: Single-Instance Guard
+# Section 11: Single-Instance Guard & Zombie Killer
 # ------------------------------------------------------------------------------
 STARTUP_LOCK="/config/.openclaw/gateway.start.lock"
 exec 9>"$STARTUP_LOCK"
@@ -533,14 +535,25 @@ if ! flock -n 9; then
   exit 1
 fi
 
-# Zombie cleanup
+# ZOMBIE KILLER: Force kill any process occupying the Gateway Port
+# This replaces 'openclaw gateway stop' since systemd is missing in containers.
+if command -v ss >/dev/null 2>&1; then
+  ZOMBIE_PID=$(ss -tlnp 2>/dev/null | grep ":${GATEWAY_INTERNAL_PORT} " | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | head -1)
+  if [ -n "$ZOMBIE_PID" ]; then
+    echo "WARN: Zombie Gateway detected on port ${GATEWAY_INTERNAL_PORT} (PID $ZOMBIE_PID). Killing now..."
+    kill -9 "$ZOMBIE_PID" 2>/dev/null || true
+    sleep 1
+  fi
+fi
+
+# Standard zombie cleanup for defunct processes
 ZOMBIE_PIDS=$(ps aux | grep -E '<defunct>' | awk '{print $2}')
 if [ -n "$ZOMBIE_PIDS" ]; then
   echo "INFO: Cleaning up $(($(echo "$ZOMBIE_PIDS" | wc -w))) zombie process(es)"
   for zp in $ZOMBIE_PIDS; do wait "$zp" 2>/dev/null || true; done
 fi
 
-echo "INFO: Section 11 done (single-instance guard)"
+echo "INFO: Section 11 done (single-instance guard + zombie killer)"
 
 # ------------------------------------------------------------------------------
 # Section 12: OpenClaw Binary Check + Config Bootstrap
