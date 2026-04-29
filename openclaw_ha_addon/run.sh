@@ -352,24 +352,6 @@ mkdir -p "$CHROMIUM_CACHE"
 ulimit -v unlimited 2>/dev/null || true
 echo "INFO: Virtual memory unlimited (WASM-safe, cgroups enforce real limits)"
 
-# Create essential persistent directories
-mkdir -p \
-  /config/.openclaw \
-  /config/.openclaw/identity \
-  /config/clawd \
-  /config/keys \
-  /config/secrets \
-  /config/.node_global \
-  /config/.npm-global \
-  /config/.uv-tools \
-  /config/.go \
-  /config/.openclaw/agents \
-  /config/.openclaw/skills \
-  /config/certs \
-  /config/logs \
-  /data \
-  2>/dev/null || true
-
 # Back-compat symlink
 [ ! -e /data ] && ln -s /config /data || true
 
@@ -434,41 +416,27 @@ echo "INFO: Section 6 done (Homebrew persistence)"
 # Section 7: OpenClaw Skills Sync (Jiti-Safe: Copy NOT Symlink)
 # ------------------------------------------------------------------------------
 # v4.22+ compatible: Copy skills to persistent storage (Jiti loader needs stable paths, NO symlinks)
-IMAGE_SKILLS_DIR="/usr/lib/node_modules/openclaw/skills"
+IMAGE_SKILLS_DIR="$(HOME=/root npm root -g 2>/dev/null)/openclaw/skills"
 PERSISTENT_SKILLS_DIR="/config/.openclaw/skills"
 
-if [ -d "$IMAGE_SKILLS_DIR" ]; then
+if [ -d "$IMAGE_SKILLS_DIR" ] && [ ! -L "$IMAGE_SKILLS_DIR" ]; then
   mkdir -p "$PERSISTENT_SKILLS_DIR"
-  if [ ! -L "$IMAGE_SKILLS_DIR" ]; then
-    # First-time sync: copy (don't delete original, don't symlink)
-    if command -v rsync >/dev/null 2>&1; then
-      rsync -a --update "$IMAGE_SKILLS_DIR/" "$PERSISTENT_SKILLS_DIR/" 2>/dev/null || true
-    else
-      cp -ru "$IMAGE_SKILLS_DIR/"* "$PERSISTENT_SKILLS_DIR/" 2>/dev/null || true
-    fi
-    echo "INFO: Skills copied to persistent storage at $PERSISTENT_SKILLS_DIR"
-  elif [ -L "$IMAGE_SKILLS_DIR" ]; then
-    # Already linked, check if target exists
-    if [ -d "$IMAGE_SKILLS_DIR" ]; then
-      echo "INFO: Skills symlink already present and valid"
-    else
-      # Fix broken symlink by re-copying
-      rm -f "$IMAGE_SKILLS_DIR"
-      if command -v rsync >/dev/null 2>&1; then
-        rsync -a --update "$IMAGE_SKILLS_DIR/" "$PERSISTENT_SKILLS_DIR/" 2>/dev/null || true
-      else
-        cp -ru "$IMAGE_SKILLS_DIR/"* "$PERSISTENT_SKILLS_DIR/" 2>/dev/null || true
-      fi
-      echo "INFO: Skills re-copied to persistent storage (fixed broken symlink)"
-    fi
+  # Sync skills: --update replaces older files so upgrades propagate,
+  # but doesn't delete user-added files in persistent storage.
+  if command -v rsync >/dev/null 2>&1; then
+    rsync -a --update "$IMAGE_SKILLS_DIR/" "$PERSISTENT_SKILLS_DIR/" 2>/dev/null || true
+  else
+    cp -ru "$IMAGE_SKILLS_DIR/"* "$PERSISTENT_SKILLS_DIR/" 2>/dev/null || true
   fi
-elif [ -d "$PERSISTENT_SKILLS_DIR" ]; then
-  echo "INFO: Skills already in persistent storage"
+  # Replace image skills dir with symlink to persistent copy
+  rm -rf "$IMAGE_SKILLS_DIR"
+  ln -sf "$PERSISTENT_SKILLS_DIR" "$IMAGE_SKILLS_DIR"
+  echo "INFO: Synced built-in skills to persistent storage at $PERSISTENT_SKILLS_DIR"
+elif [ -L "$IMAGE_SKILLS_DIR" ]; then
+  echo "INFO: Built-in skills already linked to persistent storage"
 else
-  echo "INFO: Skills directory not found at $IMAGE_SKILLS_DIR (may be installed elsewhere)"
+  echo "WARN: Built-in skills directory not found at $IMAGE_SKILLS_DIR"
 fi
-
-echo "INFO: Section 7 done (skills sync - Jiti-safe, no symlinks)"
 
 # ------------------------------------------------------------------------------
 # Section 8: Custom Init Script (coollabsio pattern)
@@ -629,13 +597,6 @@ else
 fi
 
 echo "INFO: Section 13 done (gateway settings)"
-
-# ------------------------------------------------------------------------------
-# Section 13b: Ensure critical plugins (ollama for web search)
-# ------------------------------------------------------------------------------
-if [ -f "$HELPER_PATH" ] && [ -f "$OPENCLAW_CONFIG_PATH" ]; then
-  python3 "$HELPER_PATH" ensure-plugins 2>/dev/null || echo "WARN: ensure-plugins failed (non-fatal)"
-fi
 
 # ------------------------------------------------------------------------------
 # Section 14: TLS Certificate Generation (lan_https mode)

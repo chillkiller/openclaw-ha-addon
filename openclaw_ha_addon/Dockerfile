@@ -4,6 +4,12 @@ FROM debian:trixie-slim AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
+# Build ARGs for optional features
+ARG OPENCLAW_EXTENSIONS=""
+ARG OPENCLAW_INSTALL_BROWSER=""
+ARG OPENCLAW_INSTALL_DOCKER_CLI=""
+ARG OPENCLAW_DOCKER_APT_PACKAGES=""
+
 # Build tools only needed during image build
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
@@ -50,6 +56,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     ca-certificates \
     gnupg \
     lsb-release \
+    procps \
+    lsof \
+    hostname \
     python3 \
     python3-pip \
     python3-full \
@@ -101,7 +110,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     golang-go \
     # GitHub CLI
     gh \
-    && rm -rf /var/lib/apt/lists/*
+    && rm -rf /var/lib/apt/lists/* && \
+    update-ca-certificates
 
 # =============================================================================
 # Zone 3: Modern Toolchains (Bun, uv) - Direct Binary Download (Sledgehammer)
