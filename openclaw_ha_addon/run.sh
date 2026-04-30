@@ -535,16 +535,9 @@ if ! flock -n 9; then
   exit 1
 fi
 
-# ZOMBIE KILLER: Force kill any process occupying the Gateway Port
-# This replaces 'openclaw gateway stop' since systemd is missing in containers.
-if command -v ss >/dev/null 2>&1; then
-  ZOMBIE_PID=$(ss -tlnp 2>/dev/null | grep ":${GATEWAY_INTERNAL_PORT} " | sed -n 's/.*pid=\([0-9]*\).*/\1/p' | head -1)
-  if [ -n "$ZOMBIE_PID" ]; then
-    echo "WARN: Zombie Gateway detected on port ${GATEWAY_INTERNAL_PORT} (PID $ZOMBIE_PID). Killing now..."
-    kill -9 "$ZOMBIE_PID" 2>/dev/null || true
-    sleep 1
-  fi
-fi
+# NO aggressive zombie killing. The flock-based single-instance guard above ensures only one process can start. 
+# Any gateway already on the port is valid and should NOT be killed.
+echo "INFO: Skipping aggressive zombie cleanup (using flock guard)"
 
 # Standard zombie cleanup for defunct processes
 ZOMBIE_PIDS=$(ps aux | grep -E '<defunct>' | awk '{print $2}')
