@@ -49,6 +49,7 @@ ENV CHROME_FLAGS="--disk-cache-dir=/tmp/openclaw/chromium_cache --disk-cache-siz
 RUN apt-get update && apt-get install -y --no-install-recommends \
     # Core utilities (INCLUDES sudo - FIX!)
     sudo \
+    tini \
     curl \
     git \
     wget \
@@ -235,4 +236,5 @@ ENV PYTHONPATH=/config/.local/lib/python3.11/site-packages:
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
   CMD wget --no-verbose --tries=1 --spider http://localhost:48099/ || exit 1
 
+ENTRYPOINT [ "/usr/bin/tini", "-g", "--" ]
 CMD [ "/run.sh" ]
