@@ -3,7 +3,7 @@
 # CHANGELOG v4.22:
 #   - NEW: OOM-Shim implemented (oom_score_adj=0, max-old-space-size=2048)
 name: OpenClaw Assistant
-version: "0.7.5.3.3"
+version: "0.7.5.3.2"
 slug: openclaw_ha_addon
 description: OpenClaw Home Assistant Addon (Trixie Full-Stack)
 url: https://github.com/chillkiller/openclaw-ha-addon
