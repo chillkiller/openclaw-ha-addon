@@ -205,7 +205,7 @@ RUN ARCH=$(echo ${TARGETARCH:-$(dpkg --print-architecture)} | sed 's|arm64|aarch
 # =============================================================================
 # Install OpenClaw v0.7.5.2 (pinned version)
 # =============================================================================
-RUN npm install -g openclaw@2026.4.26 \
+RUN npm install -g openclaw@2026.4.29 \
     && npm install -g pnpm \
     && npm cache clean --force
 
