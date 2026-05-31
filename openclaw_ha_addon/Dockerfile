@@ -204,9 +204,11 @@ RUN ARCH=$(echo ${TARGETARCH:-$(dpkg --print-architecture)} | sed 's|arm64|aarch
     && chmod +x /usr/local/bin/ttyd
 
 # =============================================================================
-# Install OpenClaw v0.7.5.2 (pinned version)
+# Install OpenClaw v0.7.5.4 (pinned version)
+# Bundle node-llama-cpp in the image so the default local memory/embeddings
+# provider works in HAOS without requiring manual npm installs in /usr/lib.
 # =============================================================================
-RUN npm install -g openclaw@2026.4.29 \
+RUN npm install -g openclaw@2026.5.27 node-llama-cpp@3.18.1 \
     && npm install -g pnpm \
     && npm cache clean --force
 
