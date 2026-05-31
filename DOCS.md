@@ -632,7 +632,57 @@ You should see your account listed with the `sheets` service.
 
 > **Why `--manual`?** The default OAuth flow starts a temporary HTTP server on localhost to receive the callback. Since the add-on runs on your HA device (not your PC), the browser redirect to `localhost` can't reach the add-on's server. The `--manual` flag skips the local server and lets you paste the redirect URL directly.
 
-> **Persistence**: gog stores credentials under `/config/gogcli/` which is persistent storage — your auth survives add-on updates.
+
+
+### 6g. Memory & Embeddings Configuration
+
+The "Memory Search" feature allows OpenClaw to perform semantic searches over its knowledge base. This requires an **Embedding Provider** to convert text into vectors.
+
+#### 1. Local Embeddings (Recommended for HAOS)
+The Home Assistant Add-on comes pre-bundled with `node-llama-cpp`. This allows the assistant to generate embeddings locally on your hardware without any external API calls.
+
+- **Requirement:** No additional installation needed (included in the image).
+- **Configuration:** In your `openclaw.json`, set the provider to:
+  ```json
+  "memorySearch": {
+    "provider": "local",
+    "model": "nomic-embed-text:latest",
+    "enabled": true
+  }
+  ```
+- **Pros:** 100% private, no external latency, works offline.
+
+#### 2. Remote Ollama (Hybrid Approach)
+If you have a dedicated server running Ollama (e.g., a powerful PC in your network), you can offload the embedding work to that server.
+
+- **Requirement:** A running Ollama instance with the `nomic-embed-text` model.
+- **Configuration:**
+  ```json
+  "memorySearch": {
+    "provider": "ollama",
+    "model": "nomic-embed-text:latest",
+    "baseUrl": "http://<your-ollama-ip>:11434",
+    "enabled": true
+  }
+  ```
+- **Pros:** Better performance on weak hardware (Raspberry Pi), shared model across multiple services.
+
+#### 3. Cloud Providers (External APIs)
+For users who prefer not to host their own models, commercial APIs (like OpenAI) can be used.
+
+- **Requirement:** Valid API Key.
+- **Configuration:**
+  ```json
+  "memorySearch": {
+    "provider": "openai",
+    "model": "text-embedding-3-small",
+    "apiKey": "***",
+    "enabled": true
+  }
+  ```
+- **Pros:** Highest quality embeddings, zero local resource usage.
+
+---
 
 ---
 
