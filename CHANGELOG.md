@@ -13,6 +13,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Resolves APT dependency failures during Docker build (libsoup-3.0-0, avahi-daemon, dbus)
   - Trixie repositories were unstable causing repeated build failures
 
+- **Node.js Memory Limits:**
+  - Added `--max-old-space-size=4096` to prevent OOM crashes in containerized environments
+  - Without explicit limits, Node.js tries to use all RAM and hits HA's cgroup limits
+  - Set to 4GB by default; preserves existing NODE_OPTIONS when present
+
 ### Changed
 - Updated base image for all stages: `debian:bookworm-slim` (stable, production-ready)
 - Version bump to reflect breaking change in base image
