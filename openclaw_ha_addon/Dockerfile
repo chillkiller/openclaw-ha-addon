@@ -1,6 +1,6 @@
-# OpenClaw HA-Addon v4.22 (Trixie Baseline)
+# OpenClaw HA-Addon v4.22 (Bookworm Baseline - Stable)
 # Chunk 2: OOM-Shim implemented
-FROM debian:trixie-slim AS builder
+FROM debian:bookworm-slim AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
 
@@ -28,7 +28,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # =============================================================================
 # Stage 2: Runtime Image
 # =============================================================================
-FROM debian:trixie-slim
+FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV OOM_SCORE_ADJ=0

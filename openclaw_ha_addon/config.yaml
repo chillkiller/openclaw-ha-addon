@@ -1,11 +1,12 @@
-# OpenClaw Home Assistant Addon v4.22 Configuration
-# Trixie Baseline + OOM-Shim
-# CHANGELOG v4.22:
-#   - NEW: OOM-Shim implemented (oom_score_adj=0, max-old-space-size=2048)
+# OpenClaw Home Assistant Addon v4.23 Configuration
+# Bookworm Baseline (Stable) + OOM-Shim
+# CHANGELOG v4.23:
+#   - FIX: Switched from Debian Trixie (Testing) to Bookworm (Stable) to resolve APT dependency issues
+#   - MAINTAIN: All OpenClaw skills, plugins, and services remain fully supported
 name: OpenClaw Assistant
-version: "0.7.5.4"
+version: "0.7.6.0"
 slug: openclaw_ha_addon
-description: OpenClaw Home Assistant Addon (Trixie Full-Stack)
+description: OpenClaw Home Assistant Addon (Bookworm Full-Stack)
 url: https://github.com/chillkiller/openclaw-ha-addon
 arch:
   - amd64
