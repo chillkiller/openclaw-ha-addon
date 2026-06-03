@@ -127,6 +127,22 @@ if [ -n "$ADDON_HTTP_PROXY" ]; then
   fi
 fi
 
+# ------------------------------------------------------------------------------
+# Node.js memory limit — critical for containerized environments
+# Without this, Node.js tries to use all available RAM and hits HA's cgroup limits.
+# 4096MB (4GB) for robust operation on systems with 8GB+ RAM.
+# If you have less than 8GB system RAM, reduce to 2048 (2GB).
+# ------------------------------------------------------------------------------
+if [ -z "${NODE_OPTIONS:-}" ]; then
+  export NODE_OPTIONS="--max-old-space-size=4096 --dns-result-order=ipv4first"
+else
+  # Preserve existing NODE_OPTIONS but ensure memory limit is set
+  if [[ ! "$NODE_OPTIONS" =~ --max-old-space-size ]]; then
+    export NODE_OPTIONS="--max-old-space-size=4096 ${NODE_OPTIONS}"
+  fi
+fi
+echo "INFO: Node.js memory limit set to 4GB"
+
 # Optional network hardening/workaround: force IPv4-first DNS ordering for Node.js.
 # Helps in environments where IPv6 resolves but has no working egress.
 if [ "$FORCE_IPV4_DNS" = "true" ] || [ "$FORCE_IPV4_DNS" = "1" ]; then
