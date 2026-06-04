@@ -208,7 +208,7 @@ RUN ARCH=$(echo ${TARGETARCH:-$(dpkg --print-architecture)} | sed 's|arm64|aarch
 # Bundle node-llama-cpp in the image so the default local memory/embeddings
 # provider works in HAOS without requiring manual npm installs in /usr/lib.
 # =============================================================================
-RUN npm install -g openclaw@2026.5.27 node-llama-cpp@3.18.1 \
+RUN npm install -g openclaw@latest node-llama-cpp@3.18.1 \
     && npm install -g pnpm \
     && npm cache clean --force
 
