@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.6.1] - 2026-06-06
+
+### Fixed
+- **Go Runtime:** Replaced outdated `golang-go` apt package (Go 1.19, Bookworm) with
+  official Go 1.24.1 binary download, following the same pattern as Bun/uv
+- Go 1.19 from Debian Bookworm is EOL, lacks security support, and fails to build
+  modern Go modules — now resolved by downloading the latest Go binary directly
+
 ## [0.7.6.0] - 2026-06-03
 
 ### Fixed

@@ -108,16 +108,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     tmux \
     ripgrep \
     fd-find \
-    golang-go \
     # GitHub CLI
     gh \
     && rm -rf /var/lib/apt/lists/* && \
     update-ca-certificates
 
 # =============================================================================
-# Zone 3: Modern Toolchains (Bun, uv) - Direct Binary Download (Sledgehammer)
+# Zone 3: Modern Toolchains (Go, Bun, uv) - Direct Binary Download
 # =============================================================================
 ARG TARGETARCH
+
+# Go Runtime — official binary (Bookworm's golang-go package is Go 1.19, outdated)
+RUN ARCH=$(echo ${TARGETARCH:-$(dpkg --print-architecture)} | sed 's|arm64|arm64|;s|amd64|amd64|') \
+    && GO_VERSION=1.24.1 \
+    && echo "Installing Go ${GO_VERSION} for architecture: ${ARCH}" \
+    && curl -fsSL "https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz" \
+    | tar -C /usr/local -xzf - \
+    && ln -sf /usr/local/go/bin/go /usr/local/bin/go \
+    && ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt \
+    && go version
+
 RUN ARCH=$(echo ${TARGETARCH:-$(dpkg --print-architecture)} | sed 's|arm64|aarch64|;s|amd64|x64|') \
     && echo "Installing Bun for architecture: ${ARCH}" \
     && curl -fsSL "https://github.com/oven-sh/bun/releases/latest/download/bun-linux-${ARCH}.zip" -o /tmp/bun.zip \
