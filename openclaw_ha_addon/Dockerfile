@@ -1,5 +1,5 @@
-# OpenClaw HA-Addon v4.22 (Bookworm Baseline - Stable)
-# Chunk 2: OOM-Shim implemented
+# OpenClaw HA-Addon v0.7.7.0 (Bookworm Baseline - Full-Stack)
+# OpenClaw 2026.6.8 + CUPS/Scanner + crawl4ai + Go-PATH-Fix
 FROM debian:bookworm-slim AS builder
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -110,6 +110,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     fd-find \
     # GitHub CLI
     gh \
+    # Printing Stack (CUPS/IPP/AirPrint)
+    cups \
+    cups-client \
+    cups-daemon \
+    cups-filters \
+    cups-ipp-utils \
+    cups-browsed \
+    # Scanner Stack (eSCL/AirScan/WSD)
+    sane-airscan \
+    sane-utils \
     && rm -rf /var/lib/apt/lists/* && \
     update-ca-certificates
 
@@ -126,7 +136,12 @@ RUN ARCH=$(echo ${TARGETARCH:-$(dpkg --print-architecture)} | sed 's|arm64|arm64
     | tar -C /usr/local -xzf - \
     && ln -sf /usr/local/go/bin/go /usr/local/bin/go \
     && ln -sf /usr/local/go/bin/gofmt /usr/local/bin/gofmt \
-    && go version
+    && go version \
+    && if dpkg -l golang-go 2>/dev/null | grep -q '^ii'; then \
+         echo "Purging conflicting golang-go (apt) to prevent PATH shadowing of Go ${GO_VERSION}" \
+         && apt-get remove --purge -y golang-go \
+         && apt-get autoremove --purge -y; \
+       fi
 
 RUN ARCH=$(echo ${TARGETARCH:-$(dpkg --print-architecture)} | sed 's|arm64|aarch64|;s|amd64|x64|') \
     && echo "Installing Bun for architecture: ${ARCH}" \
@@ -178,6 +193,14 @@ RUN uv pip install --system --break-system-packages playwright && \
     echo "Playwright Chromium installed: $(/opt/ms-playwright/chromium-*/chrome-linux/chrome --version 2>/dev/null || echo 'version check failed')"
 
 # =============================================================================
+# crawl4ai — Web Crawling Framework (Basis, ohne ML-Deps)
+# PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright (shared, ~956MB bereits im Image)
+# KEIN [all] — torch, transformers, scipy explizit ausgeschlossen
+# =============================================================================
+RUN uv pip install --system --break-system-packages crawl4ai \
+    && echo "crawl4ai installed: $(python3 -c 'import crawl4ai; print(crawl4ai.__version__)' 2>/dev/null || echo 'version check failed')"
+
+# =============================================================================
 # Discord Plugin Dependency (P1)
 # NOTE: Removed from build-time install. @discordjs/opus@0.10.0 has a known
 # NEON intrinsic compile bug on aarch64 with GCC 14+ (celt_inner_prod_neon
@@ -218,7 +241,7 @@ RUN ARCH=$(echo ${TARGETARCH:-$(dpkg --print-architecture)} | sed 's|arm64|aarch
 # Bundle node-llama-cpp in the image so the default local memory/embeddings
 # provider works in HAOS without requiring manual npm installs in /usr/lib.
 # =============================================================================
-RUN npm install -g openclaw@latest node-llama-cpp@3.18.1 \
+RUN npm install -g openclaw@2026.6.8 node-llama-cpp@3.18.1 \
     && npm install -g pnpm \
     && npm cache clean --force
 

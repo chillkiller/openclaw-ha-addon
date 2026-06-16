@@ -742,6 +742,22 @@ if [ -f /usr/local/lib/openclaw-proxy-shim.cjs ]; then
 fi
 
 # ------------------------------------------------------------------------------
+# Ensure browser automation config (headless Chromium in container)
+# ------------------------------------------------------------------------------
+if [ -f "$HELPER_PATH" ] && [ -f "$OPENCLAW_CONFIG_PATH" ]; then
+  python3 "$HELPER_PATH" ensure-browser-config || \
+    echo "WARN: Could not ensure browser config — browser automation may not work"
+fi
+
+# ------------------------------------------------------------------------------
+# Ensure memory-core plugin with dreaming sidecar
+# ------------------------------------------------------------------------------
+if [ -f "$HELPER_PATH" ] && [ -f "$OPENCLAW_CONFIG_PATH" ]; then
+  python3 "$HELPER_PATH" ensure-memory-core || \
+    echo "WARN: Could not ensure memory-core — memory search may be unavailable"
+fi
+
+# ------------------------------------------------------------------------------
 # Auto-configure MCP (Model Context Protocol) for Home Assistant
 # Registers HA as an MCP server so OpenClaw can control HA entities/services.
 # Requires: homeassistant_token set in add-on options + mcporter CLI available.
@@ -922,6 +938,34 @@ find_gateway_daemon_pid() {
 
   return 1
 }
+
+# ------------------------------------------------------------------------------
+# D-Bus + Avahi Startup (mDNS/LAN Discovery)
+# Must run BEFORE the gateway so Avahi can advertise the service.
+# dbus-daemon is not started by systemd in Docker — we start it manually.
+# ------------------------------------------------------------------------------
+echo "Starting D-Bus system bus for Avahi/mDNS..."
+if ! pgrep -x dbus-daemon >/dev/null 2>&1; then
+  dbus-daemon --system --fork
+  for i in $(seq 1 10); do
+    [ -S /run/dbus/system_bus_socket ] && break
+    sleep 0.5
+  done
+  if [ -S /run/dbus/system_bus_socket ]; then
+    echo "D-Bus system bus started (socket: /run/dbus/system_bus_socket)"
+  else
+    echo "WARN: D-Bus socket not available after 5s — mDNS/Avahi may not work"
+  fi
+else
+  echo "D-Bus already running"
+fi
+
+if ! pgrep -x avahi-daemon >/dev/null 2>&1; then
+  avahi-daemon --daemonize --no-drop-root
+  echo "Avahi mDNS daemon started"
+else
+  echo "Avahi already running"
+fi
 
 if ! start_openclaw_runtime; then
   exit 1
