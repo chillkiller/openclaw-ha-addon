@@ -306,6 +306,84 @@ def ensure_plugins():
     return True
 
 
+def ensure_browser_config():
+    """Ensure browser automation config is present for containerized Chromium.
+
+    Sets headless mode, noSandbox (required in Docker), executable path,
+    and sensible timeouts for ARM64 hardware.
+    """
+    cfg = read_config() or {}
+    browser = cfg.setdefault("browser", {})
+
+    defaults = {
+        "enabled": True,
+        "headless": True,
+        "noSandbox": True,
+        "executablePath": "/usr/bin/chromium",
+        "timeoutMs": 60000,
+        "extraArgs": [
+            "--disable-gpu",
+            "--disable-dev-shm-usage",
+            "--no-first-run",
+            "--disable-background-networking",
+            "--disable-sync",
+            "--disable-default-apps",
+            "--disable-extensions",
+            "--disable-translate",
+            "--disable-notifications",
+        ],
+    }
+
+    changes = []
+    for key, value in defaults.items():
+        if browser.get(key) != value:
+            browser[key] = value
+            changes.append(f"browser.{key} -> {value}")
+
+    if changes:
+        if write_config(cfg):
+            print(f"INFO: Ensured browser config: {', '.join(changes)}")
+            return True
+        print("ERROR: Failed to write browser config")
+        return False
+
+    print("INFO: Browser config already correct")
+    return True
+
+
+def ensure_memory_core():
+    """Ensure memory-core plugin is enabled with dreaming sidecar.
+
+    memory-core provides file/SQLite-based memory search.
+    Dreaming runs periodic memory consolidation in sidecar mode.
+    """
+    cfg = read_config() or {}
+    plugins = cfg.setdefault("plugins", {})
+    entries = plugins.setdefault("entries", {})
+
+    memory_core = entries.setdefault("memory-core", {})
+    changes = []
+
+    if not memory_core.get("enabled"):
+        memory_core["enabled"] = True
+        changes.append("memory-core.enabled -> true")
+
+    dreaming = memory_core.setdefault("dreaming", {})
+    if not dreaming.get("enabled"):
+        dreaming["enabled"] = True
+        changes.append("memory-core.dreaming.enabled -> true")
+
+    if changes:
+        if write_config(cfg):
+            print(f"INFO: Ensured memory-core: {', '.join(changes)}")
+            return True
+        print("ERROR: Failed to write memory-core config")
+        return False
+
+    print("INFO: memory-core already correct")
+    return True
+
+
 def generate_mdns_nginx_snippet(public_port: int, internal_port: int, host_name: str = ""):
     """
     Generate nginx config snippet for mDNS-aware HTTPS proxy.
@@ -339,6 +417,8 @@ def main():
         print("  set <key> <value>")
         print("  mdns-nginx-snippet <public_port> <internal_port> [hostname]")
         print("  ensure-plugins")
+        print("  ensure-browser-config")
+        print("  ensure-memory-core")
         sys.exit(1)
 
     cmd = sys.argv[1]
@@ -412,6 +492,12 @@ def main():
 
     elif cmd == "ensure-plugins":
         sys.exit(0 if ensure_plugins() else 1)
+
+    elif cmd == "ensure-browser-config":
+        sys.exit(0 if ensure_browser_config() else 1)
+
+    elif cmd == "ensure-memory-core":
+        sys.exit(0 if ensure_memory_core() else 1)
 
     elif cmd == "cleanup-stale-config":
         sys.exit(0 if cleanup_stale_config_keys() else 1)

@@ -4,7 +4,7 @@
 #   - FIX: Switched from Debian Trixie (Testing) to Bookworm (Stable) to resolve APT dependency issues
 #   - MAINTAIN: All OpenClaw skills, plugins, and services remain fully supported
 name: OpenClaw Assistant
-version: "0.7.6.1"
+version: "0.7.7.0"
 slug: openclaw_ha_addon
 description: OpenClaw Home Assistant Addon (Bookworm Full-Stack)
 url: https://github.com/chillkiller/openclaw-ha-addon

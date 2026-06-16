@@ -1,3 +1,21 @@
+## [0.7.7.0] - 2026-06-16
+- **UPGRADE:** OpenClaw 2026.6.1 → 2026.6.8 (Security-Härtung, Telegram Rich-Text, Memory-Fixes, GLM-5.2, Haiku 4.5)
+- **FIX:** Go-PATH-Konflikt — golang-go (apt 1.19.8) wird nach Go 1.24.1 Binary gepurged
+- **FIX:** D-Bus + Avahi Startup in run.sh — dbus-daemon wird vor Gateway gestartet, mDNS funktioniert jetzt
+- **ADD:** CUPS-Stack (cups, cups-client, cups-daemon, cups-filters, cups-ipp-utils, cups-browsed) für AirPrint/IPP-Druck
+- **ADD:** Scanner-Stack (sane-airscan, sane-utils) für eSCL/AirScan/WSD
+- **ADD:** crawl4ai Basis im Image (uv pip install, ohne torch/transformers) — shared Playwright Chromium
+- **ADD:** Browser-Config Bootstrap (headless, noSandbox, extraArgs) via oc_config_helper.py
+- **ADD:** memory-core Dreaming enabled via oc_config_helper.py
+
+## [0.7.6.1] - 2026-06-06
+- **UPGRADE:** OpenClaw 2026.4.26 → 2026.6.1
+- **FIX:** Go 1.19 (golang-go apt) → Go 1.24.1 (official binary)
+- **FIX:** Node.js memory limits (--max-old-space-size=4096)
+- **FIX:** Debian Trixie (testing) → Bookworm (stable) — APT dependency stability
+- **ADD:** Embeddings configuration guide (DOCS.md)
+- **ADD:** Local embeddings via node-llama-cpp@3.18.1 bundled in image
+
 ## [0.7.6.0] - 2026-04-24
 - **UPGRADE:** OpenClaw 2026.4.21 → 2026.4.22 (fixes compaction/streaming issues)
 - **FIX:** D-Bus "Scorched Earth" start sequence (killall, clean dirs, fresh socket)

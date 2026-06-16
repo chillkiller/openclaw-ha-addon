@@ -752,6 +752,9 @@ The add-on image includes these tools, available in the terminal:
 | pnpm | `pnpm` | Fast Node package manager |
 | Homebrew | `brew` | Package manager (optional — may not be available on all CPUs) |
 | Chromium | `chromium` | Headless browser for automation |
+| crawl4ai | `python3 -c 'import crawl4ai'` | Web crawling framework (Basis, ohne ML-Deps) |
+| CUPS | `cups` | Printing stack (AirPrint/IPP) |
+| SANE | `scanimage` | Scanner stack (eSCL/AirScan/WSD) |
 | SSH | `ssh` | Remote access |
 | oc-cleanup | `oc-cleanup` | Interactive disk space monitor & cache cleanup helper |
 
