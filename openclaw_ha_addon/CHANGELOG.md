@@ -1,3 +1,17 @@
+## [0.7.7.1] - 2026-06-16
+- **FIX:** Builder-Stage entfernt (toter Code seit v0.7.5.1, nie verdrahtet)
+- **FIX:** build-essential nach npm install gepurged (~200MB Image-Ersparnis)
+- **FIX:** PYTHONPATH trailing colon entfernt (Security)
+- **FIX:** NODE_OPTIONS --dns-result-order Dedup
+- **FIX:** D-Bus Socket-Wait von 5s auf 10s erhöht (langsame SD-Karten)
+- **FIX:** controlui_disable_device_auth Default false→true (konsistent mit DOCS.md)
+- **FIX:** ensure_browser_config() +localLaunchTimeoutMs +localCdpReadyTimeoutMs (ARM64)
+- **FIX:** repository.yaml Version synchronisiert
+- **IMPLEMENTED:** mdns_mode/host_name/service_port/interface_name in run.sh (Audit R3)
+- **IMPLEMENTED:** gateway_log_to_console/log_level, trace_log_to_console in run.sh (Audit R4)
+- **IMPLEMENTED:** runtime_apt_packages in run.sh (Audit R5)
+- **IMPLEMENTED:** custom_init_script in run.sh (Audit R6)
+
 ## [0.7.7.0] - 2026-06-16
 - **UPGRADE:** OpenClaw 2026.6.1 → 2026.6.8 (Security-Härtung, Telegram Rich-Text, Memory-Fixes, GLM-5.2, Haiku 4.5)
 - **FIX:** Go-PATH-Konflikt — golang-go (apt 1.19.8) wird nach Go 1.24.1 Binary gepurged

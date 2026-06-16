@@ -29,4 +29,4 @@ The addon uses a fixed 4GB Node.js heap (`--max-old-space-size=4096`) for robust
 | Homebrew (persistent) | ~3.2 GB |
 | crawl4ai (Basis) | ~200 MB |
 | CUPS + Scanner | ~55 MB |
-| **Total Image** | **~1.9 GB** |
+| **Total Image** | **~1.7 GB** |

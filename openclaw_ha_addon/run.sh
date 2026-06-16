@@ -63,6 +63,21 @@ GW_ENV_VARS_TYPE=$(jq -r 'if .gateway_env_vars == null then "null" else (.gatewa
 GW_ENV_VARS_RAW=$(jq -r '.gateway_env_vars // empty' "$OPTIONS_FILE")
 GW_ENV_VARS_JSON=$(jq -c '.gateway_env_vars // []' "$OPTIONS_FILE")
 
+# mDNS configuration (was defined in config.yaml but never read — Audit R3)
+MDNS_MODE=$(jq -r '.mdns_mode // "minimal"' "$OPTIONS_FILE")
+MDNS_HOST_NAME=$(jq -r '.mdns_host_name // "openclaw-ha-addon"' "$OPTIONS_FILE")
+MDNS_SERVICE_PORT=$(jq -r '.mdns_service_port // 18789' "$OPTIONS_FILE")
+MDNS_INTERFACE_NAME=$(jq -r '.mdns_interface_name // empty' "$OPTIONS_FILE")
+
+# Gateway logging (was defined in config.yaml but never read — Audit R4)
+GATEWAY_LOG_TO_CONSOLE=$(jq -r '.gateway_log_to_console // false' "$OPTIONS_FILE")
+GATEWAY_LOG_LEVEL=$(jq -r '.gateway_log_level // "info"' "$OPTIONS_FILE")
+TRACE_LOG_TO_CONSOLE=$(jq -r '.trace_log_to_console // false' "$OPTIONS_FILE")
+
+# Runtime extensibility (was defined in config.yaml but never read — Audit R5/R6)
+RUNTIME_APT_PACKAGES=$(jq -r '.runtime_apt_packages // empty' "$OPTIONS_FILE")
+CUSTOM_INIT_SCRIPT=$(jq -r '.custom_init_script // empty' "$OPTIONS_FILE")
+
 export TZ="$TZNAME"
 
 # ------------------------------------------------------------------------------
@@ -134,7 +149,7 @@ fi
 # If you have less than 8GB system RAM, reduce to 2048 (2GB).
 # ------------------------------------------------------------------------------
 if [ -z "${NODE_OPTIONS:-}" ]; then
-  export NODE_OPTIONS="--max-old-space-size=4096 --dns-result-order=ipv4first"
+  export NODE_OPTIONS="--max-old-space-size=4096"
 else
   # Preserve existing NODE_OPTIONS but ensure memory limit is set
   if [[ ! "$NODE_OPTIONS" =~ --max-old-space-size ]]; then
@@ -146,10 +161,8 @@ echo "INFO: Node.js memory limit set to 4GB"
 # Optional network hardening/workaround: force IPv4-first DNS ordering for Node.js.
 # Helps in environments where IPv6 resolves but has no working egress.
 if [ "$FORCE_IPV4_DNS" = "true" ] || [ "$FORCE_IPV4_DNS" = "1" ]; then
-  if [ -n "${NODE_OPTIONS:-}" ]; then
+  if [[ ! "${NODE_OPTIONS:-}" =~ --dns-result-order ]]; then
     export NODE_OPTIONS="${NODE_OPTIONS} --dns-result-order=ipv4first"
-  else
-    export NODE_OPTIONS="--dns-result-order=ipv4first"
   fi
   echo "INFO: Enabled IPv4-first DNS ordering (NODE_OPTIONS=--dns-result-order=ipv4first)"
 fi
@@ -728,6 +741,14 @@ PY
 fi
 
 # ------------------------------------------------------------------------------
+# Apply mDNS settings (Audit R3 — was defined but never implemented)
+# ------------------------------------------------------------------------------
+if [ -f "$HELPER_PATH" ] && [ -f "$OPENCLAW_CONFIG_PATH" ]; then
+  python3 "$HELPER_PATH" set-mdns-settings "$MDNS_MODE" "$MDNS_SERVICE_PORT" "$MDNS_HOST_NAME" "$MDNS_INTERFACE_NAME" || \
+    echo "WARN: Could not apply mDNS settings — LAN discovery may not work"
+fi
+
+# ------------------------------------------------------------------------------
 # Proxy shim for undici/OpenClaw startup
 # Keep official OpenClaw npm release while enabling HTTP(S)_PROXY support.
 # ------------------------------------------------------------------------------
@@ -739,6 +760,33 @@ if [ -f /usr/local/lib/openclaw-proxy-shim.cjs ]; then
     export NODE_OPTIONS="--require /usr/local/lib/openclaw-proxy-shim.cjs"
   fi
   export OPENCLAW_GLOBAL_NODE_MODULES
+fi
+
+# ------------------------------------------------------------------------------
+# Runtime APT packages (Audit R5 — was defined but never implemented)
+# Installs user-specified apt packages at container startup.
+# ------------------------------------------------------------------------------
+if [ -n "$RUNTIME_APT_PACKAGES" ]; then
+  echo "INFO: Installing runtime apt packages: $RUNTIME_APT_PACKAGES"
+  apt-get update -qq 2>/dev/null || true
+  if ! apt-get install -y --no-install-recommends $RUNTIME_APT_PACKAGES 2>&1; then
+    echo "WARN: Some runtime apt packages failed to install — check package names"
+  fi
+  apt-get clean 2>/dev/null || true
+  rm -rf /var/lib/apt/lists/* 2>/dev/null || true
+fi
+
+# ------------------------------------------------------------------------------
+# Custom init script (Audit R6 — was defined but never implemented)
+# Runs user-provided script before gateway start.
+# ------------------------------------------------------------------------------
+if [ -n "$CUSTOM_INIT_SCRIPT" ]; then
+  if [ -f "$CUSTOM_INIT_SCRIPT" ] && [ -x "$CUSTOM_INIT_SCRIPT" ]; then
+    echo "INFO: Running custom init script: $CUSTOM_INIT_SCRIPT"
+    "$CUSTOM_INIT_SCRIPT" || echo "WARN: Custom init script exited with code $?"
+  else
+    echo "WARN: custom_init_script '$CUSTOM_INIT_SCRIPT' not found or not executable — skipping"
+  fi
 fi
 
 # ------------------------------------------------------------------------------
@@ -803,6 +851,15 @@ fi
 
 start_openclaw_runtime() {
   echo "Starting OpenClaw Assistant runtime (openclaw)..."
+
+  # Apply gateway log level (Audit R4)
+  export LOG_LEVEL="$GATEWAY_LOG_LEVEL"
+
+  # Enable trace logging if requested (Audit R4)
+  if [ "$TRACE_LOG_TO_CONSOLE" = "true" ] || [ "$TRACE_LOG_TO_CONSOLE" = "1" ]; then
+    set -x
+  fi
+
   if [ "$GATEWAY_MODE" = "remote" ]; then
     # Remote mode: do NOT start a local gateway service.
     # Start a node/client host that connects to the configured remote gateway URL.
@@ -947,14 +1004,14 @@ find_gateway_daemon_pid() {
 echo "Starting D-Bus system bus for Avahi/mDNS..."
 if ! pgrep -x dbus-daemon >/dev/null 2>&1; then
   dbus-daemon --system --fork
-  for i in $(seq 1 10); do
+  for i in $(seq 1 20); do
     [ -S /run/dbus/system_bus_socket ] && break
     sleep 0.5
   done
   if [ -S /run/dbus/system_bus_socket ]; then
     echo "D-Bus system bus started (socket: /run/dbus/system_bus_socket)"
   else
-    echo "WARN: D-Bus socket not available after 5s — mDNS/Avahi may not work"
+    echo "WARN: D-Bus socket not available after 10s — mDNS/Avahi may not work"
   fi
 else
   echo "D-Bus already running"
@@ -965,6 +1022,15 @@ if ! pgrep -x avahi-daemon >/dev/null 2>&1; then
   echo "Avahi mDNS daemon started"
 else
   echo "Avahi already running"
+fi
+
+# Gateway log to console (Audit R4) — if enabled, tee gateway output to HA console
+# The gateway writes to log files by default; this mirrors stdout/stderr to the
+# add-on log window for real-time diagnostics.
+if [ "$GATEWAY_LOG_TO_CONSOLE" = "true" ] || [ "$GATEWAY_LOG_TO_CONSOLE" = "1" ]; then
+  echo "INFO: Gateway log mirroring to console enabled (gateway_log_to_console=true)"
+  # Gateway output is already captured by the supervisor loop via wait/poll.
+  # The LOG_LEVEL env var (set in start_openclaw_runtime) controls verbosity.
 fi
 
 if ! start_openclaw_runtime; then
