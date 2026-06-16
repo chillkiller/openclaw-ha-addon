@@ -1,10 +1,7 @@
-# OpenClaw Home Assistant Addon v4.23 Configuration
-# Bookworm Baseline (Stable) + OOM-Shim
-# CHANGELOG v4.23:
-#   - FIX: Switched from Debian Trixie (Testing) to Bookworm (Stable) to resolve APT dependency issues
-#   - MAINTAIN: All OpenClaw skills, plugins, and services remain fully supported
+# OpenClaw Home Assistant Addon v0.7.7.1 Configuration
+# Debian Bookworm Full-Stack — CUPS/Scanner/crawl4ai/Go-PATH-Fix/D-Bus-Avahi
 name: OpenClaw Assistant
-version: "0.7.7.0"
+version: "0.7.7.1"
 slug: openclaw_ha_addon
 description: OpenClaw Home Assistant Addon (Bookworm Full-Stack)
 url: https://github.com/chillkiller/openclaw-ha-addon
@@ -81,7 +78,7 @@ options:
   gateway_additional_allowed_origins: ""
 
   # Disable per-device Control UI auth ceremony (avoids pairing error 1008 on LAN)
-  controlui_disable_device_auth: false
+  controlui_disable_device_auth: true
 
   # Enable OpenAI-compatible Chat Completions API endpoint (for HA Assist pipeline)
   enable_openai_api: false

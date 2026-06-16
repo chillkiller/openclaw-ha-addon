@@ -321,6 +321,8 @@ def ensure_browser_config():
         "noSandbox": True,
         "executablePath": "/usr/bin/chromium",
         "timeoutMs": 60000,
+        "localLaunchTimeoutMs": 30000,
+        "localCdpReadyTimeoutMs": 15000,
         "extraArgs": [
             "--disable-gpu",
             "--disable-dev-shm-usage",

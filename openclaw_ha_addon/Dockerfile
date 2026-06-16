@@ -1,33 +1,7 @@
-# OpenClaw HA-Addon v0.7.7.0 (Bookworm Baseline - Full-Stack)
-# OpenClaw 2026.6.8 + CUPS/Scanner + crawl4ai + Go-PATH-Fix
-FROM debian:bookworm-slim AS builder
-
-ENV DEBIAN_FRONTEND=noninteractive
-
-# Build ARGs for optional features
-ARG OPENCLAW_EXTENSIONS=""
-ARG OPENCLAW_INSTALL_BROWSER=""
-ARG OPENCLAW_INSTALL_DOCKER_CLI=""
-ARG OPENCLAW_DOCKER_APT_PACKAGES=""
-
-# Build tools only needed during image build
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    curl \
-    git \
-    wget \
-    ca-certificates \
-    gnupg \
-    lsb-release \
-    cmake \
-    && rm -rf /var/lib/apt/lists/*
-
-# Rust (optional - only if needed for skills)
-# RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
-
-# =============================================================================
-# Stage 2: Runtime Image
-# =============================================================================
+# OpenClaw HA-Addon v0.7.7.1 — Debian Bookworm Full-Stack
+# OpenClaw 2026.6.8 + CUPS/Scanner + crawl4ai + Go-PATH-Fix + D-Bus/Avahi
+# Builder stage removed (dead code since v0.7.5.1 — never wired)
+# build-essential purged after npm install (~200MB savings)
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -68,8 +42,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     liblapack3 \
     libopenblas-dev \
     libopus-dev \
-    # Build tools (needed for node-gyp fallback compile)
+    # Build tools (needed for node-gyp native compile during npm install)
+    # PURGED after npm install step to save ~200MB in final image
     build-essential \
+    python3-dev \
     libnss3 \
     libatk1.0-0 \
     libatk-bridge2.0-0 \
@@ -243,7 +219,13 @@ RUN ARCH=$(echo ${TARGETARCH:-$(dpkg --print-architecture)} | sed 's|arm64|aarch
 # =============================================================================
 RUN npm install -g openclaw@2026.6.8 node-llama-cpp@3.18.1 \
     && npm install -g pnpm \
-    && npm cache clean --force
+    && npm cache clean --force \
+    && echo "Purging build-essential (no longer needed after npm install, ~200MB savings)" \
+    && apt-get remove --purge -y build-essential cmake gcc g++ cpp make binutils binutils-common \
+        binutils-aarch64-linux-gnu binutils-x86-64-linux-gnu 2>/dev/null || true \
+    && apt-get autoremove --purge -y \
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
 
 # Fix safe.directory
 RUN git config --global safe.directory /home/linuxbrew/.linuxbrew/Homebrew
@@ -264,7 +246,7 @@ RUN chmod +x /run.sh /oc_config_helper.py /render_nginx.py /usr/local/bin/oc-cle
     && mkdir -p /run/nginx
 
 RUN mkdir -p /config/.local/lib/python3.11/site-packages
-ENV PYTHONPATH=/config/.local/lib/python3.11/site-packages:
+ENV PYTHONPATH=/config/.local/lib/python3.11/site-packages
 
 # Health check for Home Assistant Supervisor Watchdog
 # 120s start-period accounts for Homebrew sync, skill copy, and gateway init on slow hardware
