@@ -64,7 +64,7 @@ When you open the add-on page in Home Assistant, nginx serves a landing page wit
 3. Find and install **OpenClaw Assistant**
 4. Click **Start**
 
-**Supported architectures**: amd64, aarch64 (Raspberry Pi 4/5), armv7
+**Supported architectures**: amd64, aarch64 (Raspberry Pi 4/5)
 
 ---
 
@@ -1060,7 +1060,7 @@ VBoxManage modifymedium disk haos.vdi --resize 64000
 ## 11. FAQ
 
 **Does this work on Raspberry Pi?**
-Yes. The add-on supports aarch64 (Raspberry Pi 4/5) and armv7 (Raspberry Pi 3). Note that Homebrew may not work on all ARM devices, but core functionality is unaffected.
+Yes. The add-on supports aarch64 (Raspberry Pi 4/5). Note that Homebrew may not work on all ARM devices, but core functionality is unaffected.
 
 **Can I run multiple agents?**
 OpenClaw supports multiple agent profiles. Configure them via `openclaw configure` or by editing `/config/.openclaw/openclaw.json`. The gateway serves all configured agents.
