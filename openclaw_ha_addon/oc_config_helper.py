@@ -328,6 +328,7 @@ def ensure_browser_config():
             "--disable-software-rasterizer",
             "--disable-dev-shm-usage",
             "--no-first-run",
+            "--no-default-browser-check",
             "--disable-background-networking",
             "--disable-sync",
             "--disable-default-apps",
