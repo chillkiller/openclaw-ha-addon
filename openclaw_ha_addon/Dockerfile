@@ -17,11 +17,10 @@ ENV CHROMIUM_CACHE=/tmp/openclaw/chromium_cache
 ENV CHROME_FLAGS="--disk-cache-dir=/tmp/openclaw/chromium_cache --disk-cache-size=524288000"
 
 # =============================================================================
-# Zone 1: Core APT Dependencies (Audio/Media, Database, Dev-Tools)
+# Zone 1: Persistent Runtime Dependencies (kept in final image)
 # =============================================================================
-# FIXED: Added sudo package for Homebrew installation
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    # Core utilities (INCLUDES sudo - FIX!)
+    # Core utilities
     sudo \
     tini \
     curl \
@@ -38,14 +37,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     python3-full \
     ffmpeg \
-    libvips-dev \
+    # Runtime libraries (NOT -dev — dev headers purged in Zone 2)
+    libvips42 \
     liblapack3 \
-    libopenblas-dev \
-    libopus-dev \
-    # Build tools (needed for node-gyp native compile during npm install)
-    # PURGED after npm install step to save ~200MB in final image
-    build-essential \
-    python3-dev \
+    libopenblas0 \
+    libopus0 \
+    libportaudio2 \
+    libasound2 \
+    libpq5 \
+    # Playwright runtime deps
     libnss3 \
     libatk1.0-0 \
     libatk-bridge2.0-0 \
@@ -56,7 +56,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxdamage1 \
     libxrandr2 \
     libgbm1 \
-    libasound2 \
     nginx \
     jq \
     openssl \
@@ -65,7 +64,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     avahi-daemon \
     avahi-utils \
     libnss-mdns \
-    # Audio/Media Stack (P0/P1 - missing in original)
+    # Audio/Media Stack
     sox \
     libsox-fmt-all \
     espeak-ng \
@@ -73,14 +72,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     gstreamer1.0-plugins-good \
     gstreamer1.0-tools \
     alsa-utils \
-    portaudio19-dev \
-    libasound2-dev \
-    # Database Tools (P1)
+    # Database Tools
     postgresql-client \
-    libpq-dev \
     python3-psycopg2 \
     python3-pyodbc \
-    # Dev-Tools (P2)
+    # Dev-Tools
     tmux \
     ripgrep \
     fd-find \
@@ -98,6 +94,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     sane-utils \
     && rm -rf /var/lib/apt/lists/* && \
     update-ca-certificates
+
+# =============================================================================
+# Zone 2: Build-Only Dependencies (purged after npm install, ~150-200MB savings)
+# =============================================================================
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    cmake \
+    python3-dev \
+    libvips-dev \
+    libopenblas-dev \
+    portaudio19-dev \
+    libasound2-dev \
+    libpq-dev \
+    libopus-dev \
+    && rm -rf /var/lib/apt/lists/*
 
 # =============================================================================
 # Zone 3: Modern Toolchains (Go, Bun, uv) - Direct Binary Download
@@ -213,16 +224,18 @@ RUN ARCH=$(echo ${TARGETARCH:-$(dpkg --print-architecture)} | sed 's|arm64|aarch
     && chmod +x /usr/local/bin/ttyd
 
 # =============================================================================
-# Install OpenClaw v0.7.5.4 (pinned version)
+# Install OpenClaw 2026.6.8 + node-llama-cpp
 # Bundle node-llama-cpp in the image so the default local memory/embeddings
 # provider works in HAOS without requiring manual npm installs in /usr/lib.
 # =============================================================================
 RUN npm install -g openclaw@2026.6.8 node-llama-cpp@3.18.1 \
     && npm install -g pnpm \
     && npm cache clean --force \
-    && echo "Purging build-essential (no longer needed after npm install, ~200MB savings)" \
+    && echo "Purging Zone 2 build dependencies (~150-200MB savings)" \
     && apt-get remove --purge -y build-essential cmake gcc g++ cpp make binutils binutils-common \
-        binutils-aarch64-linux-gnu binutils-x86-64-linux-gnu 2>/dev/null || true \
+        binutils-aarch64-linux-gnu binutils-x86-64-linux-gnu \
+        python3-dev libvips-dev libopenblas-dev portaudio19-dev libasound2-dev libpq-dev libopus-dev \
+        2>/dev/null || true \
     && apt-get autoremove --purge -y \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
