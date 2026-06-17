@@ -1,4 +1,4 @@
-## [0.7.7.1] - 2026-06-16
+## [0.7.7.1] - 2026-06-17
 - **FIX:** Builder-Stage entfernt (toter Code seit v0.7.5.1, nie verdrahtet)
 - **FIX:** build-essential nach npm install gepurged (~200MB Image-Ersparnis)
 - **FIX:** PYTHONPATH trailing colon entfernt (Security)
