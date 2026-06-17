@@ -4,6 +4,7 @@
 
 | Addon Version | OpenClaw Version | Release Date |
 |--------------|------------------|---------------|
+| 0.7.7.1   | 2026.6.8 | 2026-06-17 |
 | 0.7.7.0   | 2026.6.8 | 2026-06-16 |
 | 0.7.6.1   | 2026.6.1 | 2026-06-06 |
 | 0.7.6.0   | 2026.4.22 | 2026-04-24 |
@@ -23,7 +24,7 @@ The addon uses a fixed 4GB Node.js heap (`--max-old-space-size=4096`) for robust
 
 | Component | Approx. Size |
 |---|---|
-| Core apt + runtimes | ~400 MB |
+| Core apt + runtimes (after build dep purge) | ~300 MB |
 | Playwright Chromium | ~956 MB |
 | OpenClaw + npm packages | ~300 MB |
 | Homebrew (persistent) | ~3.2 GB |

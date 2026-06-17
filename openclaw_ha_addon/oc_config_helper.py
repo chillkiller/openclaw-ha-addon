@@ -325,6 +325,7 @@ def ensure_browser_config():
         "localCdpReadyTimeoutMs": 15000,
         "extraArgs": [
             "--disable-gpu",
+            "--disable-software-rasterizer",
             "--disable-dev-shm-usage",
             "--no-first-run",
             "--disable-background-networking",
