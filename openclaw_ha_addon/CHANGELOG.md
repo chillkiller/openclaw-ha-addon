@@ -1,3 +1,9 @@
+## [0.7.7.2] - 2026-06-26
+- **FIX:** Build-Dependencies (`build-essential`, `cmake`, `python3-dev`, `-dev` libs) bleiben im Image (kein Purge mehr) für Runtime-native-Builds
+- **FIX:** `node-llama-cpp` wird während des Docker-Builds vollständig kompiliert (statt zur Laufzeit), Binary liegt im Image
+- **FIX:** Build-Parallelität für `node-llama-cpp` auf 2 Threads begrenzt (`NLC_BUILD_PARALLEL=2`) — reduziert CPU-Spitzenlast auf RPi5
+- **REMOVE:** Obsolete `AUDIT-REPORT-v0.7.7.*.md` Dateien aus dem Repository entfernt
+
 ## [0.7.7.1] - 2026-06-17
 - **FIX:** Builder-Stage entfernt (toter Code seit v0.7.5.1, nie verdrahtet)
 - **FIX:** build-essential nach npm install gepurged (~200MB Image-Ersparnis)

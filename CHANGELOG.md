@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.7.2] - 2026-06-26
+
+### Fixed
+- Build dependencies (`build-essential`, `cmake`, `python3-dev`) are now kept in the final image so runtime native module builds do not fail
+- `node-llama-cpp` is fully compiled during the Docker image build; the native binary is baked into the image
+- Limit `node-llama-cpp` compilation to 2 parallel threads (`NLC_BUILD_PARALLEL=2`) to reduce CPU spikes on Raspberry Pi 5
+
+### Removed
+- Dropped obsolete `AUDIT-REPORT-v0.7.7.*.md` files from the repository
+
 ## [0.7.6.1] - 2026-06-06
 
 ### Fixed
