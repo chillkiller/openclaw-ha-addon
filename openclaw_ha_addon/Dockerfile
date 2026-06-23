@@ -1,7 +1,7 @@
-# OpenClaw HA-Addon v0.7.7.1 — Debian Bookworm Full-Stack
+# OpenClaw HA-Addon v0.7.7.2 — Debian Bookworm Full-Stack
 # OpenClaw 2026.6.8 + CUPS/Scanner + crawl4ai + Go-PATH-Fix + D-Bus/Avahi
 # Builder stage removed (dead code since v0.7.5.1 — never wired)
-# build-essential purged after npm install (~200MB savings)
+# Build dependencies are kept in the final image so runtime native builds work
 FROM debian:bookworm-slim
 
 ENV DEBIAN_FRONTEND=noninteractive
@@ -37,14 +37,20 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-pip \
     python3-full \
     ffmpeg \
-    # Runtime libraries (NOT -dev — dev headers purged in Zone 2)
+    # Runtime libraries (keep -dev headers too for runtime native builds)
     libvips42 \
+    libvips-dev \
     liblapack3 \
     libopenblas0 \
+    libopenblas-dev \
     libopus0 \
+    libopus-dev \
     libportaudio2 \
+    portaudio19-dev \
     libasound2 \
+    libasound2-dev \
     libpq5 \
+    libpq-dev \
     # Playwright runtime deps
     libnss3 \
     libatk1.0-0 \
@@ -96,18 +102,15 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     update-ca-certificates
 
 # =============================================================================
-# Zone 2: Build-Only Dependencies (purged after npm install, ~150-200MB savings)
+# Zone 2: Native Build Dependencies (kept in final image)
+# Required for node-llama-cpp, node-gyp native modules, and runtime skill builds.
+# Kept because the target system has ample storage and we want everything built
+# into the image/on first run rather than failing later due to missing headers.
 # =============================================================================
 RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     cmake \
     python3-dev \
-    libvips-dev \
-    libopenblas-dev \
-    portaudio19-dev \
-    libasound2-dev \
-    libpq-dev \
-    libopus-dev \
     && rm -rf /var/lib/apt/lists/*
 
 # =============================================================================
@@ -227,18 +230,46 @@ RUN ARCH=$(echo ${TARGETARCH:-$(dpkg --print-architecture)} | sed 's|arm64|aarch
 # Install OpenClaw 2026.6.8 + node-llama-cpp
 # Bundle node-llama-cpp in the image so the default local memory/embeddings
 # provider works in HAOS without requiring manual npm installs in /usr/lib.
+#
+# node-llama-cpp postinstall compiles llama.cpp from source. To prevent the
+# RPi5 from pegging at 100% for minutes, we skip the automatic postinstall,
+# patch the build to honor NLC_BUILD_PARALLEL, and run it manually with a
+# conservative thread count. The compiled binary is baked into the image.
 # =============================================================================
+ENV NODE_LLAMA_CPP_POSTINSTALL=skip
 RUN npm install -g openclaw@2026.6.8 node-llama-cpp@3.18.1 \
     && npm install -g pnpm \
-    && npm cache clean --force \
-    && echo "Purging Zone 2 build dependencies (~150-200MB savings)" \
-    && apt-get remove --purge -y build-essential cmake gcc g++ cpp make binutils binutils-common \
-        binutils-aarch64-linux-gnu binutils-x86-64-linux-gnu \
-        python3-dev libvips-dev libopenblas-dev portaudio19-dev libasound2-dev libpq-dev libopus-dev \
-        2>/dev/null || true \
-    && apt-get autoremove --purge -y \
-    && apt-get clean \
-    && rm -rf /var/lib/apt/lists/*
+    && npm cache clean --force
+
+# Patch node-llama-cpp to honor NLC_BUILD_PARALLEL for constrained builds
+RUN node - <<'NODE'
+const fs = require('fs');
+const path = '/usr/lib/node_modules/node-llama-cpp/dist/bindings/utils/compileLLamaCpp.js';
+if (!fs.existsSync(path)) {
+  console.error('ERROR: compileLLamaCpp.js not found at', path);
+  process.exit(1);
+}
+let src = fs.readFileSync(path, 'utf8');
+const marker = 'function getParallelBuildThreadsToUse(platform, gpu, ciMode = false) {';
+if (!src.includes(marker)) {
+  console.error('ERROR: getParallelBuildThreadsToUse marker not found');
+  process.exit(1);
+}
+const injection = marker + '\n' +
+  '    const envParallel = process.env.NLC_BUILD_PARALLEL;\n' +
+  '    if (envParallel != null) {\n' +
+  '        return Math.max(1, parseInt(envParallel, 10));\n' +
+  '    }\n';
+src = src.replace(marker, injection);
+fs.writeFileSync(path, src);
+console.log('OK: compileLLamaCpp.js now honors NLC_BUILD_PARALLEL');
+NODE
+
+# Build node-llama-cpp native bindings with limited parallelism (2 threads)
+# so the RPi5 stays responsive during the Docker image build.
+ENV NODE_LLAMA_CPP_POSTINSTALL=auto NLC_BUILD_PARALLEL=2
+RUN node /usr/lib/node_modules/node-llama-cpp/dist/cli/cli.js postinstall \
+    || (echo "WARN: node-llama-cpp postinstall failed; runtime build may be needed" && exit 0)
 
 # Fix safe.directory
 RUN git config --global safe.directory /home/linuxbrew/.linuxbrew/Homebrew

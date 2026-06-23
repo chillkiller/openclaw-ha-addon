@@ -320,7 +320,7 @@ def ensure_browser_config():
         "headless": True,
         "noSandbox": True,
         "executablePath": "/usr/bin/chromium",
-        "timeoutMs": 60000,
+        "actionTimeoutMs": 60000,
         "localLaunchTimeoutMs": 30000,
         "localCdpReadyTimeoutMs": 15000,
         "extraArgs": [
@@ -372,10 +372,11 @@ def ensure_memory_core():
         memory_core["enabled"] = True
         changes.append("memory-core.enabled -> true")
 
-    dreaming = memory_core.setdefault("dreaming", {})
+    config = memory_core.setdefault("config", {})
+    dreaming = config.setdefault("dreaming", {})
     if not dreaming.get("enabled"):
         dreaming["enabled"] = True
-        changes.append("memory-core.dreaming.enabled -> true")
+        changes.append("memory-core.config.dreaming.enabled -> true")
 
     if changes:
         if write_config(cfg):
