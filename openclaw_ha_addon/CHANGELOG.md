@@ -1,3 +1,8 @@
+## [0.7.7.3] - 2026-06-26
+- **FIX:** `browser.actionTimeoutMs` → `browser.timeoutMs` in `oc_config_helper.py` (OpenClaw 2026.6.8 Schema)
+- **FIX:** Automatisch generierter `memory-core.config.dreaming.enabled` Eintrag wird entfernt, statt ihn neu zu schreiben — verhindert Gateway-Startup-Fehler
+- **REMOVE:** `memory-core` wird nicht mehr automatisch in `openclaw.json` eingetragen; Nutzer konfigurieren es manuell
+
 ## [0.7.7.2] - 2026-06-26
 - **FIX:** Build-Dependencies (`build-essential`, `cmake`, `python3-dev`, `-dev` libs) bleiben im Image (kein Purge mehr) für Runtime-native-Builds
 - **FIX:** `node-llama-cpp` wird während des Docker-Builds vollständig kompiliert (statt zur Laufzeit), Binary liegt im Image

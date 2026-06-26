@@ -320,7 +320,7 @@ def ensure_browser_config():
         "headless": True,
         "noSandbox": True,
         "executablePath": "/usr/bin/chromium",
-        "actionTimeoutMs": 60000,
+        "timeoutMs": 60000,
         "localLaunchTimeoutMs": 30000,
         "localCdpReadyTimeoutMs": 15000,
         "extraArgs": [
@@ -356,36 +356,44 @@ def ensure_browser_config():
 
 
 def ensure_memory_core():
-    """Ensure memory-core plugin is enabled with dreaming sidecar.
+    """Remove broken auto-generated memory-core config if present.
 
-    memory-core provides file/SQLite-based memory search.
-    Dreaming runs periodic memory consolidation in sidecar mode.
+    OpenClaw 2026.6.8 validates plugins.entries.memory-core strictly.
+    Previously injected defaults (config.dreaming.enabled) repeatedly broke
+    gateway startup. We now remove only that broken auto-generated entry so
+    users can configure memory-core manually in openclaw.json when needed.
     """
     cfg = read_config() or {}
-    plugins = cfg.setdefault("plugins", {})
-    entries = plugins.setdefault("entries", {})
+    plugins = cfg.get("plugins")
+    if not plugins:
+        print("INFO: memory-core not present")
+        return True
 
-    memory_core = entries.setdefault("memory-core", {})
-    changes = []
+    entries = plugins.get("entries")
+    if not entries:
+        print("INFO: memory-core not present")
+        return True
 
-    if not memory_core.get("enabled"):
-        memory_core["enabled"] = True
-        changes.append("memory-core.enabled -> true")
+    memory_core = entries.get("memory-core")
+    if memory_core is None:
+        print("INFO: memory-core not present")
+        return True
 
-    config = memory_core.setdefault("config", {})
-    dreaming = config.setdefault("dreaming", {})
-    if not dreaming.get("enabled"):
-        dreaming["enabled"] = True
-        changes.append("memory-core.config.dreaming.enabled -> true")
-
-    if changes:
+    # Only remove the broken auto-generated entry that contains config.dreaming.
+    # If a user has added a different memory-core config, leave it alone.
+    if isinstance(memory_core, dict) and "config" in memory_core and isinstance(memory_core["config"], dict) and "dreaming" in memory_core["config"]:
+        del entries["memory-core"]
+        if not entries:
+            del plugins["entries"]
+        if not plugins:
+            del cfg["plugins"]
         if write_config(cfg):
-            print(f"INFO: Ensured memory-core: {', '.join(changes)}")
+            print("INFO: Removed broken auto-generated memory-core config")
             return True
-        print("ERROR: Failed to write memory-core config")
+        print("ERROR: Failed to remove broken memory-core config")
         return False
 
-    print("INFO: memory-core already correct")
+    print("INFO: memory-core config left untouched")
     return True
 
 
