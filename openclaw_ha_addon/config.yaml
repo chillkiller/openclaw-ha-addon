@@ -1,8 +1,8 @@
-# OpenClaw Home Assistant Addon v0.7.7.3 Configuration
+# OpenClaw Home Assistant Addon v0.7.7.4 Configuration
 # Debian Bookworm Full-Stack — CUPS/Scanner/crawl4ai/Go-PATH-Fix/D-Bus-Avahi
 # Build deps kept in image for runtime native module builds
 name: OpenClaw Assistant
-version: "0.7.7.3"
+version: "0.7.7.4"
 slug: openclaw_ha_addon
 description: OpenClaw Home Assistant Addon (Bookworm Full-Stack)
 url: https://github.com/chillkiller/openclaw-ha-addon

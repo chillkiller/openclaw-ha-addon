@@ -307,93 +307,24 @@ def ensure_plugins():
 
 
 def ensure_browser_config():
-    """Ensure browser automation config is present for containerized Chromium.
+    """Browser configuration is left to the user.
 
-    Sets headless mode, noSandbox (required in Docker), executable path,
-    and sensible timeouts for ARM64 hardware.
+    OpenClaw 2026.6.8 validates the browser section strictly and defaults
+    vary by release. The add-on provides Playwright Chromium at
+    /usr/bin/chromium; configure it manually in openclaw.json when needed.
     """
-    cfg = read_config() or {}
-    browser = cfg.setdefault("browser", {})
-
-    defaults = {
-        "enabled": True,
-        "headless": True,
-        "noSandbox": True,
-        "executablePath": "/usr/bin/chromium",
-        "timeoutMs": 60000,
-        "localLaunchTimeoutMs": 30000,
-        "localCdpReadyTimeoutMs": 15000,
-        "extraArgs": [
-            "--disable-gpu",
-            "--disable-software-rasterizer",
-            "--disable-dev-shm-usage",
-            "--no-first-run",
-            "--no-default-browser-check",
-            "--disable-background-networking",
-            "--disable-sync",
-            "--disable-default-apps",
-            "--disable-extensions",
-            "--disable-translate",
-            "--disable-notifications",
-        ],
-    }
-
-    changes = []
-    for key, value in defaults.items():
-        if browser.get(key) != value:
-            browser[key] = value
-            changes.append(f"browser.{key} -> {value}")
-
-    if changes:
-        if write_config(cfg):
-            print(f"INFO: Ensured browser config: {', '.join(changes)}")
-            return True
-        print("ERROR: Failed to write browser config")
-        return False
-
-    print("INFO: Browser config already correct")
+    print("INFO: browser configuration left to user (no automatic injection)")
     return True
 
 
 def ensure_memory_core():
-    """Remove broken auto-generated memory-core config if present.
+    """Memory-core configuration is left to the user.
 
     OpenClaw 2026.6.8 validates plugins.entries.memory-core strictly.
-    Previously injected defaults (config.dreaming.enabled) repeatedly broke
-    gateway startup. We now remove only that broken auto-generated entry so
-    users can configure memory-core manually in openclaw.json when needed.
+    Auto-injected defaults repeatedly broke gateway startup, so users
+    configure memory-core manually in openclaw.json when needed.
     """
-    cfg = read_config() or {}
-    plugins = cfg.get("plugins")
-    if not plugins:
-        print("INFO: memory-core not present")
-        return True
-
-    entries = plugins.get("entries")
-    if not entries:
-        print("INFO: memory-core not present")
-        return True
-
-    memory_core = entries.get("memory-core")
-    if memory_core is None:
-        print("INFO: memory-core not present")
-        return True
-
-    # Only remove the broken auto-generated entry that contains config.dreaming.
-    # If a user has added a different memory-core config, leave it alone.
-    if isinstance(memory_core, dict) and "config" in memory_core and isinstance(memory_core["config"], dict) and "dreaming" in memory_core["config"]:
-        del entries["memory-core"]
-        if not entries:
-            del plugins["entries"]
-        if not plugins:
-            del cfg["plugins"]
-        if write_config(cfg):
-            print("INFO: Removed broken auto-generated memory-core config")
-            return True
-        print("ERROR: Failed to remove broken memory-core config")
-        return False
-
-    print("INFO: memory-core config left untouched")
+    print("INFO: memory-core configuration left to user (no automatic injection)")
     return True
 
 
