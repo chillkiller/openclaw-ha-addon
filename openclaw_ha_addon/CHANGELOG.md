@@ -1,3 +1,6 @@
+## [0.7.7.4] - 2026-06-26
+- **REMOVE:** Automatische `browser` und `memory-core` Konfiguration aus `oc_config_helper.py` entfernt — Nutzer tragen beides manuell in `openclaw.json` ein
+
 ## [0.7.7.3] - 2026-06-26
 - **FIX:** `browser.actionTimeoutMs` → `browser.timeoutMs` in `oc_config_helper.py` (OpenClaw 2026.6.8 Schema)
 - **FIX:** Automatisch generierter `memory-core.config.dreaming.enabled` Eintrag wird entfernt, statt ihn neu zu schreiben — verhindert Gateway-Startup-Fehler
