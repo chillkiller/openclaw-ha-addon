@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.7.5] - 2026-07-03
+
+### Changed
+- Bumped OpenClaw to **2026.6.11** (latest stable)
+- Bumped `node-llama-cpp` to **3.19.0** (latest stable)
+
 All notable changes to this project will be documented in this file.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
