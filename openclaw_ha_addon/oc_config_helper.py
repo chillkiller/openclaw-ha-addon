@@ -309,7 +309,7 @@ def ensure_plugins():
 def ensure_browser_config():
     """Browser configuration is left to the user.
 
-    OpenClaw 2026.6.8 validates the browser section strictly and defaults
+    OpenClaw validates the browser section strictly and defaults
     vary by release. The add-on provides Playwright Chromium at
     /usr/bin/chromium; configure it manually in openclaw.json when needed.
     """
@@ -320,7 +320,7 @@ def ensure_browser_config():
 def ensure_memory_core():
     """Memory-core configuration is left to the user.
 
-    OpenClaw 2026.6.8 validates plugins.entries.memory-core strictly.
+    OpenClaw validates plugins.entries.memory-core strictly.
     Auto-injected defaults repeatedly broke gateway startup, so users
     configure memory-core manually in openclaw.json when needed.
     """
