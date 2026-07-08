@@ -516,6 +516,18 @@ shutdown() {
     wait "${TTYD_PID}" || true
   fi
 
+  # Stop Avahi before D-Bus; reverse startup order.
+  if [ -n "${AVAHI_PID:-}" ] && kill -0 "${AVAHI_PID}" >/dev/null 2>&1; then
+    kill -TERM "${AVAHI_PID}" >/dev/null 2>&1 || true
+    wait "${AVAHI_PID}" 2>/dev/null || true
+  fi
+
+  # Stop the D-Bus daemon we started, if still running.
+  if [ -n "${DBUS_PID:-}" ] && kill -0 "${DBUS_PID}" >/dev/null 2>&1; then
+    kill -TERM "${DBUS_PID}" >/dev/null 2>&1 || true
+    wait "${DBUS_PID}" 2>/dev/null || true
+  fi
+
   if [ -n "${GW_PID}" ] && kill -0 "${GW_PID}" >/dev/null 2>&1; then
     kill -TERM "${GW_PID}" >/dev/null 2>&1 || true
     # wait reaps child PIDs; for non-child (re-tracked) PIDs it fails instantly,
@@ -529,6 +541,14 @@ shutdown() {
   fi
 
   stop_gw_relay
+
+  # Final stale PID cleanup on shutdown.
+  for stale_pid in /run/dbus/pid /var/run/dbus/pid /run/avahi-daemon/pid /var/run/avahi-daemon/pid; do
+    if [ -f "$stale_pid" ]; then
+      echo "INFO: Removing stale PID file on shutdown: $stale_pid"
+      rm -f "$stale_pid" || true
+    fi
+  done
 
   if [ "$CLEAN_LOCKS_ON_EXIT" = "true" ]; then
     cleanup_session_locks || true
@@ -1000,10 +1020,38 @@ find_gateway_daemon_pid() {
 # D-Bus + Avahi Startup (mDNS/LAN Discovery)
 # Must run BEFORE the gateway so Avahi can advertise the service.
 # dbus-daemon is not started by systemd in Docker — we start it manually.
+#
+# CAUTION: Homebrew may install its own dbus-daemon under
+# /home/linuxbrew/.linuxbrew/bin, which appears earlier in PATH via the
+# export at the top of this script. That build is compiled for a different
+# prefix and will fail to start the Debian system bus. We therefore use
+# absolute Debian paths and remove stale PID files that survive an unclean
+# container restart.
 # ------------------------------------------------------------------------------
+DBUS_SYSTEM_BIN="/usr/bin/dbus-daemon"
+AVAHI_SYSTEM_BIN="/usr/sbin/avahi-daemon"
+
+if [ ! -x "$DBUS_SYSTEM_BIN" ]; then
+  DBUS_SYSTEM_BIN="$(command -v dbus-daemon 2>/dev/null || true)"
+fi
+
+if [ ! -x "$AVAHI_SYSTEM_BIN" ]; then
+  AVAHI_SYSTEM_BIN="$(command -v avahi-daemon 2>/dev/null || true)"
+fi
+
+# Remove stale PID files from a previous (possibly crashed) container run.
+# /run is not a tmpfs in this image, so the PID can survive a restart.
+for stale_pid in /run/dbus/pid /var/run/dbus/pid /run/avahi-daemon/pid /var/run/avahi-daemon/pid; do
+  if [ -f "$stale_pid" ]; then
+    echo "INFO: Removing stale PID file: $stale_pid"
+    rm -f "$stale_pid" || true
+  fi
+done
+
 echo "Starting D-Bus system bus for Avahi/mDNS..."
-if ! pgrep -x dbus-daemon >/dev/null 2>&1; then
-  dbus-daemon --system --fork
+if ! pgrep -x dbus-daemon >/dev/null 2>&1 && [ -x "$DBUS_SYSTEM_BIN" ]; then
+  "$DBUS_SYSTEM_BIN" --system --fork
+  DBUS_PID=$!
   for i in $(seq 1 20); do
     [ -S /run/dbus/system_bus_socket ] && break
     sleep 0.5
@@ -1017,8 +1065,9 @@ else
   echo "D-Bus already running"
 fi
 
-if ! pgrep -x avahi-daemon >/dev/null 2>&1; then
-  avahi-daemon --daemonize --no-drop-root
+if ! pgrep -x avahi-daemon >/dev/null 2>&1 && [ -x "$AVAHI_SYSTEM_BIN" ]; then
+  "$AVAHI_SYSTEM_BIN" --daemonize --no-drop-root
+  AVAHI_PID=$!
   echo "Avahi mDNS daemon started"
 else
   echo "Avahi already running"
