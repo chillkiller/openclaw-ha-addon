@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.7.7.7] - 2026-07-08
+
+### Fixed
+- **Regression in v0.7.7.6:** D-Bus/Avahi startup used `$!` without placing the daemon in the background, causing `/run.sh: line 1054: $!: unbound variable` and crash loop. D-Bus and Avahi are now started with `&` so `$!` is defined.
+
+## [0.7.7.6] - 2026-07-08
+
+### Fixed
+- **D-Bus / Avahi startup crash after Homebrew skill installs**
+  - Pin `dbus-daemon` and `avahi-daemon` to Debian system paths (`/usr/bin`, `/usr/sbin`) to avoid Homebrew binaries shadowing them via PATH.
+  - Remove stale PID files (`/run/dbus/pid`, `/var/run/dbus/pid`, `/run/avahi-daemon/pid`, `/var/run/avahi-daemon/pid`) before starting, so unclean container restarts do not deadlock D-Bus.
+  - Track and gracefully stop D-Bus and Avahi in the shutdown trap, reducing stale state on restart.
+
 ## [0.7.7.5] - 2026-07-03
 
 ### Changed
