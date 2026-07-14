@@ -1,3 +1,12 @@
+## [0.7.8.0] - 2026-07-14
+
+### Upgraded
+- **OpenClaw 2026.6.11 → 2026.7.1** — siehe https://github.com/openclaw/openclaw/releases/tag/v2026.7.1
+- Node-llama-cpp bleibt bei 3.19.0 (keine Änderung)
+
+### Notes
+- Add-on-Version synchronisiert: `0.7.8.0` (config.yaml, repository.yaml, Dockerfile)
+
 ## [0.7.7.4] - 2026-06-26
 - **REMOVE:** Automatische `browser` und `memory-core` Konfiguration aus `oc_config_helper.py` entfernt — Nutzer tragen beides manuell in `openclaw.json` ein
 
