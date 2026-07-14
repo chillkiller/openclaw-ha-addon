@@ -1,5 +1,5 @@
-# OpenClaw HA-Addon v0.7.7.7 — Debian Bookworm Full-Stack
-# OpenClaw 2026.6.11 + node-llama-cpp@3.19.0 + CUPS/Scanner + crawl4ai + Go-PATH-Fix + D-Bus/Avahi
+# OpenClaw HA-Addon v0.7.8.0 — Debian Bookworm Full-Stack
+# OpenClaw 2026.7.1 + node-llama-cpp@3.19.0 + CUPS/Scanner + crawl4ai + Go-PATH-Fix + D-Bus/Avahi
 # Builder stage removed (dead code since v0.7.5.1 — never wired)
 # Build dependencies are kept in the final image so runtime native builds work
 FROM debian:bookworm-slim
@@ -237,7 +237,7 @@ RUN ARCH=$(echo ${TARGETARCH:-$(dpkg --print-architecture)} | sed 's|arm64|aarch
 # conservative thread count. The compiled binary is baked into the image.
 # =============================================================================
 ENV NODE_LLAMA_CPP_POSTINSTALL=skip
-RUN npm install -g openclaw@2026.6.11 node-llama-cpp@3.19.0 \
+RUN npm install -g openclaw@2026.7.1 node-llama-cpp@3.19.0 \
     && npm install -g pnpm \
     && npm cache clean --force
 
