@@ -55,10 +55,10 @@ def main():
             '    ~HomeAssistant 0;\n'
             '    default 1;\n'
             '  }\n'
-            '  access_log /dev/stdout combined if=$loggable;'
+            '  access_log stdout combined if=$loggable;'
         )
     else:
-        access_log_block = 'access_log /dev/stdout;'
+        access_log_block = 'access_log stdout;'
 
     conf = tpl.replace('__NGINX_ACCESS_LOG__', access_log_block)
     conf = conf.replace('__INGRESS_PORT__', ingress_port)
