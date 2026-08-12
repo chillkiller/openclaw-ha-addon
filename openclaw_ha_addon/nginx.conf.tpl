@@ -1,7 +1,7 @@
 worker_processes  1;
 
 # Log to stderr/stdout (container-friendly)
-error_log /dev/stderr notice;
+error_log stderr notice;
 
 events { worker_connections 1024; }
 
@@ -10,7 +10,7 @@ http {
   default_type  application/octet-stream;
 
   __NGINX_ACCESS_LOG__
-  error_log  /dev/stderr notice;
+  error_log  stderr notice;
 
   sendfile        on;
   keepalive_timeout  65;
@@ -32,6 +32,14 @@ http {
       root /etc/nginx/html;
       default_type text/html;
       try_files /index.html =404;
+      add_header Cache-Control "no-cache";
+    }
+
+    # Loading / splash page during startup
+    location = /loading {
+      root /etc/nginx/html;
+      default_type text/html;
+      try_files /loading.html =404;
       add_header Cache-Control "no-cache";
     }
 
@@ -97,7 +105,7 @@ http {
     location = /tui { return 302 /tui/; }
     location ^~ /tui/ {
       root /etc/nginx/html;
-      default_type text/html;
+      index index.html;
       try_files $uri $uri/ =404;
       add_header Cache-Control "no-cache";
     }

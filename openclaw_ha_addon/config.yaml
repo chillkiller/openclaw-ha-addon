@@ -1,7 +1,7 @@
-# OpenClaw Home Assistant Addon v0.7.9.0 Configuration
-# Ingress-UI Refactor: tab-based UI (WebUI, Terminal, TUI, Docs)
+# OpenClaw Home Assistant Addon v0.7.9.1 Configuration
+# Hotfix: nginx /dev/stderr crash in s6 container (restart-loop)
 name: OpenClaw Assistant
-version: "0.7.9.0"
+version: "0.7.9.1"
 slug: openclaw_ha_addon
 description: OpenClaw Home Assistant Addon (Bookworm Full-Stack)
 url: https://github.com/chillkiller/openclaw-ha-addon
