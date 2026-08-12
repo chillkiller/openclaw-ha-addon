@@ -1,8 +1,7 @@
-# OpenClaw Home Assistant Addon v0.7.8.0 Configuration
-# Debian Bookworm Full-Stack — CUPS/Scanner/crawl4ai/Go-PATH-Fix/D-Bus-Avahi
-# Build deps kept in image for runtime native module builds
+# OpenClaw Home Assistant Addon v0.7.9.0 Configuration
+# Ingress-UI Refactor: tab-based UI (WebUI, Terminal, TUI, Docs)
 name: OpenClaw Assistant
-version: "0.7.8.0"
+version: "0.7.9.0"
 slug: openclaw_ha_addon
 description: OpenClaw Home Assistant Addon (Bookworm Full-Stack)
 url: https://github.com/chillkiller/openclaw-ha-addon
@@ -18,7 +17,7 @@ host_network: true
 
 # Home Assistant Ingress (UI inside the add-on page)
 ingress: true
-ingress_port: 48099
+ingress_port: 49200
 panel_title: OpenClaw Assistant
 panel_icon: mdi:robot
 
@@ -32,6 +31,9 @@ options:
   # Enable web terminal inside Home Assistant (Ingress) via ttyd
   enable_terminal: true
   terminal_port: 7681
+  enable_webui: true
+  enable_tui: true
+  enable_docs: true
 
   # Public base URL for opening the Gateway Web UI in a new tab (not embedded).
   # Recommended: NO trailing slash.
@@ -145,6 +147,9 @@ schema:
   timezone: str
   enable_terminal: bool?
   terminal_port: int(1024,65535)?
+  enable_webui: bool?
+  enable_tui: bool?
+  enable_docs: bool?
   gateway_public_url: str?
   homeassistant_token: str?
   http_proxy: str?
