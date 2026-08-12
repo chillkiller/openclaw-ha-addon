@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="refresh" content="5;url=/">
+  <title>OpenClaw Assistant — Loading</title>
+  <style>
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#0b0f14;color:#e6edf3;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif;display:flex;flex-direction:column;justify-content:center;align-items:center;text-align:center}
+    .spinner{width:48px;height:48px;border:4px solid #1f2937;border-top-color:#2563eb;border-radius:50%;animation:spin 1s linear infinite;margin-bottom:20px}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    h1{margin:0 0 8px;font-size:20px;font-weight:600}
+    p{margin:0 0 24px;color:#9ca3af;max-width:320px;line-height:1.5}
+    .status{font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,Liberation Mono,Courier New,monospace;font-size:13px;color:#6b7280}
+    a{color:#60a5fa;text-decoration:none}
+    a:hover{text-decoration:underline}
+  </style>
+</head>
+<body>
+  <div class="spinner"></div>
+  <h1>OpenClaw Assistant is starting…</h1>
+  <p>
+    The OpenClaw Gateway and Ingress proxy are still booting.
+    This page will reload automatically in a few seconds.
+  </p>
+  <p class="status">
+    Last check: <span id="ts"></span> ·
+    <a href="/" id="retryLink">Reload now</a>
+  </p>
+
+  <script>
+    (function() {
+      const ts = document.getElementById('ts');
+      const retry = document.getElementById('retryLink');
+      function update() {
+        const now = new Date().toLocaleTimeString();
+        ts.textContent = now;
+      }
+      update();
+
+      async function probe() {
+        try {
+          const r = await fetch('/api/health', { cache: 'no-store' });
+          if (r.ok) {
+            window.location.replace('/');
+          }
+        } catch (e) {}
+      }
+
+      retry.addEventListener('click', function(e) {
+        e.preventDefault();
+        probe();
+        window.location.reload();
+      });
+
+      setInterval(probe, 5000);
+      setInterval(update, 1000);
+    })();
+  </script>
+</body>
+</html>

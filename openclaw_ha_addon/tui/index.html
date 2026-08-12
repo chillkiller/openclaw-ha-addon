@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>OpenClaw TUI</title>
+  <style>
+    *{box-sizing:border-box}
+    html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#0b0f14;color:#e6edf3;font-family:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,"Liberation Mono","Courier New",monospace;font-size:14px}
+    .container{display:flex;flex-direction:column;height:100%;padding:12px}
+    .header{display:flex;align-items:center;gap:12px;padding-bottom:10px;border-bottom:1px solid #1f2937;margin-bottom:10px}
+    .header h1{margin:0;font-size:16px;font-weight:600}
+    .status-line{display:flex;gap:16px;flex-wrap:wrap;font-size:13px;color:#9ca3af;margin-bottom:8px}
+    .status-line span{display:inline-flex;align-items:center;gap:4px}
+    .status-line .value{color:#e6edf3;font-weight:600}
+    .panel{flex:1;background:#111827;border:1px solid #1f2937;border-radius:8px;padding:12px;overflow:auto}
+    .panel h3{margin:0 0 10px;font-size:14px;color:#60a5fa}
+    .log-line{padding:2px 0;font-size:13px;color:#e6edf3;white-space:pre-wrap;word-break:break-word}
+    .loading{color:#9ca3af;font-style:italic}
+    .ok{color:#86efac}
+    .warn{color:#fde047}
+    .err{color:#fca5a5}
+    .refresh{position:fixed;bottom:14px;right:14px;background:#2563eb;color:white;border:0;border-radius:8px;padding:8px 14px;cursor:pointer;font-size:13px}
+    .refresh:hover{filter:brightness(1.15)}
+    .tip{background:#14532d;border:1px solid #166534;border-radius:8px;padding:12px;margin:12px 0;font-size:13px}
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header">
+      <h1>🦾 OpenClaw TUI</h1>
+      <span id="connStatus" class="loading">connecting...</span>
+    </div>
+
+    <div class="status-line">
+      <span>Gateway: <span id="gwStatus" class="value">–</span></span>
+      <span>Ingress: <span id="ingressStatus" class="value">–</span></span>
+    </div>
+
+    <div class="status-line">
+      <span>Agent: <span id="agentName" class="value">main (Marvin)</span></span>
+      <span>Session: <span id="sessionName" class="value">main</span></span>
+      <span>Model: <span id="modelName" class="value">ollama/glm-5.2:cloud</span></span>
+      <span>Thinking: <span id="thinkMode" class="value">medium</span></span>
+      <span>Tokens: <span id="tokenUsage" class="value">–</span></span>
+    </div>
+
+    <div class="panel">
+      <h3>Recent Add-on Log</h3>
+      <div id="logPanel" class="loading">Loading logs...</div>
+    </div>
+
+    <div class="tip">
+      ℹ️ Detaillierte Live-Daten (Agent-Status, Token-Verbrauch, aktives Modell) stehen über den <b>WebUI</b>- oder <b>Terminal</b>-Tab zur Verfügung.
+      Im Terminal: <code>openclaw status</code> oder <code>cat /config/.openclaw/openclaw.json | jq .gateway</code>
+    </div>
+
+    <button class="refresh" onclick="refreshAll()">↻ Refresh</button>
+  </div>
+
+  <script>
+  (function() {
+    const logPanel = document.getElementById('logPanel');
+
+    async function fetchText(path) {
+      try {
+        const r = await fetch(path, { cache: 'no-store' });
+        if (!r.ok) return null;
+        return await r.text().catch(() => null);
+      } catch (e) {
+        return null;
+      }
+    }
+
+    function setText(id, text, cls) {
+      const el = document.getElementById(id);
+      el.textContent = text;
+      el.className = 'value ' + (cls || '');
+    }
+
+    async function refreshAll() {
+      const connStatus = document.getElementById('connStatus');
+      const health = await fetchText('/api/health');
+
+      if (health !== null) {
+        connStatus.textContent = 'connected';
+        connStatus.className = 'ok';
+        setText('gwStatus', 'reachable (nginx health)', 'ok');
+        setText('ingressStatus', 'ok', 'ok');
+      } else {
+        connStatus.textContent = 'disconnected';
+        connStatus.className = 'err';
+        setText('gwStatus', 'unreachable', 'err');
+        setText('ingressStatus', 'unknown', 'warn');
+      }
+
+      // Add-on log tail (best effort)
+      const logs = await fetchText('/api/logs');
+      if (logs) {
+        logPanel.className = '';
+        logPanel.innerHTML = logs.split('\n').slice(-40).map(line => {
+          let cls = 'log-line';
+          const lower = line.toLowerCase();
+          if (lower.includes('error') || lower.includes('fatal')) cls += ' err';
+          else if (lower.includes('warn')) cls += ' warn';
+          else if (lower.includes('info')) cls += ' ok';
+          return '<div class="' + cls + '">' + escapeHtml(line) + '</div>';
+        }).join('');
+      } else {
+        logPanel.className = '';
+        logPanel.innerHTML = '<div class="log-line warn">No live log endpoint available. Logs can be viewed via the Terminal tab.</div>';
+      }
+    }
+
+    function escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    refreshAll();
+    setInterval(refreshAll, 15000);
+  })();
+  </script>
+</body>
+</html>

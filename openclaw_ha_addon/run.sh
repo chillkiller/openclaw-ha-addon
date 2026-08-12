@@ -23,6 +23,9 @@ HA_TOKEN=$(jq -r '.homeassistant_token // empty' "$OPTIONS_FILE")
 ADDON_HTTP_PROXY=$(jq -r '.http_proxy // empty' "$OPTIONS_FILE")
 ENABLE_TERMINAL=$(jq -r '.enable_terminal // true' "$OPTIONS_FILE")
 TERMINAL_PORT_RAW=$(jq -r '.terminal_port // 7681' "$OPTIONS_FILE")
+ENABLE_WEBUI=$(jq -r '.enable_webui // true' "$OPTIONS_FILE")
+ENABLE_TUI=$(jq -r '.enable_tui // true' "$OPTIONS_FILE")
+ENABLE_DOCS=$(jq -r '.enable_docs // true' "$OPTIONS_FILE")
 
 # SECURITY: Validate TERMINAL_PORT to prevent nginx config injection
 # Only allow numeric values in valid port range (1024-65535)
@@ -722,8 +725,35 @@ SANEOF
 
 fi
 
-# ------------------------------------------------------------------
-# Configure gateway.controlUi.allowedOrigins:
+INGRESS_PORT=49200
+export INGRESS_PORT
+export CERTS_DIR="/config/certs"
+export SHOW_WEBUI="$ENABLE_WEBUI"
+export SHOW_TERMINAL="$ENABLE_TERMINAL"
+export SHOW_TUI="$ENABLE_TUI"
+export SHOW_DOCS="$ENABLE_DOCS"
+export OPENCLAW_VERSION="$(openclaw --version 2>/dev/null | head -1 || echo 'unknown')"
+
+# -----------------------------------------------------------------------------
+# Copy static Ingress assets (TUI, Docs, icon) into nginx web root
+# -----------------------------------------------------------------------------
+mkdir -p /etc/nginx/html/docs
+if [ -f /openclaw_ha_addon/tui/index.html ]; then
+  cp -v /openclaw_ha_addon/tui/index.html /etc/nginx/html/tui.html 2>/dev/null || true
+  cp -v /openclaw_ha_addon/tui/index.html /etc/nginx/html/tui/index.html 2>/dev/null || true
+fi
+if [ -f /openclaw_ha_addon/docs/index.html ]; then
+  cp -v /openclaw_ha_addon/docs/index.html /etc/nginx/html/docs/index.html 2>/dev/null || true
+fi
+if [ -f /openclaw_ha_addon/loading.html ]; then
+  cp -v /openclaw_ha_addon/loading.html /etc/nginx/html/loading.html 2>/dev/null || true
+fi
+if [ -f /openclaw_ha_addon/icon.png ]; then
+  cp -v /openclaw_ha_addon/icon.png /etc/nginx/html/icon.png 2>/dev/null || true
+fi
+if [ -f /openclaw_ha_addon/logo.png ]; then
+  cp -v /openclaw_ha_addon/logo.png /etc/nginx/html/logo.png 2>/dev/null || true
+fi
 # - In lan_https: include HTTPS proxy defaults (LAN IP + common hostnames)
 # - In all modes: also include origin from gateway_public_url when present
 # - Helper merges with existing origins + user extras and deduplicates
@@ -1146,14 +1176,14 @@ if [ -f "$NGINX_PID_FILE" ]; then
   fi
   rm -f "$NGINX_PID_FILE"
 fi
-# Also kill any orphaned nginx workers that might hold port 48099
+# Also kill any orphaned nginx workers that might hold the ingress port
 if command -v pkill >/dev/null 2>&1; then
   pkill -f "nginx.*-c /etc/nginx/nginx.conf" 2>/dev/null || true
   sleep 1
 fi
-# Verify port 48099 is actually free before proceeding
-if command -v ss >/dev/null 2>&1 && ss -tlnp 2>/dev/null | grep -q ':48099 '; then
-  echo "WARN: Port 48099 still in use after cleanup; nginx may fail to start"
+# Verify ingress port is actually free before proceeding
+if command -v ss >/dev/null 2>&1 && ss -tlnp 2>/dev/null | grep -q ':${INGRESS_PORT} '; then
+  echo "WARN: Port ${INGRESS_PORT} still in use after cleanup; nginx may fail to start"
 fi
 
 # ------------------------------------------------------------------------------
@@ -1212,7 +1242,7 @@ print(json.load(open(p)).get('gateway',{}).get('auth',{}).get('token',''), end='
 # Initial render (token may be absent if openclaw.json does not exist yet)
 render_landing startup
 
-echo "Starting ingress proxy (nginx) on :48099 ..."
+echo "Starting ingress proxy (nginx) on :${INGRESS_PORT} ..."
 nginx -g 'daemon off;' &
 NGINX_PID=$!
 sleep 1
