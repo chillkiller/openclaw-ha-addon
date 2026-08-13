@@ -22,6 +22,7 @@ def main():
     certs_dir = os.environ.get('CERTS_DIR', '/config/certs')
     public_url = os.environ.get('GW_PUBLIC_URL', '')
     terminal_port = os.environ.get('TERMINAL_PORT', '7681')
+    tui_port = os.environ.get('TUI_PORT', '7682')
     enable_https = os.environ.get('ENABLE_HTTPS_PROXY', 'false') == 'true'
     https_port = os.environ.get('HTTPS_PROXY_PORT', '')
     internal_gw_port = os.environ.get('GATEWAY_INTERNAL_PORT', '')
@@ -64,6 +65,7 @@ def main():
     conf = conf.replace('__INGRESS_PORT__', ingress_port)
     conf = conf.replace('__CERTS_DIR__', certs_dir)
     conf = conf.replace('__TERMINAL_PORT__', terminal_port)
+    conf = conf.replace('__TUI_PORT__', tui_port)
     conf = conf.replace('__GATEWAY_INTERNAL_PORT__', internal_gw_port)
 
     # Build HTTPS gateway proxy block (only for lan_https mode)
@@ -128,6 +130,7 @@ def main():
     landing = landing.replace('__GW_PUBLIC_URL_PATH__', gw_path)
     landing = landing.replace('__ACCESS_MODE__', access_mode)
     landing = landing.replace('__HTTPS_PORT__', https_port if enable_https else '')
+    landing = landing.replace('__TUI_PORT__', tui_port)
     landing = landing.replace('__DISK_TOTAL__', disk_total)
     landing = landing.replace('__DISK_USED__', disk_used)
     landing = landing.replace('__DISK_AVAIL__', disk_avail)

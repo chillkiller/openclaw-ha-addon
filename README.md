@@ -1,6 +1,6 @@
 # OpenClaw Home Assistant Addon
 
-[![Version](https://img.shields.io/badge/version-0.7.9.3-blue.svg)](https://github.com/chillkiller/openclaw-ha-addon/releases)
+[![Version](https://img.shields.io/badge/version-0.7.9.4-blue.svg)](https://github.com/chillkiller/openclaw-ha-addon/releases)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Home Assistant](https://img.shields.io/badge/Home_Assistant-2024.12+-blue.svg)](https://www.home-assistant.io/)
 [![Platform](https://img.shields.io/badge/Platform-amd64%20%7C%20aarch64-green.svg)](https://www.home-assistant.io/)

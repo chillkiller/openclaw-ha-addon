@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.7.9.4] - 2026-08-13
+
+### Added
+- **TUI iframe terminal**: The TUI tab now uses a dedicated `ttyd` instance that runs `openclaw tui` directly, instead of showing a static placeholder page.
+- Add `tui_port` option (default 7682) to configure the TUI ttyd listener.
+
+### Changed
+- `run.sh` starts a second `ttyd` process for TUI when `enable_tui: true`.
+- `nginx.conf.tpl` proxies `/tui/` to the TUI ttyd port and preserves the `/tui/` base path.
+- `render_nginx.py` substitutes the new `__TUI_PORT__` placeholder.
+
 ## [0.7.9.3] - 2026-08-13
 
 ### Added

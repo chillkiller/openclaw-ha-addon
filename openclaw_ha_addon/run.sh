@@ -23,8 +23,9 @@ HA_TOKEN=$(jq -r '.homeassistant_token // empty' "$OPTIONS_FILE")
 ADDON_HTTP_PROXY=$(jq -r '.http_proxy // empty' "$OPTIONS_FILE")
 ENABLE_TERMINAL=$(jq -r '.enable_terminal // true' "$OPTIONS_FILE")
 TERMINAL_PORT_RAW=$(jq -r '.terminal_port // 7681' "$OPTIONS_FILE")
-ENABLE_WEBUI=$(jq -r '.enable_webui // true' "$OPTIONS_FILE")
 ENABLE_TUI=$(jq -r '.enable_tui // true' "$OPTIONS_FILE")
+TUI_PORT_RAW=$(jq -r '.tui_port // 7682' "$OPTIONS_FILE")
+ENABLE_WEBUI=$(jq -r '.enable_webui // true' "$OPTIONS_FILE")
 ENABLE_DOCS=$(jq -r '.enable_docs // true' "$OPTIONS_FILE")
 
 # SECURITY: Validate TERMINAL_PORT to prevent nginx config injection
@@ -1159,6 +1160,43 @@ if [ "$ENABLE_TERMINAL" = "true" ] || [ "$ENABLE_TERMINAL" = "1" ]; then
   echo "ttyd started with PID $TTYD_PID"
 else
   echo "Terminal disabled (enable_terminal=$ENABLE_TERMINAL)"
+fi
+
+# Start OpenClaw TUI terminal (optional)
+TTYD_TUI_PID_FILE="/var/run/openclaw-ttyd-tui.pid"
+if [ -f "$TTYD_TUI_PID_FILE" ]; then
+  OLD_PID=$(cat "$TTYD_TUI_PID_FILE" 2>/dev/null || echo "")
+  if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+    echo "Stopping previous TUI ttyd process (PID $OLD_PID)..."
+    kill "$OLD_PID" 2>/dev/null || true
+    sleep 1
+    kill -9 "$OLD_PID" 2>/dev/null || true
+  fi
+  rm -f "$TTYD_TUI_PID_FILE"
+fi
+
+if [ "$ENABLE_TUI" = "true" ] || [ "$ENABLE_TUI" = "1" ]; then
+  if command -v ss >/dev/null 2>&1 && ss -tlnp 2>/dev/null | grep -q ":${TUI_PORT} "; then
+    echo ""
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    echo "!!  WARNING: tui_port ${TUI_PORT} IS ALREADY IN USE          !!"
+    echo "!!                                                             !!"
+    echo "!!  The OpenClaw TUI (ttyd) may FAIL to start because port     !!"
+    echo "!!  ${TUI_PORT} appears to be in use by another process.       !!"
+    echo "!!                                                             !!"
+    echo "!!  ACTION REQUIRED: If the TUI does not work, go to           !!"
+    echo "!!  Add-on Configuration and change 'tui_port' to a free       !!"
+    echo "!!  port, then restart the add-on.                             !!"
+    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+    echo ""
+  fi
+  echo "Starting OpenClaw TUI (ttyd) on 127.0.0.1:${TUI_PORT} ..."
+  ttyd -W -i 127.0.0.1 -p "${TUI_PORT}" -b /tui openclaw tui &
+  TTYD_TUI_PID=$!
+  echo "$TTYD_TUI_PID" > "$TTYD_TUI_PID_FILE"
+  echo "TUI ttyd started with PID $TTYD_TUI_PID"
+else
+  echo "TUI disabled (enable_tui=$ENABLE_TUI)"
 fi
 
 # Start ingress reverse proxy (nginx). This provides the add-on UI inside HA.
