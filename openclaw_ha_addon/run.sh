@@ -737,7 +737,7 @@ export OPENCLAW_VERSION="$(openclaw --version 2>/dev/null | head -1 || echo 'unk
 # -----------------------------------------------------------------------------
 # Copy static Ingress assets (TUI, Docs, icon) into nginx web root
 # -----------------------------------------------------------------------------
-mkdir -p /etc/nginx/html/docs
+mkdir -p /etc/nginx/html/tui /etc/nginx/html/docs
 if [ -f /openclaw_ha_addon/tui/index.html ]; then
   cp -v /openclaw_ha_addon/tui/index.html /etc/nginx/html/tui.html 2>/dev/null || true
   cp -v /openclaw_ha_addon/tui/index.html /etc/nginx/html/tui/index.html 2>/dev/null || true

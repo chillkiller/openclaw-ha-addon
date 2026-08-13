@@ -108,11 +108,16 @@
     const inIframe = (function() {
       try { return window !== window.top; } catch (e) { return true; }
     })();
-    const webuiInlineOk = SHOW_WEBUI && window.isSecureContext && inIframe;
+
+    // Inside the HA Ingress iframe we always show the inline WebUI tab.
+    // The external link is only useful when accessed outside Ingress or when
+    // a public URL has been configured explicitly.
+    const webuiInlineOk = SHOW_WEBUI && inIframe;
+    const showExternalWebui = SHOW_WEBUI && !inIframe && btnWebuiExternal && btnWebuiExternal.href;
 
     buttons.webui.style.display = webuiInlineOk ? '' : 'none';
     if (btnWebuiExternal) {
-      btnWebuiExternal.style.display = (SHOW_WEBUI && !webuiInlineOk) ? '' : 'none';
+      btnWebuiExternal.style.display = showExternalWebui ? '' : 'none';
     }
     buttons.terminal.style.display = SHOW_TERMINAL ? '' : 'none';
     buttons.tui.style.display = SHOW_TUI ? '' : 'none';
@@ -130,12 +135,6 @@
   }
 
   window.setMode = function(mode) {
-    if (mode === 'webui' && !window.isSecureContext) {
-      if (btnWebuiExternal && btnWebuiExternal.href) {
-        window.open(btnWebuiExternal.href, '_blank', 'noopener,noreferrer');
-      }
-      return;
-    }
     if (!isEnabled(mode)) return;
     if (current === mode) return;
 

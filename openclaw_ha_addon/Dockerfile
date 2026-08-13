@@ -1,4 +1,4 @@
-# OpenClaw HA-Addon v0.7.8.0 — Debian Bookworm Full-Stack
+# OpenClaw HA-Addon v0.7.9.1 — Debian Bookworm Full-Stack
 # OpenClaw 2026.7.1 + node-llama-cpp@3.19.0 + CUPS/Scanner + crawl4ai + Go-PATH-Fix + D-Bus/Avahi
 # Builder stage removed (dead code since v0.7.5.1 — never wired)
 # Build dependencies are kept in the final image so runtime native builds work
@@ -285,6 +285,11 @@ COPY oom-shim.cjs /usr/local/lib/oom-shim.cjs
 COPY openclaw-proxy-shim.cjs /usr/local/lib/openclaw-proxy-shim.cjs
 COPY nginx.conf.tpl /etc/nginx/nginx.conf.tpl
 COPY landing.html.tpl /etc/nginx/landing.html.tpl
+COPY tui/index.html /openclaw_ha_addon/tui/index.html
+COPY docs/index.html /openclaw_ha_addon/docs/index.html
+COPY loading.html /openclaw_ha_addon/loading.html
+COPY icon.png /openclaw_ha_addon/icon.png
+COPY logo.png /openclaw_ha_addon/logo.png
 
 RUN chmod +x /run.sh /oc_config_helper.py /render_nginx.py /usr/local/bin/oc-cleanup /usr/local/lib/oom-shim.cjs \
     && mkdir -p /run/nginx

@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.7.9.1] - 2026-08-13
+
+### Added
+- **Ingress-UI Refactor**: Tab-basierte Landing Page mit WebUI, Terminal, TUI und Docs.
+- **Statische Ingress-Assets**: `tui/index.html`, `docs/index.html`, `loading.html`, `icon.png` und `logo.png` werden jetzt ins Docker-Image kopiert und zur Laufzeit nach `/etc/nginx/html/` synchronisiert.
+
+### Fixed
+- **ControlUI im Ingress iframe**: Der WebUI-Tab wird jetzt immer innerhalb des HA-Ingress-iframes angezeigt, auch wenn der Browser-Kontext nicht als `secure context` gilt. Externer Link erscheint nur noch außerhalb des Ingress.
+- **TUI-Verzeichnis**: `run.sh` erzeugt jetzt `/etc/nginx/html/tui` vor dem Kopieren der TUI-Datei.
+- **HEALTHCHECK-Port**: Auf `http://localhost:49200/api/health` korrigiert, um mit `ingress_port: 49200` in `config.yaml` übereinzustimmen.
+- **Repository-Metadaten**: `repository.yaml` auf `ingress_port: 49200` und Version `0.7.9.1` aktualisiert.
+
 ## [0.7.8.0] - 2026-07-14
 
 ### Upgraded
