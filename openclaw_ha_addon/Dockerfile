@@ -295,7 +295,7 @@ ENV PYTHONPATH=/config/.local/lib/python3.11/site-packages
 # Health check for Home Assistant Supervisor Watchdog
 # 120s start-period accounts for Homebrew sync, skill copy, and gateway init on slow hardware
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:48099/ || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://localhost:49200/api/health || exit 1
 
 ENTRYPOINT [ "/usr/bin/tini", "-g", "--" ]
 CMD [ "/run.sh" ]
