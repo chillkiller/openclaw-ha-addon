@@ -1,5 +1,11 @@
 # Changelog
 
+## [0.7.9.2] - 2026-08-13
+
+### Changed
+- **OpenClaw 2026.7.1 → 2026.7.1-2** — latest stable patch release
+- **node-llama-cpp 3.19.0 → 3.20.0** — latest stable release
+
 ## [0.7.9.1] - 2026-08-13
 
 ### Added
