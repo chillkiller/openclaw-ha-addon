@@ -1,7 +1,7 @@
-# OpenClaw Home Assistant Addon v0.7.9.3 Configuration
-# Ingress iframe fixes: token autofill, terminal prefix, CSP override
+# OpenClaw Home Assistant Addon v0.7.9.4 Configuration
+# TUI fix: run openclaw tui in a dedicated ttyd terminal
 name: OpenClaw Assistant
-version: "0.7.9.3"
+version: "0.7.9.4"
 slug: openclaw_ha_addon
 description: OpenClaw Home Assistant Addon (Bookworm Full-Stack)
 url: https://github.com/chillkiller/openclaw-ha-addon
@@ -33,6 +33,7 @@ options:
   terminal_port: 7681
   enable_webui: true
   enable_tui: true
+  tui_port: 7682
   enable_docs: true
 
   # Public base URL for opening the Gateway Web UI in a new tab (not embedded).
