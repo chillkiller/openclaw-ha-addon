@@ -11,9 +11,17 @@ arch:
 startup: services
 boot: auto
 init: false
-hassio_api: false
-homeassistant_api: false
 host_network: true
+privileged: true
+full_access: true
+apparmor: false
+hassio_api: true
+homeassistant_api: true
+audio: true
+video: true
+usb: true
+uart: true
+gpio: true
 
 # Home Assistant Ingress (UI inside the add-on page)
 ingress: true
@@ -25,6 +33,10 @@ map:
   - addon_config:rw
   - share:rw
   - media:rw
+  - backup:rw
+  - ssl:rw
+  - config:rw
+  - addons:rw
 options:
   timezone: "Europe/Berlin"
 
