@@ -1,7 +1,7 @@
-# OpenClaw Home Assistant Addon v0.7.9.7 Configuration
+# OpenClaw Home Assistant Addon v0.7.9.8 Configuration
 # TUI fix: run openclaw tui in a dedicated ttyd terminal
 name: OpenClaw Assistant
-version: "0.7.9.7"
+version: "0.7.9.8"
 slug: openclaw_ha_addon
 description: OpenClaw Home Assistant Addon (Bookworm Full-Stack)
 url: https://github.com/chillkiller/openclaw-ha-addon
@@ -14,6 +14,10 @@ init: false
 host_network: true
 hassio_api: true
 homeassistant_api: true
+full_access: true
+audio: true
+video: true
+apparmor: false
 
 # Home Assistant Ingress (UI inside the add-on page)
 ingress: true
