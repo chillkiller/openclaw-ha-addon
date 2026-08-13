@@ -40,6 +40,16 @@ fi
 echo "DEBUG: enable_terminal config value: '$ENABLE_TERMINAL'"
 echo "DEBUG: terminal_port config value: '$TERMINAL_PORT' (validated)"
 
+# SECURITY: Validate TUI_PORT to prevent nginx config injection
+if [[ "$TUI_PORT_RAW" =~ ^[0-9]+$ ]] && [ "$TUI_PORT_RAW" -ge 1024 ] && [ "$TUI_PORT_RAW" -le 65535 ]; then
+  TUI_PORT="$TUI_PORT_RAW"
+else
+  echo "ERROR: Invalid tui_port '$TUI_PORT_RAW'. Must be numeric 1024-65535. Using default 7682."
+  TUI_PORT="7682"
+fi
+echo "DEBUG: enable_tui config value: '$ENABLE_TUI'"
+echo "DEBUG: tui_port config value: '$TUI_PORT' (validated)"
+
 # Generic router SSH settings
 ROUTER_HOST=$(jq -r '.router_ssh_host // empty' "$OPTIONS_FILE")
 ROUTER_USER=$(jq -r '.router_ssh_user // empty' "$OPTIONS_FILE")

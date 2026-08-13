@@ -123,15 +123,6 @@ http {
       proxy_send_timeout 3600s;
     }
 
-    # TUI — static OpenClaw status dashboard
-    location = /tui { return 302 /tui/; }
-    location ^~ /tui/ {
-      root /etc/nginx/html;
-      index index.html;
-      try_files $uri $uri/ =404;
-      add_header Cache-Control "no-cache";
-    }
-
     # Docs / Info
     location = /docs { return 302 /docs/; }
     location ^~ /docs/ {
