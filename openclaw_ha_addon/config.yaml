@@ -150,6 +150,7 @@ schema:
   terminal_port: int(1024,65535)?
   enable_webui: bool?
   enable_tui: bool?
+  tui_port: int(1024,65535)?
   enable_docs: bool?
   gateway_public_url: str?
   homeassistant_token: str?
