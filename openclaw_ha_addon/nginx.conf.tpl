@@ -84,12 +84,19 @@ http {
       proxy_read_timeout 86400s;
       proxy_send_timeout 86400s;
       proxy_buffering off;
+
+      # OpenClaw ControlUI sends DENY framing headers by default. Strip them
+      # here so the UI can be embedded inside the HA Ingress iframe.
+      proxy_hide_header X-Frame-Options;
+      proxy_hide_header Content-Security-Policy;
+      add_header Content-Security-Policy "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' https://fonts.gstatic.com; worker-src 'self'; connect-src 'self' ws: wss: https://api.openai.com https://tweakcn.com" always;
+      add_header X-Frame-Options "SAMEORIGIN" always;
     }
 
-    # Web terminal (ttyd)
+    # Web terminal (ttyd) — keep /terminal/ prefix because ttyd is started with -b /terminal
     location = /terminal { return 302 /terminal/; }
     location ^~ /terminal/ {
-      proxy_pass http://127.0.0.1:__TERMINAL_PORT__/;
+      proxy_pass http://127.0.0.1:__TERMINAL_PORT__;
       proxy_http_version 1.1;
       proxy_set_header Upgrade $http_upgrade;
       proxy_set_header Connection $connection_upgrade;
