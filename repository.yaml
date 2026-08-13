@@ -2,7 +2,7 @@ name: OpenClaw Assistant
 slug: openclaw-ha-addon
 description: OpenClaw Home Assistant Addon — Bookworm Full-Stack (Stable) with mDNS, HTTPS proxy and multi-agent support
 url: https://github.com/chillkiller/openclaw-ha-addon
-version: "0.7.8.0"
+version: "0.7.9.1"
 arch:
   - amd64
   - aarch64
@@ -13,7 +13,7 @@ hassio_api: false
 homeassistant_api: false
 host_network: true
 ingress: true
-ingress_port: 48099
+ingress_port: 49200
 panel_title: OpenClaw Assistant
 panel_icon: mdi:robot
 map:
