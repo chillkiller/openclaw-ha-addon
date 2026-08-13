@@ -83,9 +83,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3-psycopg2 \
     python3-pyodbc \
     # Dev-Tools
-    tmux \
-    ripgrep \
-    fd-find \
+    tmux                     \\
+    ripgrep                  \\
+    fd-find                  \\
+    usbutils                 \\
+    libpci3                  \\
+    pulseaudio-utils         \\
+    v4l-utils                \\
     # GitHub CLI
     gh \
     # Printing Stack (CUPS/IPP/AirPrint)
