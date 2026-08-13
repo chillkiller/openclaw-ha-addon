@@ -1,4 +1,4 @@
-# OpenClaw HA-Addon v0.7.9.2 — Debian Bookworm Full-Stack
+# OpenClaw HA-Addon v0.7.9.3 — Debian Bookworm Full-Stack
 # OpenClaw 2026.7.1-2 + node-llama-cpp@3.20.0 + CUPS/Scanner + crawl4ai + Go-PATH-Fix + D-Bus/Avahi
 # Builder stage removed (dead code since v0.7.5.1 — never wired)
 # Build dependencies are kept in the final image so runtime native builds work

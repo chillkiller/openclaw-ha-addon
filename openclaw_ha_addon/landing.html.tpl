@@ -96,6 +96,7 @@
   const SHOW_TUI = __SHOW_TUI_JS__;
   const SHOW_DOCS = __SHOW_DOCS_JS__;
   const ACCESS_MODE = '__ACCESS_MODE__';
+  const GATEWAY_TOKEN = '__GATEWAY_TOKEN__';
 
   let current = null;
   const loaded = { webui: false, terminal: false, tui: false, docs: false };
@@ -150,11 +151,17 @@
     buttons[current].classList.remove('secondary');
 
     if (!loaded[current]) {
-      frames[current].src = './' + current + '/';
+      let src = './' + current + '/';
+      if (current === 'webui' && GATEWAY_TOKEN && GATEWAY_TOKEN.indexOf('__') !== 0) {
+        src += '#token=' + encodeURIComponent(GATEWAY_TOKEN);
+      }
+      frames[current].src = src;
       loaded[current] = true;
     }
 
-    document.getElementById('webuiWarning').classList.toggle('visible', mode === 'webui' && !window.isSecureContext);
+    // Only show the HTTPS warning when accessed directly (outside the HA Ingress iframe).
+    document.getElementById('webuiWarning').classList.toggle('visible',
+      mode === 'webui' && !inIframe && !window.isSecureContext);
   };
 
   const btnCert = document.getElementById('btnCert');

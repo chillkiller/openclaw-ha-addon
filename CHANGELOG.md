@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.7.9.3] - 2026-08-13
+
+### Added
+- **Ingress iframe auto-login**: Control UI WebUI tab now appends the gateway token as a URL fragment (`#token=...`) so the user no longer has to paste the token manually.
+- **Ingress iframe CSP override**: nginx now strips OpenClaw Control UI's restrictive `X-Frame-Options: DENY` / `frame-ancestors 'none'` headers and replaces them with iframe-friendly `SAMEORIGIN` / `frame-ancestors 'self'` when proxying `/webui/`.
+- **Ingress terminal fix**: nginx `/terminal/` proxy now preserves the `/terminal/` base path that `ttyd` expects (`ttyd -b /terminal`), so the terminal iframe loads instead of showing a black screen.
+- **HTTP Ingress origins allowed**: `gateway.controlUi.allowedOrigins` now includes `http://<ha-host>:8123` and local HA hostnames so the Control UI accepts the Home Assistant Ingress iframe origin.
+
+### Changed
+- Hide the "OpenClaw WebUI requires HTTPS/secure context" banner when running inside the HA Ingress iframe.
+
 ## [0.7.9.2] - 2026-08-13
 
 ### Changed
