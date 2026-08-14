@@ -24,10 +24,6 @@
     .main{flex:1;overflow:hidden;position:relative;display:flex;flex-direction:column}
     .iframe-pane{position:absolute;top:0;left:0;width:100%;height:100%;border:0;background:#000;display:none}
     .iframe-pane.active{display:block}
-    .iframe-overlay{position:absolute;top:0;left:0;width:100%;height:100%;background:#0b0f14;color:#e6edf3;display:none;flex-direction:column;justify-content:center;align-items:center;text-align:center;padding:20px;z-index:10}
-    .iframe-overlay.visible{display:flex}
-    .iframe-overlay h2{margin:0 0 12px;font-size:18px}
-    .iframe-overlay p{margin:0 0 20px;max-width:500px;color:#9ca3af;line-height:1.5}
     .no-services{display:none;height:100%;justify-content:center;align-items:center;color:#9ca3af;font-size:15px;text-align:center;padding:20px}
     .no-services.visible{display:flex}
     .status-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:6px;font-size:12px;font-weight:600;background:#1f2937}
@@ -69,19 +65,10 @@
 </div>
 
 <div class="main">
-  <iframe id="frameWebui" class="iframe-pane" src="" title="OpenClaw WebUI" allow="fullscreen"></iframe>
-  <div id="overlayWebui" class="iframe-overlay">
-    <h2>🚨 WebUI konnte nicht im Ingress-iframe geladen werden</h2>
-    <p>Das OpenClaw ControlUI blockiert die Einbettung im Home Assistant Ingress-iframe oder ist derzeit nicht erreichbar.</p>
-    <div style="display:flex;gap:12px;flex-wrap:wrap;justify-content:center">
-      <a id="overlayWebuiExternal" class="btn" href="__GATEWAY_PUBLIC_URL__" target="_blank" rel="noopener noreferrer">WebUI in neuem Tab öffnen</a>
-      <button class="btn secondary" onclick="setMode('terminal')">Terminal öffnen</button>
-      <button class="btn secondary" onclick="setMode('tui')">TUI öffnen</button>
-    </div>
-  </div>
-  <iframe id="frameTerminal" class="iframe-pane" src="" title="Terminal" allow="fullscreen"></iframe>
-  <iframe id="frameTui" class="iframe-pane" src="" title="TUI" allow="fullscreen"></iframe>
-  <iframe id="frameDocs" class="iframe-pane" src="" title="Docs" allow="fullscreen"></iframe>
+  <iframe id="frameWebui" class="iframe-pane" src="" title="OpenClaw WebUI"></iframe>
+  <iframe id="frameTerminal" class="iframe-pane" src="" title="Terminal"></iframe>
+  <iframe id="frameTui" class="iframe-pane" src="" title="TUI"></iframe>
+  <iframe id="frameDocs" class="iframe-pane" src="" title="Docs"></iframe>
   <div id="noServices" class="no-services">
     No services enabled.<br>
     Enable WebUI, Terminal, TUI or Docs in the add-on Configuration.
@@ -156,7 +143,6 @@
       frames[current].classList.remove('active');
       buttons[current].classList.remove('active');
       buttons[current].classList.add('secondary');
-      hideOverlay(current);
     }
 
     current = mode;
@@ -171,54 +157,12 @@
       }
       frames[current].src = src;
       loaded[current] = true;
-      if (current === 'webui') {
-        monitorWebuiFrame();
-      }
     }
 
     // Only show the HTTPS warning when accessed directly (outside the HA Ingress iframe).
     document.getElementById('webuiWarning').classList.toggle('visible',
       mode === 'webui' && !inIframe && !window.isSecureContext);
   };
-
-  function hideOverlay(mode) {
-    const overlay = document.getElementById('overlay' + mode.charAt(0).toUpperCase() + mode.slice(1));
-    if (overlay) overlay.classList.remove('visible');
-  }
-
-  function showOverlay(mode) {
-    const overlay = document.getElementById('overlay' + mode.charAt(0).toUpperCase() + mode.slice(1));
-    if (overlay) overlay.classList.add('visible');
-  }
-
-  function monitorWebuiFrame() {
-    const frame = frames.webui;
-    const overlay = document.getElementById('overlayWebui');
-    if (!frame || !overlay) return;
-
-    let loadFired = false;
-    const reset = function() {
-      loadFired = true;
-      overlay.classList.remove('visible');
-    };
-    frame.addEventListener('load', reset, { once: true });
-    frame.addEventListener('error', function() {
-      reset();
-      if (current === 'webui') showOverlay('webui');
-    }, { once: true });
-
-    // If the iframe does not fire load within 8 seconds, show the fallback.
-    setTimeout(function() {
-      if (loadFired) return;
-      // Even if load fired, check whether the frame has meaningful content.
-      try {
-        if (frame.contentDocument && frame.contentDocument.body && frame.contentDocument.body.children.length > 0) {
-          return;
-        }
-      } catch (e) {}
-      if (current === 'webui') showOverlay('webui');
-    }, 8000);
-  }
 
   const btnCert = document.getElementById('btnCert');
   if (ACCESS_MODE !== 'lan_https') {

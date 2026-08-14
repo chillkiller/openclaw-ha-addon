@@ -1,7 +1,7 @@
-# OpenClaw Home Assistant Addon v0.7.9.11 Configuration
-# Ingress iframe fix: allow ControlUI embedding and add WebUI fallback overlay
+# OpenClaw Home Assistant Addon v0.7.9.10 Configuration
+# Gateway supervisor: detect zombie/hung gateway processes and force restart
 name: OpenClaw Assistant
-version: "0.7.9.11"
+version: "0.7.9.10"
 slug: openclaw_ha_addon
 description: OpenClaw Home Assistant Addon (Bookworm Full-Stack)
 url: https://github.com/chillkiller/openclaw-ha-addon
