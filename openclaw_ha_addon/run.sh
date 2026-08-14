@@ -1351,11 +1351,37 @@ while true; do
     # Efficient blocking wait on our child process.
     GW_EXIT_CODE=0
     wait "${GW_PID}" 2>/dev/null || GW_EXIT_CODE=$?
+    if [ "$GW_EXIT_CODE" -ne 0 ]; then
+      echo "WARN: OpenClaw runtime wrapper exited with code ${GW_EXIT_CODE}"
+    fi
   else
     # GW_PID is NOT our child (re-tracked after a self-restart).
-    # Poll with kill -0 until it exits.
+    # Poll with kill -0 until it exits, but also verify the gateway port is
+    # actually bound. A zombie or hung process still responds to kill -0
+    # even though it no longer serves traffic, which would otherwise keep
+    # the supervisor waiting forever.
+    PORT_UNBOUND_COUNT=0
+    PORT_UNBOUND_THRESHOLD=12   # 12 * 5s = 60s grace
     while kill -0 "$GW_PID" 2>/dev/null; do
       if [ "$SHUTTING_DOWN" = "true" ]; then break 2; fi
+
+      if ss -tlnp 2>/dev/null | grep -q ":${GATEWAY_INTERNAL_PORT} "; then
+        PORT_UNBOUND_COUNT=0
+      else
+        PORT_UNBOUND_COUNT=$((PORT_UNBOUND_COUNT + 1))
+        echo "WARN: Gateway PID $GW_PID alive but port ${GATEWAY_INTERNAL_PORT} not bound (check ${PORT_UNBOUND_COUNT}/${PORT_UNBOUND_THRESHOLD})"
+        if [ "$PORT_UNBOUND_COUNT" -ge "$PORT_UNBOUND_THRESHOLD" ]; then
+          if [ -r "/proc/${GW_PID}/stat" ] && grep -Eq "^${GW_PID} \\([^)]*\\) Z" "/proc/${GW_PID}/stat" 2>/dev/null; then
+            echo "WARN: Gateway PID $GW_PID is a zombie; forcing restart."
+          else
+            echo "WARN: Gateway PID $GW_PID unresponsive on port ${GATEWAY_INTERNAL_PORT}; forcing restart."
+          fi
+          kill -TERM "$GW_PID" 2>/dev/null || true
+          sleep 2
+          kill -KILL "$GW_PID" 2>/dev/null || true
+          break
+        fi
+      fi
       sleep 5
     done
     GW_EXIT_CODE=0
@@ -1366,13 +1392,16 @@ while true; do
   fi
 
   # --- Detect self-restart ---------------------------------------------------
-  # Try up to 10 times (≈ 20 s) using all 3 tiers of find_gateway_daemon_pid.
+  # Try up to 30 times (≈ 60 s) using all 3 tiers of find_gateway_daemon_pid.
   # Tier 3 (/proc scan) usually finds the daemon on the very first attempt
   # because the process exists immediately after fork, even before port bind
-  # or process.title. The retries cover edge cases on extremely slow I/O.
+  # or process.title is set. The extended retry window covers slow I/O on
+  # low-power hardware (Pi / eMMC) and large plugin initialisation.
   RESTARTED_PID=""
   if [ "$GATEWAY_MODE" != "remote" ]; then
-    for _attempt in 1 2 3 4 5 6 7 8 9 10; do
+    _attempt=0
+    while [ "$_attempt" -lt 30 ]; do
+      _attempt=$((_attempt + 1))
       RESTARTED_PID=$(find_gateway_daemon_pid 2>/dev/null || true)
       [ -n "$RESTARTED_PID" ] && break
       sleep 2
