@@ -91,6 +91,12 @@ http {
       proxy_hide_header Content-Security-Policy;
       add_header Content-Security-Policy "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' https://fonts.gstatic.com; worker-src 'self'; connect-src 'self' ws: wss: https://api.openai.com https://tweakcn.com" always;
       add_header X-Frame-Options "SAMEORIGIN" always;
+
+      # Inject the HA Ingress base path into the ControlUI HTML so the bundle
+      # resolves the WebSocket URL against the external Ingress path instead of
+      # window.location. This makes the WebUI work via Nabu Casa remote access.
+      sub_filter "data-openclaw-terminal-enabled=\"false\" lang=\"en\"" "data-openclaw-terminal-enabled=\"false\" lang=\"en\" data-openclaw-control-ui-base-path=\"$http_x_ingress_path/webui/\"";
+      sub_filter_once on;
     }
 
     # Web terminal (ttyd) — keep /terminal/ prefix because ttyd is started with -b /terminal
