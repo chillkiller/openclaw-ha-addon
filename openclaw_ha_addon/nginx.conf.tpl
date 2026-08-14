@@ -89,12 +89,8 @@ http {
       # here so the UI can be embedded inside the HA Ingress iframe.
       proxy_hide_header X-Frame-Options;
       proxy_hide_header Content-Security-Policy;
-      proxy_hide_header Content-Security-Policy-Report-Only;
-      proxy_hide_header X-Content-Security-Policy;
-      # Allow embedding in the HA Ingress iframe by not adding any framing
-      # restriction. The gateway itself is token-protected, so this is safe
-      # for local/LAN use.
-      add_header Content-Security-Policy "default-src * 'self'; base-uri 'none'; object-src 'none'; frame-ancestors *; script-src * 'self' 'unsafe-inline' 'unsafe-eval'; style-src * 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src * 'self' data: blob:; media-src * 'self' data: blob:; font-src * 'self' https://fonts.gstatic.com; worker-src * 'self' blob:; connect-src * 'self' ws: wss: https://api.openai.com https://tweakcn.com" always;
+      add_header Content-Security-Policy "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' https://fonts.gstatic.com; worker-src 'self'; connect-src 'self' ws: wss: https://api.openai.com https://tweakcn.com" always;
+      add_header X-Frame-Options "SAMEORIGIN" always;
     }
 
     # Web terminal (ttyd) — keep /terminal/ prefix because ttyd is started with -b /terminal
