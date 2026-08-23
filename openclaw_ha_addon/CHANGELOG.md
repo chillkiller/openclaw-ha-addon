@@ -1,3 +1,8 @@
+## [0.7.9.19] - 2026-08-23
+
+### Fixed
+- **ACPX_ENABLED jq selector was unquoted** in un.sh, causing jq to interpret .acpx_enabled // true as a filename and fail with Is a directory. The selector is now correctly quoted as .acpx_enabled // true.
+
 ## [0.7.9.18] - 2026-08-23
 
 ### Fixed
