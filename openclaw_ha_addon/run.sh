@@ -92,6 +92,9 @@ TRACE_LOG_TO_CONSOLE=$(jq -r '.trace_log_to_console // false' "$OPTIONS_FILE")
 RUNTIME_APT_PACKAGES=$(jq -r '.runtime_apt_packages // empty' "$OPTIONS_FILE")
 CUSTOM_INIT_SCRIPT=$(jq -r '.custom_init_script // empty' "$OPTIONS_FILE")
 
+# ACPX harnesses (Claude Code, Codex, OpenCode)
+ACPX_ENABLED=$(jq -r '.acpx_enabled // true' "$OPTIONS_FILE")
+
 export TZ="$TZNAME"
 
 # ------------------------------------------------------------------------------
@@ -908,6 +911,29 @@ if [ "$AUTO_CONFIGURE_MCP" = "true" ] && [ -n "$HA_TOKEN" ]; then
 elif [ "$AUTO_CONFIGURE_MCP" = "true" ] && [ -z "$HA_TOKEN" ]; then
   echo "INFO: MCP auto-configure enabled but homeassistant_token not set — skipping"
   echo "INFO: To auto-configure, set homeassistant_token in add-on Configuration, then restart"
+fi
+
+# ------------------------------------------------------------------------------
+# Initialize ACPX harnesses (Claude Code, Codex, OpenCode)
+# This sets up the wrapper launchers and agent definitions needed so that:
+#   - Forge (coding-main) runs inside the Claude Code harness
+#   - Audit (coding-review) runs inside the Codex harness
+#   - OpenCode is available as a third optional harness
+# ------------------------------------------------------------------------------
+ACPX_HELPER_PATH="/oc_acpx_helper.py"
+if [ ! -f "$ACPX_HELPER_PATH" ] && [ -f "$(dirname "$0")/oc_acpx_helper.py" ]; then
+  ACPX_HELPER_PATH="$(dirname "$0")/oc_acpx_helper.py"
+fi
+if [ "$ACPX_ENABLED" = "true" ] || [ "$ACPX_ENABLED" = "1" ]; then
+  if [ -f "$ACPX_HELPER_PATH" ]; then
+    echo "INFO: Initializing ACPX harnesses..."
+    python3 "$ACPX_HELPER_PATH" || \
+      echo "WARN: ACPX harness initialization failed — Claude/Codex/OpenCode harnesses may not be available"
+  else
+    echo "WARN: ACPX helper not found; skipping ACPX harness initialization"
+  fi
+else
+  echo "INFO: ACPX harnesses disabled (acpx_enabled=$ACPX_ENABLED)"
 fi
 
 start_openclaw_runtime() {

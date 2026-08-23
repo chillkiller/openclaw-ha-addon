@@ -1,3 +1,14 @@
+## [0.7.9.11] - 2026-08-23
+
+### Added
+- **ACPX harness auto-initialization**:
+  - Wrapper launchers for Claude Code, Codex, and OpenCode.
+  - Managed npm project with `@openclaw/acpx`, `@openclaw/codex`, and `opencode-ai`.
+  - `openclaw.json` patching for ACPX backend and coding agents:
+    - `coding-main` (Forge) → Claude Code harness
+    - `coding-review` (Audit) → Codex harness
+  - New add-on option `acpx_enabled` (default `true`).
+
 ## [0.7.8.0] - 2026-07-14
 
 ### Upgraded
