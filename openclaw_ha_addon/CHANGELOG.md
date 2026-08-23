@@ -1,3 +1,8 @@
+## [0.7.9.15] - 2026-08-23
+
+### Notes
+- **Rebuild trigger only.** Identical to v0.7.9.10; version bumped because local installations were ahead of the store after a repository rollback. This lets Home Assistant offer a normal update path back to the stable v0.7.9.10 codebase.
+
 ## [0.7.8.0] - 2026-07-14
 
 ### Upgraded
