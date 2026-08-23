@@ -1,3 +1,8 @@
+## [0.7.9.23] - 2026-08-23
+
+### Fixed
+- **Ingress Gateway Health Sensor (HA iframe path)**: Changed health fetch from absolute `/api/health` to relative `./api/health` in landing page, TUI and docs, so requests resolve correctly inside the HA Ingress iframe context.
+
 ## [0.7.9.22] - 2026-08-23
 
 ### Fixed

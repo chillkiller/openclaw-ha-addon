@@ -80,7 +80,7 @@
 
     async function refreshAll() {
       const connStatus = document.getElementById('connStatus');
-      const health = await fetchHealth('/api/health');
+      const health = await fetchHealth('./api/health');
 
       if (health.ok) {
         connStatus.textContent = 'connected';
