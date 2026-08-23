@@ -100,7 +100,7 @@ RUNTIME_APT_PACKAGES=$(jq -r '.runtime_apt_packages // empty' "$OPTIONS_FILE")
 CUSTOM_INIT_SCRIPT=$(jq -r '.custom_init_script // empty' "$OPTIONS_FILE")
 
 # ACPX harnesses (Claude Code, Codex, OpenCode)
-ACPX_ENABLED=$(jq -r .acpx_enabled // true "$OPTIONS_FILE")
+ACPX_ENABLED=$(jq -r '.acpx_enabled // true' "$OPTIONS_FILE")
 
 export TZ="$TZNAME"
 
