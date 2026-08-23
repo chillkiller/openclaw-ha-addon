@@ -1,3 +1,11 @@
+## [0.7.9.25] - 2026-08-23
+
+### Changed
+- **Landing Page Titlebar Redesign**: Home Assistant Material Design 3 Stil mit korrigierten Farben. Alte Titlebar-Struktur mit Tabs oben beibehalten.
+
+### Fixed
+- **Tab-Visibility**: Tabs werden korrekt basierend auf Add-on-Konfiguration und iframe-Kontext ein-/ausgeblendet.
+
 ## [0.7.9.24] - 2026-08-23
 
 ### Changed
