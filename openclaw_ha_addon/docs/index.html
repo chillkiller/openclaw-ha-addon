@@ -109,7 +109,7 @@ tail -f /config/clawd/logs/gateway_startup.log</pre>
 
       async function refresh() {
         try {
-          const r = await fetch('/api/health', { cache: 'no-store' });
+          const r = await fetch('./api/health', { cache: 'no-store' });
           const data = await r.json();
           if (data && data.ok) {
             setPill(gwStatus, 'Gateway: reachable', 'ok');

@@ -185,7 +185,7 @@
 
   const statusGateway = document.getElementById('statusGateway');
   function pollGateway() {
-    fetch('/api/health', { cache: 'no-store' })
+    fetch('./api/health', { cache: 'no-store' })
       .then(r => r.json())
       .then(data => {
         if (data && data.ok) {
