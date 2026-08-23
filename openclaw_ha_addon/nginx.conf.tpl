@@ -57,11 +57,16 @@ http {
       add_header Content-Disposition 'attachment; filename="openclaw-ca.crt"';
     }
 
-    # Health check
+    # Health check — proxy to actual OpenClaw Gateway health endpoint
     location = /api/health {
       access_log off;
-      return 200 "OK\n";
-      add_header Content-Type text/plain;
+      proxy_pass http://127.0.0.1:__GATEWAY_INTERNAL_PORT__/health;
+      proxy_http_version 1.1;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP $remote_addr;
+      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+      proxy_set_header X-Forwarded-Proto $scheme;
+      proxy_connect_timeout 5s;
     }
 
     # Add-on log tail (read-only)

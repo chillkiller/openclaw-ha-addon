@@ -62,13 +62,13 @@
   (function() {
     const logPanel = document.getElementById('logPanel');
 
-    async function fetchText(path) {
+    async function fetchHealth(path) {
       try {
         const r = await fetch(path, { cache: 'no-store' });
-        if (!r.ok) return null;
-        return await r.text().catch(() => null);
+        if (!r.ok) return { ok: false };
+        return await r.json().catch(() => ({ ok: false }));
       } catch (e) {
-        return null;
+        return { ok: false };
       }
     }
 
@@ -80,12 +80,12 @@
 
     async function refreshAll() {
       const connStatus = document.getElementById('connStatus');
-      const health = await fetchText('/api/health');
+      const health = await fetchHealth('/api/health');
 
-      if (health !== null) {
+      if (health.ok) {
         connStatus.textContent = 'connected';
         connStatus.className = 'ok';
-        setText('gwStatus', 'reachable (nginx health)', 'ok');
+        setText('gwStatus', 'reachable (gateway live)', 'ok');
         setText('ingressStatus', 'ok', 'ok');
       } else {
         connStatus.textContent = 'disconnected';

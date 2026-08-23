@@ -1,3 +1,9 @@
+## [0.7.9.22] - 2026-08-23
+
+### Fixed
+- **Ingress Gateway health sensor was misleading.** `/api/health` returned a static nginx-only 200 OK, so the titlebar badge showed "Gateway OK" even when the OpenClaw Gateway process was down. The location now proxies to the actual gateway `/health` endpoint (`{"ok":true,"status":"live"}`) and the landing, TUI, and docs pages parse the JSON response and check `data.ok`.
+- **TUI/docs health status wording updated** from "reachable (nginx health)" to "reachable (gateway live)" to reflect the real check.
+
 # Changelog
 
 ## [0.7.9.21] - 2026-08-23
