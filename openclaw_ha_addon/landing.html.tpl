@@ -25,8 +25,8 @@
     *{box-sizing:border-box}
     html,body{margin:0;padding:0;height:100%;background:var(--ha-bg);color:var(--ha-text);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
     body{display:flex;justify-content:center;padding:var(--ha-gap)}
-    .wrap{width:100%;max-width:720px;display:flex;flex-direction:column;gap:var(--ha-gap)}
-    .card{background:var(--ha-card);border-radius:var(--ha-radius);box-shadow:var(--ha-shadow);border:1px solid var(--ha-border);overflow:hidden}
+    .wrap{width:100%;max-width:720px;display:flex;flex-direction:column;gap:var(--ha-gap);min-height:0}
+    .card{background:var(--ha-card);border-radius:var(--ha-radius);box-shadow:var(--ha-shadow);border:1px solid var(--ha-border);overflow:hidden;display:flex;flex-direction:column;min-height:420px}
     .header{padding:18px 18px 14px;display:flex;align-items:flex-start;gap:14px}
     .icon{width:40px;height:40px;border-radius:var(--ha-radius-sm);background:var(--ha-accent-soft);display:flex;align-items:center;justify-content:center;font-size:20px;color:var(--ha-accent);flex-shrink:0}
     .title h1{margin:0;font-size:18px;font-weight:600;letter-spacing:-0.01em}
@@ -45,7 +45,7 @@
     .nav-item .ico{font-size:20px;width:24px;text-align:center}
     .nav-item .lbl{font-weight:500}
     .nav-item.hidden{display:none}
-    .content{flex:1;min-height:0;display:flex;flex-direction:column;position:relative}
+    .content{flex:1;min-height:240px;display:flex;flex-direction:column;position:relative}
     .frame{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;display:none}
     .frame.active{display:block}
     .empty{display:none;align-items:center;justify-content:center;height:100%;color:var(--ha-text-sec);font-size:14px;text-align:center;padding:24px}
@@ -169,9 +169,7 @@
       }
       document.getElementById('footer').textContent = footerText;
       document.getElementById('noServices').classList.toggle('active', !any);
-      if (!any) {
-        document.getElementById('contentHost').style.display = 'none';
-      }
+      document.getElementById('contentHost').style.display = any ? '' : 'none';
       // CA cert download only in lan_https mode
       document.getElementById('btnCert').classList.toggle('hidden', ACCESS_MODE !== 'lan_https');
     }
@@ -193,8 +191,9 @@
         frame.classList.toggle('active', active);
         if (active && !loaded[m]) {
           if (m === 'webui' && !window.isSecureContext && window.top !== window) {
-            // HTTP ingress: open WebUI externally instead of iframe
-            window.open(cfg.external, '_blank');
+            // HTTP ingress: navigate the top frame to the external WebUI URL
+            // (window.open is blocked by popup prevention inside iframes)
+            window.top.location.href = cfg.external;
           } else {
             frame.src = cfg.src;
           }
