@@ -1,3 +1,12 @@
+## [0.7.9.16] - 2026-08-23
+
+### Added
+- **ACPX infrastructure restored** (from v0.7.9.11): wrapper launchers for claude, codex, opencode and the managed npm project with @openclaw/acpx.
+
+### Changed
+- **oc_acpx_helper.py no longer mutates gents.list.** Existing user-configured coding agents (with untime.acp.agent + untime.acp.backend) are preserved as-is.
+- Only the top-level cp section (nabled, ackend, llowedAgents) is auto-completed when missing. No agent or harness overrides are written.
+
 ## [0.7.9.15] - 2026-08-23
 
 ### Notes
