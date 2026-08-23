@@ -88,6 +88,13 @@ GATEWAY_LOG_TO_CONSOLE=$(jq -r '.gateway_log_to_console // false' "$OPTIONS_FILE
 GATEWAY_LOG_LEVEL=$(jq -r '.gateway_log_level // "info"' "$OPTIONS_FILE")
 TRACE_LOG_TO_CONSOLE=$(jq -r '.trace_log_to_console // false' "$OPTIONS_FILE")
 
+# Ollama base URL forwarded to ACPX harness wrappers. Used when no real
+# ANTHROPIC_API_KEY / OPENAI_API_KEY is present in the environment, so the
+# claude / codex / opencode harnesses can talk to a remote Ollama instance.
+OLLAMA_BASE_URL=$(jq -r '.ollama_base_url // "http://localhost:11434"' "$OPTIONS_FILE")
+export OLLAMA_BASE_URL
+
+
 # Runtime extensibility (was defined in config.yaml but never read — Audit R5/R6)
 RUNTIME_APT_PACKAGES=$(jq -r '.runtime_apt_packages // empty' "$OPTIONS_FILE")
 CUSTOM_INIT_SCRIPT=$(jq -r '.custom_init_script // empty' "$OPTIONS_FILE")

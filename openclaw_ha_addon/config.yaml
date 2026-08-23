@@ -1,7 +1,7 @@
-# OpenClaw Home Assistant Addon v0.7.9.16 Configuration
+# OpenClaw Home Assistant Addon v0.7.9.17 Configuration
 # FIX: Inject HA Ingress base path into ControlUI HTML for Nabu Casa WebSocket support
 name: OpenClaw Assistant
-version: "0.7.9.16"
+version: "0.7.9.17"
 slug: openclaw_ha_addon
 description: OpenClaw Home Assistant Addon (Bookworm Full-Stack)
 url: https://github.com/chillkiller/openclaw-ha-addon
@@ -145,6 +145,15 @@ options:
   # preserved as-is; the add-on does not modify agents.list.
   acpx_enabled: true
 
+  # Ollama base URL used by ACPX harness wrappers (claude/codex/opencode).
+  # When no ANTHROPIC_API_KEY / OPENAI_API_KEY is configured, the wrappers
+  # point the respective CLI at this URL and use 'ollama' as a placeholder
+  # token. Set this to your remote Ollama instance (e.g.
+  # http://192.168.178.34:11434) when running the harness against an
+  # external Ollama server. When real API keys are present in
+  # gateway_env_vars, this URL is ignored for the corresponding provider.
+  ollama_base_url: "http://localhost:11434"
+
   # Optional: Space-separated list of apt packages to install at container startup.
   # Packages are reinstalled on each restart (not persistent in image).
   # Example: "ffmpeg postgresql-client"
@@ -195,5 +204,6 @@ schema:
       value: str
   auto_configure_mcp: bool?
   acpx_enabled: bool?
+  ollama_base_url: str?
   runtime_apt_packages: str?
   custom_init_script: str?

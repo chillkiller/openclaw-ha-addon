@@ -75,6 +75,7 @@ def copy_wrapper_files() -> None:
         "claude-agent-acp-wrapper.mjs",
         "codex-acp-wrapper.mjs",
         "opencode-acp-wrapper.mjs",
+        "oc_provider_env.mjs",
     ]
     for name in files_to_copy:
         src = WRAPPER_SRC_DIR / name
