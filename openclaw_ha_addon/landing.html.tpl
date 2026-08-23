@@ -186,8 +186,9 @@
   const statusGateway = document.getElementById('statusGateway');
   function pollGateway() {
     fetch('/api/health', { cache: 'no-store' })
-      .then(r => {
-        if (r.ok) {
+      .then(r => r.json())
+      .then(data => {
+        if (data && data.ok) {
           statusGateway.textContent = 'Gateway OK';
           statusGateway.className = 'status-badge ok';
         } else {
