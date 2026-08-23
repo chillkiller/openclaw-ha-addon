@@ -7,10 +7,11 @@ import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { resolveProviderEnv } from "./oc_provider_env.mjs";
 
 const openCodeHome = fileURLToPath(new URL("./opencode-home/", import.meta.url));
 const env = {
-  ...process.env,
+  ...resolveProviderEnv(process.env),
   OPENCODE_HOME: openCodeHome,
 };
 const stderrLogFileNamePrefix = "opencode-acp-wrapper.stderr";

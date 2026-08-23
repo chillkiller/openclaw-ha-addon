@@ -7,6 +7,7 @@ import { appendFileSync, existsSync, readFileSync, readdirSync, writeFileSync } 
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { resolveProviderEnv } from "./oc_provider_env.mjs";
 
 const codexHome = fileURLToPath(new URL("./codex-home/", import.meta.url));
 const codexAuthPath = fileURLToPath(new URL("./codex-home/auth.json", import.meta.url));
@@ -40,7 +41,7 @@ if (shouldWriteCodexApiKeyAuth) {
 }
 
 const env = {
-  ...process.env,
+  ...resolveProviderEnv(process.env),
   CODEX_HOME: codexHome,
 };
 const stderrLogFileNamePrefix = "codex-acp-wrapper.stderr";

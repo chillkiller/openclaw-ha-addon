@@ -1,3 +1,11 @@
+## [0.7.9.17] - 2026-08-23
+
+### Added
+- **ollama_base_url add-on option** (default http://localhost:11434). The ACPX harness wrappers (claude / codex / opencode) now route their underlying CLI through this URL when no real ANTHROPIC_API_KEY / OPENAI_API_KEY is configured. Set it to your remote Ollama instance (e.g. http://192.168.178.34:11434) to run coding agents against an external Ollama server.
+
+### Changed
+- **ACPX harness wrappers now resolve provider environment centrally** via the new cpx/oc_provider_env.mjs helper. When no API key is set, the wrappers point ANTHROPIC_BASE_URL / OPENAI_BASE_URL / OLLAMA_HOST at OLLAMA_BASE_URL and use ollama as a placeholder token. When a real API key is set, the wrapper leaves the provider config untouched and the agent talks to the upstream API directly.
+
 ## [0.7.9.16] - 2026-08-23
 
 ### Added

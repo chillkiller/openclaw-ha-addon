@@ -7,8 +7,9 @@ import { appendFileSync, existsSync, readFileSync, readdirSync, writeFileSync } 
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { resolveProviderEnv } from "./oc_provider_env.mjs";
 
-const env = { ...process.env };
+const env = resolveProviderEnv(process.env);
 const stderrLogFileNamePrefix = undefined;
 const stderrLogMaxChars = 256 * 1024;
 
