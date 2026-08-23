@@ -1,3 +1,9 @@
+## [0.7.9.21] - 2026-08-23
+
+### Fixed
+- **Codex ACPX wrapper failed to write auth.json when using Ollama fallback.** `codex-acp-wrapper.mjs` resolved provider environment (`OPENAI_API_KEY` placeholder + Ollama base URL) **after** deciding whether to write `codex-home/auth.json`. Without a real `OPENAI_API_KEY` in the environment, the wrapper left the auth file missing and `codex-acp` exited with `Authentication required`. The wrapper now resolves `resolveProviderEnv()` first and uses the resolved environment for both the auth-file decision and the child process.
+- **Unnecessary auth.json rewrites** in Codex wrapper: the existing-key comparison now also checks whether the resolved key actually changed.
+
 ## [0.7.9.20] - 2026-08-23
 
 ### Fixed
