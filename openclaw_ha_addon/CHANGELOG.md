@@ -1,3 +1,9 @@
+## [0.7.9.18] - 2026-08-23
+
+### Fixed
+- **LF line endings** for un.sh, oc_acpx_helper.py, and all ACPX wrappers. Files written via PowerShell ended up with CRLF on Windows, which made the container interpreter read the shebang as ash\\r and refuse to launch the scripts.
+- **.gitattributes** added so future edits on Windows keep LF for shell, Python and JS source files.
+
 ## [0.7.9.17] - 2026-08-23
 
 ### Added
