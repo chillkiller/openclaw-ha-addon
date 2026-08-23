@@ -11,7 +11,11 @@ import { resolveProviderEnv } from "./oc_provider_env.mjs";
 
 const codexHome = fileURLToPath(new URL("./codex-home/", import.meta.url));
 const codexAuthPath = fileURLToPath(new URL("./codex-home/auth.json", import.meta.url));
-const codexApiKey = (process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY || "").trim();
+
+// Resolve provider env first so Ollama fallback (OPENAI_API_KEY placeholder)
+// is visible when deciding whether to write Codex auth state.
+const baseEnv = resolveProviderEnv(process.env);
+const codexApiKey = (baseEnv.CODEX_API_KEY || baseEnv.OPENAI_API_KEY || "").trim();
 let shouldWriteCodexApiKeyAuth = false;
 if (codexApiKey) {
   if (!existsSync(codexAuthPath)) {
@@ -22,7 +26,8 @@ if (codexApiKey) {
       shouldWriteCodexApiKeyAuth =
         !existingCodexAuth ||
         typeof existingCodexAuth !== "object" ||
-        typeof existingCodexAuth.OPENAI_API_KEY === "string";
+        typeof existingCodexAuth.OPENAI_API_KEY !== "string" ||
+        existingCodexAuth.OPENAI_API_KEY !== codexApiKey;
     } catch {
       shouldWriteCodexApiKeyAuth = true;
     }
@@ -41,7 +46,7 @@ if (shouldWriteCodexApiKeyAuth) {
 }
 
 const env = {
-  ...resolveProviderEnv(process.env),
+  ...baseEnv,
   CODEX_HOME: codexHome,
 };
 const stderrLogFileNamePrefix = "codex-acp-wrapper.stderr";

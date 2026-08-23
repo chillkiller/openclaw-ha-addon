@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.9.21] - 2026-08-23
+
+### Fixed
+- **Codex ACPX wrapper auth.json with Ollama fallback.** The wrapper now resolves provider environment before deciding whether to write `codex-home/auth.json`, so the Ollama placeholder `OPENAI_API_KEY` is visible and Codex no longer exits with `Authentication required` when no real OpenAI key is configured.
+
 ## [0.7.9.20] - 2026-08-23
 
 ### Fixed
