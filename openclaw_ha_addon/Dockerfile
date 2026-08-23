@@ -283,19 +283,21 @@ RUN git config --global safe.directory /home/linuxbrew/.linuxbrew/Homebrew
 # =============================================================================
 COPY run.sh /run.sh
 COPY oc_config_helper.py /oc_config_helper.py
+COPY oc_acpx_helper.py /oc_acpx_helper.py
 COPY render_nginx.py /render_nginx.py
 COPY oc-cleanup.sh /usr/local/bin/oc-cleanup
 COPY oom-shim.cjs /usr/local/lib/oom-shim.cjs
 COPY openclaw-proxy-shim.cjs /usr/local/lib/openclaw-proxy-shim.cjs
 COPY nginx.conf.tpl /etc/nginx/nginx.conf.tpl
 COPY landing.html.tpl /etc/nginx/landing.html.tpl
+COPY acpx /openclaw_ha_addon/acpx
 COPY tui/index.html /openclaw_ha_addon/tui/index.html
 COPY docs/index.html /openclaw_ha_addon/docs/index.html
 COPY loading.html /openclaw_ha_addon/loading.html
 COPY icon.png /openclaw_ha_addon/icon.png
 COPY logo.png /openclaw_ha_addon/logo.png
 
-RUN chmod +x /run.sh /oc_config_helper.py /render_nginx.py /usr/local/bin/oc-cleanup /usr/local/lib/oom-shim.cjs \
+RUN chmod +x /run.sh /oc_config_helper.py /oc_acpx_helper.py /render_nginx.py /usr/local/bin/oc-cleanup /usr/local/lib/oom-shim.cjs \
     && mkdir -p /run/nginx
 
 RUN mkdir -p /config/.local/lib/python3.11/site-packages

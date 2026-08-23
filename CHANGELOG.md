@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.7.9.11] - 2026-08-23
+
+### Added
+- **ACPX harness auto-initialization** (`oc_acpx_helper.py` + `run.sh`):
+  - Installs ACPX wrapper launchers for **Claude Code**, **Codex**, and **OpenCode** into `/config/.openclaw/acpx/`.
+  - Creates a managed npm project with `@openclaw/acpx`, `@openclaw/codex`, and `opencode-ai`.
+  - Patches `/config/.openclaw/openclaw.json` to enable `acp.backend: acpx` and allow the harnesses.
+  - Defines dedicated coding agents:
+    - **Forge** (`coding-main`) → Claude Code harness
+    - **Audit** (`coding-review`) → Codex harness
+  - Adds `acpx_enabled` add-on option (default `true`) to disable the feature if desired.
+
+### Changed
+- `run.sh` now calls `/oc_acpx_helper.py` before starting the OpenClaw gateway.
+- `Dockerfile` copies `oc_acpx_helper.py` and the `acpx/` wrapper templates into the image.
+- Wrapper launchers resolve binaries from the managed ACPX project first, then fall back to OpenClaw's internal npm projects or `npx`.
+
 ## [0.7.9.4] - 2026-08-13
 
 ### Added

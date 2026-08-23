@@ -1,7 +1,7 @@
-# OpenClaw Home Assistant Addon v0.7.9.10 Configuration
+# OpenClaw Home Assistant Addon v0.7.9.11 Configuration
 # FIX: Inject HA Ingress base path into ControlUI HTML for Nabu Casa WebSocket support
 name: OpenClaw Assistant
-version: "0.7.9.10"
+version: "0.7.9.11"
 slug: openclaw_ha_addon
 description: OpenClaw Home Assistant Addon (Bookworm Full-Stack)
 url: https://github.com/chillkiller/openclaw-ha-addon
@@ -138,6 +138,14 @@ options:
   # When enabled + homeassistant_token set, registers HA as MCP server.
   auto_configure_mcp: false
 
+  # ACPX harness configuration.
+  # Enables out-of-the-box harnesses for Claude Code, Codex and OpenCode so that
+  # OpenClaw agents can run inside those agent CLIs.
+  #   - Forge (coding-main)  → Claude Code harness
+  #   - Audit (coding-review) → Codex harness
+  #   - OpenCode is available as a third optional harness
+  acpx_enabled: true
+
   # Optional: Space-separated list of apt packages to install at container startup.
   # Packages are reinstalled on each restart (not persistent in image).
   # Example: "ffmpeg postgresql-client"
@@ -187,5 +195,6 @@ schema:
     - name: "match(^[A-Z_][A-Z0-9_]*$)"
       value: str
   auto_configure_mcp: bool?
+  acpx_enabled: bool?
   runtime_apt_packages: str?
   custom_init_script: str?
