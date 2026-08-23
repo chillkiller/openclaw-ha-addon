@@ -1,210 +1,251 @@
 <!doctype html>
-<html lang="en">
+<html lang="de">
 <head>
   <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>OpenClaw Assistant</title>
   <style>
+    :root {
+      --ha-bg: #111416;
+      --ha-card: #1c1c21;
+      --ha-card-2: #242429;
+      --ha-text: #e3e3e7;
+      --ha-text-sec: #9fa0a6;
+      --ha-border: rgba(255,255,255,0.08);
+      --ha-accent: #0b96c2;
+      --ha-accent-soft: rgba(11,150,194,0.15);
+      --ha-ok: #17a34a;
+      --ha-warn: #f59e0b;
+      --ha-err: #ef4444;
+      --ha-radius: 12px;
+      --ha-radius-sm: 8px;
+      --ha-shadow: 0 2px 8px rgba(0,0,0,0.28);
+      --ha-gap: 16px;
+    }
     *{box-sizing:border-box}
-    html,body{margin:0;padding:0;height:100%;overflow:hidden;background:#0b0f14;color:#e6edf3;font-family:system-ui,-apple-system,Segoe UI,Roboto,Ubuntu,Cantarell,Noto Sans,sans-serif}
-    body{display:flex;flex-direction:column}
-    .titlebar{display:flex;align-items:center;gap:8px;padding:6px 10px;background:#111827;border-bottom:1px solid #1f2937;min-height:42px;flex-shrink:0}
-    .titlebar .logo{height:24px;width:24px;flex-shrink:0}
-    .titlebar h1{margin:0;font-size:16px;font-weight:600;white-space:nowrap}
-    .titlebar .version{color:#ffd700;font-size:12px;white-space:nowrap}
-    .titlebar .buttons{display:flex;gap:6px;margin:0 auto;align-items:center;flex-wrap:wrap}
-    .titlebar .status{display:flex;gap:8px;font-size:12px;color:#9ca3af;margin-left:auto;align-items:center}
-    .btn{background:#2563eb;color:white;border:0;border-radius:8px;padding:6px 12px;cursor:pointer;text-decoration:none;display:inline-flex;align-items:center;gap:6px;font-size:13px;font-weight:500}
-    .btn.secondary{background:#334155}
-    .btn.green{background:#059669}
-    .btn.amber{background:#d97706}
-    .btn:hover{filter:brightness(1.15)}
-    .btn.active{background:#f36d00}
-    .btn.small{padding:4px 8px;font-size:12px}
-    .main{flex:1;overflow:hidden;position:relative;display:flex;flex-direction:column}
-    .iframe-pane{position:absolute;top:0;left:0;width:100%;height:100%;border:0;background:#000;display:none}
-    .iframe-pane.active{display:block}
-    .no-services{display:none;height:100%;justify-content:center;align-items:center;color:#9ca3af;font-size:15px;text-align:center;padding:20px}
-    .no-services.visible{display:flex}
-    .status-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:6px;font-size:12px;font-weight:600;background:#1f2937}
-    .status-badge.ok{background:#14532d;color:#86efac}
-    .status-badge.warn{background:#713f12;color:#fde047}
-    .status-badge.err{background:#450a0a;color:#fca5a5}
-    .mode-badge{padding:2px 8px;border-radius:6px;font-size:12px;font-weight:600;background:#1e3a8a;color:#93c5fd}
-    .banner{display:none;padding:12px 16px;border-radius:8px;margin:0 14px 10px;font-size:13px;line-height:1.5;background:#422006;border:1px solid #d97706;color:#fde047}
-    .banner.visible{display:block}
-    @media (max-width: 640px) {
-      .titlebar{flex-wrap:wrap;height:auto}
-      .titlebar .status{width:100%;justify-content:flex-start;margin-left:0;margin-top:4px}
+    html,body{margin:0;padding:0;height:100%;background:var(--ha-bg);color:var(--ha-text);font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;font-size:14px;line-height:1.45;-webkit-font-smoothing:antialiased}
+    body{display:flex;justify-content:center;padding:var(--ha-gap)}
+    .wrap{width:100%;max-width:720px;display:flex;flex-direction:column;gap:var(--ha-gap)}
+    .card{background:var(--ha-card);border-radius:var(--ha-radius);box-shadow:var(--ha-shadow);border:1px solid var(--ha-border);overflow:hidden}
+    .header{padding:18px 18px 14px;display:flex;align-items:flex-start;gap:14px}
+    .icon{width:40px;height:40px;border-radius:var(--ha-radius-sm);background:var(--ha-accent-soft);display:flex;align-items:center;justify-content:center;font-size:20px;color:var(--ha-accent);flex-shrink:0}
+    .title h1{margin:0;font-size:18px;font-weight:600;letter-spacing:-0.01em}
+    .title .meta{margin-top:4px;font-size:12px;color:var(--ha-text-sec)}
+    .status-row{display:flex;gap:10px;padding:0 18px 16px;flex-wrap:wrap}
+    .chip{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;font-size:12px;font-weight:500;background:var(--ha-card-2);border:1px solid var(--ha-border);color:var(--ha-text-sec)}
+    .chip.ok{background:rgba(23,163,74,0.15);border-color:rgba(23,163,74,0.25);color:#4ade80}
+    .chip.warn{background:rgba(245,158,11,0.12);border-color:rgba(245,158,11,0.22);color:#fbbf24}
+    .chip.err{background:rgba(239,68,68,0.15);border-color:rgba(239,68,68,0.25);color:#fca5a5}
+    .section{padding:16px 18px;border-top:1px solid var(--ha-border)}
+    .section-title{margin:0 0 12px;font-size:13px;font-weight:600;color:var(--ha-text-sec);text-transform:uppercase;letter-spacing:0.04em}
+    .nav{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:10px}
+    .nav-item{display:flex;align-items:center;gap:12px;padding:14px;border-radius:var(--ha-radius-sm);background:var(--ha-card-2);border:1px solid var(--ha-border);cursor:pointer;transition:background 0.15s,border-color 0.15s;user-select:none}
+    .nav-item:hover{background:rgba(255,255,255,0.04);border-color:rgba(255,255,255,0.14)}
+    .nav-item.active{background:var(--ha-accent-soft);border-color:rgba(11,150,194,0.35)}
+    .nav-item .ico{font-size:20px;width:24px;text-align:center}
+    .nav-item .lbl{font-weight:500}
+    .nav-item.hidden{display:none}
+    .content{flex:1;min-height:0;display:flex;flex-direction:column;position:relative}
+    .frame{position:absolute;inset:0;width:100%;height:100%;border:0;background:#000;display:none}
+    .frame.active{display:block}
+    .empty{display:none;align-items:center;justify-content:center;height:100%;color:var(--ha-text-sec);font-size:14px;text-align:center;padding:24px}
+    .empty.active{display:flex}
+    .warn-box{display:none;margin:16px 18px;padding:12px 14px;border-radius:var(--ha-radius-sm);background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.25);color:#fbbf24;font-size:13px}
+    .warn-box.active{display:block}
+    .warn-box a{color:var(--ha-accent);text-decoration:none}
+    .warn-box a:hover{text-decoration:underline}
+    .cert-link{display:inline-flex;align-items:center;gap:6px;padding:5px 10px;border-radius:999px;font-size:12px;font-weight:500;background:rgba(23,163,74,0.12);border:1px solid rgba(23,163,74,0.25);color:#4ade80;text-decoration:none}
+    .cert-link:hover{background:rgba(23,163,74,0.18);text-decoration:none}
+    .footer{padding:12px 18px;border-top:1px solid var(--ha-border);font-size:12px;color:var(--ha-text-sec);text-align:center}
+    @media (max-width: 480px){
+      body{padding:10px}
+      .nav{grid-template-columns:repeat(2,1fr)}
+      .header{padding:14px 14px 10px}
+      .status-row{padding:0 14px 12px}
     }
   </style>
 </head>
 <body>
+  <div class="wrap">
+    <div class="card">
+      <div class="header">
+        <div class="icon">🦾</div>
+        <div class="title">
+          <h1>OpenClaw Assistant</h1>
+          <div class="meta">Version __OPENCLAW_VERSION__ · <span id="statusSecure">…</span></div>
+        </div>
+      </div>
+      <div class="status-row">
+        <span class="chip" id="statusGateway">Gateway: …</span>
+        <span class="chip" id="statusIngress">Ingress: …</span>
+        <a class="cert-link hidden" id="btnCert" href="./cert/ca.crt" download="openclaw-ca.crt">🔒 CA Cert</a>
+      </div>
 
-<div class="titlebar">
-  <img class="logo" src="./icon.png" alt="OpenClaw" onerror="this.style.display='none'">
-  <h1>OpenClaw Assistant</h1>
-  <span class="version">__OPENCLAW_VERSION__</span>
-  <div class="buttons">
-    <button class="btn active" id="btnWebui" onclick="setMode('webui')">WebUI</button>
-    <a class="btn secondary" id="btnWebuiExternal" href="__GATEWAY_PUBLIC_URL__" target="_blank" rel="noopener noreferrer">Open WebUI ↗</a>
-    <button class="btn secondary" id="btnTerminal" onclick="setMode('terminal')">Terminal</button>
-    <button class="btn secondary" id="btnTui" onclick="setMode('tui')">TUI</button>
-    <button class="btn secondary" id="btnDocs" onclick="setMode('docs')">Docs</button>
-    <a class="btn green small" id="btnCert" href="./cert/ca.crt" download="openclaw-ca.crt">CA Cert</a>
+      <div class="warn-box" id="webuiWarning">
+        <strong>Secure Context erforderlich.</strong> Der WebUI-Tab erfordert HTTPS. Klicke auf den Button, um die WebUI extern zu öffnen, oder aktiviere den <code>lan_https</code>-Modus.
+      </div>
+
+      <div class="section">
+        <h2 class="section-title">Ingress-Tabs</h2>
+        <div class="nav" id="nav">
+          <div class="nav-item" id="btnWebui" data-mode="webui">
+            <span class="ico">🌐</span>
+            <span class="lbl">WebUI</span>
+          </div>
+          <div class="nav-item" id="btnTerminal" data-mode="terminal">
+            <span class="ico">🖥️</span>
+            <span class="lbl">Terminal</span>
+          </div>
+          <div class="nav-item" id="btnTui" data-mode="tui">
+            <span class="ico">📊</span>
+            <span class="lbl">TUI</span>
+          </div>
+          <div class="nav-item" id="btnDocs" data-mode="docs">
+            <span class="ico">📄</span>
+            <span class="lbl">Docs</span>
+          </div>
+        </div>
+      </div>
+
+      <div class="content" id="contentHost">
+        <iframe id="frameWebui" class="frame" title="OpenClaw WebUI"></iframe>
+        <iframe id="frameTerminal" class="frame" title="Terminal"></iframe>
+        <iframe id="frameTui" class="frame" title="TUI"></iframe>
+        <iframe id="frameDocs" class="frame" title="Docs"></iframe>
+        <div id="noServices" class="empty">Keine Services aktiviert.</div>
+      </div>
+
+      <div class="footer" id="footer">OpenClaw HA Add-on · Speicher: __DISK_USED__ / __DISK_TOTAL__ (__DISK_PCT__)</div>
+    </div>
   </div>
-  <div class="status">
-    <span class="mode-badge" id="modeBadge">__ACCESS_MODE__</span>
-    <span class="status-badge" id="statusGateway">Gateway: …</span>
-    <span class="status-badge" id="statusSecure">Context: …</span>
-  </div>
-</div>
 
-<div id="webuiWarning" class="banner">
-  ⚠️ OpenClaw WebUI erfordert HTTPS/secure context. Klicke auf <b>Open WebUI ↗</b>, um es in einem neuen Tab zu öffnen.
-</div>
+  <script>
+  (function() {
+    const ACCESS_MODE = '__ACCESS_MODE__';
+    const GATEWAY_TOKEN = '__GATEWAY_TOKEN__';
+    const GATEWAY_PUBLIC_URL = '__GATEWAY_PUBLIC_URL__';
+    const SHOW_WEBUI = __SHOW_WEBUI_JS__;
+    const SHOW_TERMINAL = __SHOW_TERMINAL_JS__;
+    const SHOW_TUI = __SHOW_TUI_JS__;
+    const SHOW_DOCS = __SHOW_DOCS_JS__;
 
-<div class="main">
-  <iframe id="frameWebui" class="iframe-pane" src="" title="OpenClaw WebUI"></iframe>
-  <iframe id="frameTerminal" class="iframe-pane" src="" title="Terminal"></iframe>
-  <iframe id="frameTui" class="iframe-pane" src="" title="TUI"></iframe>
-  <iframe id="frameDocs" class="iframe-pane" src="" title="Docs"></iframe>
-  <div id="noServices" class="no-services">
-    No services enabled.<br>
-    Enable WebUI, Terminal, TUI or Docs in the add-on Configuration.
-  </div>
-</div>
+    const modes = {
+      webui: { btn: 'btnWebui', frame: 'frameWebui', src: './webui/?token=' + encodeURIComponent(GATEWAY_TOKEN), external: GATEWAY_PUBLIC_URL },
+      terminal: { btn: 'btnTerminal', frame: 'frameTerminal', src: './terminal/' },
+      tui: { btn: 'btnTui', frame: 'frameTui', src: './tui/' },
+      docs: { btn: 'btnDocs', frame: 'frameDocs', src: './docs/' }
+    };
 
-<script>
-(function() {
-  const buttons = {
-    webui: document.getElementById('btnWebui'),
-    terminal: document.getElementById('btnTerminal'),
-    tui: document.getElementById('btnTui'),
-    docs: document.getElementById('btnDocs')
-  };
-  const frames = {
-    webui: document.getElementById('frameWebui'),
-    terminal: document.getElementById('frameTerminal'),
-    tui: document.getElementById('frameTui'),
-    docs: document.getElementById('frameDocs')
-  };
-  const btnWebuiExternal = document.getElementById('btnWebuiExternal');
+    let current = null;
+    let loaded = {};
 
-  const SHOW_WEBUI = __SHOW_WEBUI_JS__;
-  const SHOW_TERMINAL = __SHOW_TERMINAL_JS__;
-  const SHOW_TUI = __SHOW_TUI_JS__;
-  const SHOW_DOCS = __SHOW_DOCS_JS__;
-  const ACCESS_MODE = '__ACCESS_MODE__';
-  const GATEWAY_TOKEN = '__GATEWAY_TOKEN__';
-
-  let current = null;
-  const loaded = { webui: false, terminal: false, tui: false, docs: false };
-
-  function isEnabled(mode) {
-    return { webui: SHOW_WEBUI, terminal: SHOW_TERMINAL, tui: SHOW_TUI, docs: SHOW_DOCS }[mode];
-  }
-
-  function updateVisibility() {
-    const inIframe = (function() {
-      try { return window !== window.top; } catch (e) { return true; }
-    })();
-
-    // Inside the HA Ingress iframe we always show the inline WebUI tab.
-    // The external link is only useful when accessed outside Ingress or when
-    // a public URL has been configured explicitly.
-    const webuiInlineOk = SHOW_WEBUI && inIframe;
-    const showExternalWebui = SHOW_WEBUI && !inIframe && btnWebuiExternal && btnWebuiExternal.href;
-
-    buttons.webui.style.display = webuiInlineOk ? '' : 'none';
-    if (btnWebuiExternal) {
-      btnWebuiExternal.style.display = showExternalWebui ? '' : 'none';
-    }
-    buttons.terminal.style.display = SHOW_TERMINAL ? '' : 'none';
-    buttons.tui.style.display = SHOW_TUI ? '' : 'none';
-    buttons.docs.style.display = SHOW_DOCS ? '' : 'none';
-
-    const any = SHOW_WEBUI || SHOW_TERMINAL || SHOW_TUI || SHOW_DOCS;
-    document.getElementById('noServices').classList.toggle('visible', !any);
-
-    if (!any) return;
-    if (current === null || !isEnabled(current)) {
-      for (const k of ['webui','terminal','tui','docs']) {
-        if (isEnabled(k)) { setMode(k); return; }
+    function isEnabled(mode) {
+      switch(mode) {
+        case 'webui': return SHOW_WEBUI;
+        case 'terminal': return SHOW_TERMINAL;
+        case 'tui': return SHOW_TUI;
+        case 'docs': return SHOW_DOCS;
       }
-    }
-  }
-
-  window.setMode = function(mode) {
-    if (!isEnabled(mode)) return;
-    if (current === mode) return;
-
-    if (current) {
-      frames[current].classList.remove('active');
-      buttons[current].classList.remove('active');
-      buttons[current].classList.add('secondary');
+      return false;
     }
 
-    current = mode;
-    frames[current].classList.add('active');
-    buttons[current].classList.add('active');
-    buttons[current].classList.remove('secondary');
-
-    if (!loaded[current]) {
-      let src = './' + current + '/';
-      if (current === 'webui' && GATEWAY_TOKEN && GATEWAY_TOKEN.indexOf('__') !== 0) {
-        src += '#token=' + encodeURIComponent(GATEWAY_TOKEN);
+    function updateVisibility() {
+      let any = false;
+      for (const mode of Object.keys(modes)) {
+        const enabled = isEnabled(mode);
+        document.getElementById(modes[mode].btn).classList.toggle('hidden', !enabled);
+        any = any || enabled;
       }
-      frames[current].src = src;
-      loaded[current] = true;
+      const diskUsed = '__DISK_USED__';
+      const diskTotal = '__DISK_TOTAL__';
+      const diskPct = '__DISK_PCT__';
+      let footerText = any
+        ? (isEnabled('webui') && !window.isSecureContext && window.top !== window
+            ? 'Wähle einen Tab aus. WebUI öffnet extern (HTTP).' 
+            : 'Wähle einen Tab aus, um den Service zu laden.')
+        : 'Keine Ingress-Services aktiviert.';
+      if (diskUsed && diskTotal && diskPct) {
+        footerText += ' · Speicher: ' + diskUsed + ' / ' + diskTotal + ' (' + diskPct + ')';
+      }
+      document.getElementById('footer').textContent = footerText;
+      document.getElementById('noServices').classList.toggle('active', !any);
+      if (!any) {
+        document.getElementById('contentHost').style.display = 'none';
+      }
+      // CA cert download only in lan_https mode
+      document.getElementById('btnCert').classList.toggle('hidden', ACCESS_MODE !== 'lan_https');
     }
 
-    // Only show the HTTPS warning when accessed directly (outside the HA Ingress iframe).
-    document.getElementById('webuiWarning').classList.toggle('visible',
-      mode === 'webui' && !inIframe && !window.isSecureContext);
-  };
+    function setMode(mode) {
+      if (!isEnabled(mode)) return;
 
-  const btnCert = document.getElementById('btnCert');
-  if (ACCESS_MODE !== 'lan_https') {
-    btnCert.style.display = 'none';
-  }
+      if (mode === 'webui' && !window.isSecureContext && window.top !== window) {
+        document.getElementById('webuiWarning').classList.add('active');
+      } else {
+        document.getElementById('webuiWarning').classList.remove('active');
+      }
 
-  const statusSecure = document.getElementById('statusSecure');
-  try {
-    if (window.isSecureContext) {
-      statusSecure.textContent = 'Secure';
-      statusSecure.classList.add('ok');
-    } else {
-      statusSecure.textContent = 'Not secure';
-      statusSecure.classList.add('warn');
-    }
-  } catch(e) {
-    statusSecure.textContent = 'Unknown';
-    statusSecure.classList.add('warn');
-  }
-
-  const statusGateway = document.getElementById('statusGateway');
-  function pollGateway() {
-    fetch('./api/health', { cache: 'no-store' })
-      .then(r => r.json())
-      .then(data => {
-        if (data && data.ok) {
-          statusGateway.textContent = 'Gateway OK';
-          statusGateway.className = 'status-badge ok';
-        } else {
-          throw new Error('not ok');
+      for (const m of Object.keys(modes)) {
+        const cfg = modes[m];
+        const active = m === mode;
+        document.getElementById(cfg.btn).classList.toggle('active', active);
+        const frame = document.getElementById(cfg.frame);
+        frame.classList.toggle('active', active);
+        if (active && !loaded[m]) {
+          if (m === 'webui' && !window.isSecureContext && window.top !== window) {
+            // HTTP ingress: open WebUI externally instead of iframe
+            window.open(cfg.external, '_blank');
+          } else {
+            frame.src = cfg.src;
+          }
+          loaded[m] = true;
         }
-      })
-      .catch(() => {
-        statusGateway.textContent = 'Gateway down';
-        statusGateway.className = 'status-badge err';
-      });
-  }
-  pollGateway();
-  setInterval(pollGateway, 15000);
+      }
+      current = mode;
+    }
 
-  updateVisibility();
-})();
-</script>
+    for (const mode of Object.keys(modes)) {
+      document.getElementById(modes[mode].btn).addEventListener('click', () => setMode(mode));
+    }
+
+    const statusSecure = document.getElementById('statusSecure');
+    try {
+      statusSecure.textContent = window.isSecureContext ? 'Secure Context' : 'HTTP / Unsicher';
+      statusSecure.className = window.isSecureContext ? '' : 'warn';
+    } catch(e) {
+      statusSecure.textContent = 'Unbekannt';
+    }
+
+    const statusGateway = document.getElementById('statusGateway');
+    function pollGateway() {
+      fetch('./api/health', { cache: 'no-store' })
+        .then(r => r.json())
+        .then(data => {
+          if (data && data.ok) {
+            statusGateway.textContent = 'Gateway: online';
+            statusGateway.className = 'chip ok';
+          } else {
+            throw new Error('not ok');
+          }
+        })
+        .catch(() => {
+          statusGateway.textContent = 'Gateway: offline';
+          statusGateway.className = 'chip err';
+        });
+    }
+    pollGateway();
+    setInterval(pollGateway, 15000);
+
+    const statusIngress = document.getElementById('statusIngress');
+    statusIngress.textContent = 'Ingress: verbunden';
+    statusIngress.className = 'chip ok';
+
+    updateVisibility();
+    // Load first enabled mode
+    for (const mode of ['webui', 'terminal', 'tui', 'docs']) {
+      if (isEnabled(mode)) { setMode(mode); break; }
+    }
+  })();
+  </script>
 </body>
 </html>

@@ -1,3 +1,10 @@
+## [0.7.9.24] - 2026-08-23
+
+### Changed
+- **Landing Page Redesign**: Home Assistant Material Design 3 Stil mit Cards, Chips und Kachel-Navigation.
+- **Sicherheit**: `__GATEWAY_TOKEN__` wird in `render_nginx.py` mit `html.escape()` escaped.
+- **Features wiederhergestellt**: CA-Cert-Download (nur `lan_https`) und Disk-Usage-Anzeige im Footer.
+
 ## [0.7.9.23] - 2026-08-23
 
 ### Fixed
@@ -6,143 +13,26 @@
 ## [0.7.9.22] - 2026-08-23
 
 ### Fixed
-- **Ingress Gateway health sensor was misleading.** `/api/health` returned a static nginx-only 200 OK, so the titlebar badge showed "Gateway OK" even when the OpenClaw Gateway process was down. The location now proxies to the actual gateway `/health` endpoint (`{"ok":true,"status":"live"}`) and the landing, TUI, and docs pages parse the JSON response and check `data.ok`.
-- **TUI/docs health status wording updated** from "reachable (nginx health)" to "reachable (gateway live)" to reflect the real check.
+- **Ingress Gateway Health Sensor**: `/api/health` now proxies to the actual OpenClaw Gateway `/health` endpoint instead of returning a static nginx 200 OK.
+- landing, TUI and docs pages parse JSON response and check `data.ok`.
 
 ## [0.7.9.21] - 2026-08-23
 
 ### Fixed
-- **Codex ACPX wrapper failed to write auth.json when using Ollama fallback.** `codex-acp-wrapper.mjs` resolved provider environment (`OPENAI_API_KEY` placeholder + Ollama base URL) **after** deciding whether to write `codex-home/auth.json`. Without a real `OPENAI_API_KEY` in the environment, the wrapper left the auth file missing and `codex-acp` exited with `Authentication required`. The wrapper now resolves `resolveProviderEnv()` first and uses the resolved environment for both the auth-file decision and the child process.
-- **Unnecessary auth.json rewrites** in Codex wrapper: the existing-key comparison now also checks whether the resolved key actually changed.
+- **Codex ACP Wrapper auth race**: `resolveProviderEnv()` is now called before checking/writing `auth.json`, ensuring the Ollama fallback key is correctly visible to the wrapper.
 
 ## [0.7.9.20] - 2026-08-23
 
 ### Fixed
-- **Plugin API compatibility check failed on OpenClaw patch releases.** `run.sh` exported `OPENCLAW_VERSION` as the human-readable label from `openclaw --version` (e.g. `OpenClaw 2026.7.1-2 (0790d9f)`). The plugin loader expects a plain semver string, so ACPX, Codex, Lobster and memory-lancedb plugins were skipped with `plugin requires plugin API >=2026.7.1`. The value is now normalized to `2026.7.1-2` before export.
+- **Plugin API version compatibility**: `run.sh` now exports a plain semver string for `OPENCLAW_VERSION` so the plugin API compatibility check (`>=2026.7.1`) passes and ACPX loads.
 
-## [0.7.9.19] - 2026-08-23
-
-### Fixed
-- **ACPX_ENABLED jq selector was unquoted** in 
-un.sh, causing jq to interpret .acpx_enabled // true as a filename and fail with Is a directory. The selector is now correctly quoted as .acpx_enabled // true.
-
-## [0.7.9.18] - 2026-08-23
+## [0.7.9.19] - 2026-08-13
 
 ### Fixed
-- **LF line endings** for 
-un.sh, oc_acpx_helper.py, and all ACPX wrappers. Files written via PowerShell ended up with CRLF on Windows, which made the container interpreter read the shebang as ash\\r and refuse to launch the scripts.
-- **.gitattributes** added so future edits on Windows keep LF for shell, Python and JS source files.
+- Quote ACPX_ENABLED jq selector in run.sh.
 
-## [0.7.9.17] - 2026-08-23
+## [0.7.9.18] - 2026-08-13
 
-### Added
-- **ollama_base_url add-on option** (default http://localhost:11434). The ACPX harness wrappers (claude / codex / opencode) now route their underlying CLI through this URL when no real ANTHROPIC_API_KEY / OPENAI_API_KEY is configured. Set it to your remote Ollama instance (e.g. http://192.168.178.34:11434) to run coding agents against an external Ollama server.
+### Fixed
+- Line-ending normalization in `run.sh` so HA picks up the file correctly.
 
-### Changed
-- **ACPX harness wrappers now resolve provider environment centrally** via the new cpx/oc_provider_env.mjs helper. When no API key is set, the wrappers point ANTHROPIC_BASE_URL / OPENAI_BASE_URL / OLLAMA_HOST at OLLAMA_BASE_URL and use ollama as a placeholder token. When a real API key is set, the wrapper leaves the provider config untouched and the agent talks to the upstream API directly.
-
-## [0.7.9.16] - 2026-08-23
-
-### Added
-- **ACPX infrastructure restored** (from v0.7.9.11): wrapper launchers for claude, codex, opencode and the managed npm project with @openclaw/acpx.
-
-### Changed
-- **oc_acpx_helper.py no longer mutates gents.list.** Existing user-configured coding agents (with 
-untime.acp.agent + 
-untime.acp.backend) are preserved as-is.
-- Only the top-level cp section (nabled, ackend, llowedAgents) is auto-completed when missing. No agent or harness overrides are written.
-
-## [0.7.9.15] - 2026-08-23
-
-### Notes
-- **Rebuild trigger only.** Identical to v0.7.9.10; version bumped because local installations were ahead of the store after a repository rollback. This lets Home Assistant offer a normal update path back to the stable v0.7.9.10 codebase.
-
-## [0.7.8.0] - 2026-07-14
-
-### Upgraded
-- **OpenClaw 2026.6.11 → 2026.7.1** — siehe https://github.com/openclaw/openclaw/releases/tag/v2026.7.1
-- Node-llama-cpp bleibt bei 3.19.0 (keine Änderung)
-
-### Notes
-- Add-on-Version synchronisiert: `0.7.8.0` (config.yaml, repository.yaml, Dockerfile)
-
-## [0.7.7.4] - 2026-06-26
-- **REMOVE:** Automatische `browser` und `memory-core` Konfiguration aus `oc_config_helper.py` entfernt — Nutzer tragen beides manuell in `openclaw.json` ein
-
-## [0.7.7.3] - 2026-06-26
-- **FIX:** `browser.actionTimeoutMs` → `browser.timeoutMs` in `oc_config_helper.py` (OpenClaw 2026.6.8 Schema)
-- **FIX:** Automatisch generierter `memory-core.config.dreaming.enabled` Eintrag wird entfernt, statt ihn neu zu schreiben — verhindert Gateway-Startup-Fehler
-- **REMOVE:** `memory-core` wird nicht mehr automatisch in `openclaw.json` eingetragen; Nutzer konfigurieren es manuell
-
-## [0.7.7.2] - 2026-06-26
-- **FIX:** Build-Dependencies (`build-essential`, `cmake`, `python3-dev`, `-dev` libs) bleiben im Image (kein Purge mehr) für Runtime-native-Builds
-- **FIX:** `node-llama-cpp` wird während des Docker-Builds vollständig kompiliert (statt zur Laufzeit), Binary liegt im Image
-- **FIX:** Build-Parallelität für `node-llama-cpp` auf 2 Threads begrenzt (`NLC_BUILD_PARALLEL=2`) — reduziert CPU-Spitzenlast auf RPi5
-- **REMOVE:** Obsolete `AUDIT-REPORT-v0.7.7.*.md` Dateien aus dem Repository entfernt
-
-## [0.7.7.1] - 2026-06-17
-- **FIX:** Builder-Stage entfernt (toter Code seit v0.7.5.1, nie verdrahtet)
-- **FIX:** build-essential nach npm install gepurged (~200MB Image-Ersparnis)
-- **FIX:** PYTHONPATH trailing colon entfernt (Security)
-- **FIX:** NODE_OPTIONS --dns-result-order Dedup
-- **FIX:** D-Bus Socket-Wait von 5s auf 10s erhöht (langsame SD-Karten)
-- **FIX:** controlui_disable_device_auth Default false→true (konsistent mit DOCS.md)
-- **FIX:** ensure_browser_config() +localLaunchTimeoutMs +localCdpReadyTimeoutMs (ARM64)
-- **FIX:** repository.yaml Version synchronisiert
-- **IMPLEMENTED:** mdns_mode/host_name/service_port/interface_name in run.sh (Audit R3)
-- **IMPLEMENTED:** gateway_log_to_console/log_level, trace_log_to_console in run.sh (Audit R4)
-- **IMPLEMENTED:** runtime_apt_packages in run.sh (Audit R5)
-- **IMPLEMENTED:** custom_init_script in run.sh (Audit R6)
-
-## [0.7.7.0] - 2026-06-16
-- **UPGRADE:** OpenClaw 2026.6.1 → 2026.6.8 (Security-Härtung, Telegram Rich-Text, Memory-Fixes, GLM-5.2, Haiku 4.5)
-- **FIX:** Go-PATH-Konflikt — golang-go (apt 1.19.8) wird nach Go 1.24.1 Binary gepurged
-- **FIX:** D-Bus + Avahi Startup in run.sh — dbus-daemon wird vor Gateway gestartet, mDNS funktioniert jetzt
-- **ADD:** CUPS-Stack (cups, cups-client, cups-daemon, cups-filters, cups-ipp-utils, cups-browsed) für AirPrint/IPP-Druck
-- **ADD:** Scanner-Stack (sane-airscan, sane-utils) für eSCL/AirScan/WSD
-- **ADD:** crawl4ai Basis im Image (uv pip install, ohne torch/transformers) — shared Playwright Chromium
-- **ADD:** Browser-Config Bootstrap (headless, noSandbox, extraArgs) via oc_config_helper.py
-- **ADD:** memory-core Dreaming enabled via oc_config_helper.py
-
-## [0.7.6.1] - 2026-06-06
-- **UPGRADE:** OpenClaw 2026.4.26 → 2026.6.1
-- **FIX:** Go 1.19 (golang-go apt) → Go 1.24.1 (official binary)
-- **FIX:** Node.js memory limits (--max-old-space-size=4096)
-- **FIX:** Debian Trixie (testing) → Bookworm (stable) — APT dependency stability
-- **ADD:** Embeddings configuration guide (DOCS.md)
-- **ADD:** Local embeddings via node-llama-cpp@3.18.1 bundled in image
-
-## [0.7.6.0] - 2026-04-24
-- **UPGRADE:** OpenClaw 2026.4.21 → 2026.4.22 (fixes compaction/streaming issues)
-- **FIX:** D-Bus "Scorched Earth" start sequence (killall, clean dirs, fresh socket)
-- **FIX:** Skills sync now uses COPY instead of symlink (Jiti loader compatibility)
-- **ADD:** ENV OPENCLAW_CHILD_OOM_SCORE_ADJ=0 (OOM shim disabled for Trixie stability)
-
-## [0.7.5.2] - 2026-04-23
-- **FIX:** GATEWAY_PORT vor TERMINAL_PORT-Validierung verschoben (Crash "unbound variable")
-- **FIX:** MDNS_SERVICE_PORT jq-Interpolation durch bash-Default ersetzt (fragil → robust)
-- **FIX:** LAN_IP doppelt definiert → aufgeteilt in CERT_LAN_IP (TLS) und MDNS_LAN_IP (mDNS)
-- **FIX:** D-Bus Config XML DOCTYPE schließendes `>` hinzugefügt (Avahi-Mode kaputt)
-- **FIX:** Dockerfile Paket `dbus-daemon` → `dbus` (Debian Trixie)
-- **FIX:** build.yaml gelöscht (obsolet für HA lokale Addons)
-- **ADD:** trace_log_to_console in config.yaml options/schema aufgenommen
-- **ADD:** gateway_log_level Option (off|info|debug) mit LOG_LEVEL-Mapping
-- **ADD:** avahi-Option in allen 6 Übersetzungsdateien
-- **ADD:** mdns_host_name Default "openclaw-ha-addon" statt leer (kryptischer Container-Name)
-
-## [0.7.5.1] - 2026-04-19
-- **FIX:** Gateway-Bonjour/mDNS abgeschaltet — OPENCLAW_DISABLE_BONJOUR=1 immer setzen und discovery.mdns.mode=off schreiben
-- **FIX:** D-Bus system bus wird vor Avahi gestartet
-- **FIX:** TLS-SANs um mDNS-Hostname erweitert
-- **FIX:** allowedOrigins um mDNS-Hostname erweitert
-- **FIX:** mDNS advertised korrekten GATEWAY_PORT
-- **FIX:** hostname und /etc/hostname-Override entfernt
-- **UPGRADE:** OpenClaw 2026.4.14 → 2026.4.15
-
-## [0.7.5] - 2026-04-17
-- **CRITICAL FIX:** jq-Falsy-Falle – Alle `// true`/`// false` durch Null-Checks ersetzt
-- **FIX:** CONTROLUI_DISABLE_DEVICE_AUTH=true im lan_https-Case entfernt
-- **FIX:** controlui_disable_device_auth Default auf false
-- **FIX:** Dockerfile aufgeräumt
-- **FIX:** ensure-plugins in oc_config_helper.py sichert plugins.entries.ollama
-- **UPGRADE:** OpenClaw 2026.4.14 → 2026.4.15
