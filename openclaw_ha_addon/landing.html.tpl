@@ -45,8 +45,7 @@
     .chip.warn{background:rgba(245,158,11,0.12);border-color:rgba(245,158,11,0.22);color:#fbbf24}
     .chip.err{background:rgba(239,68,68,0.15);border-color:rgba(239,68,68,0.25);color:#fca5a5}
     .chip.accent{background:var(--ha-accent-soft);border-color:rgba(11,150,194,0.30);color:var(--ha-accent)}
-    .banner{display:none;padding:12px 16px;border-radius:var(--ha-radius-sm);margin:0 12px 10px;font-size:13px;line-height:1.5;background:rgba(245,158,11,0.10);border:1px solid rgba(245,158,11,0.25);color:#fbbf24}
-    .banner.visible{display:block}
+
     @media (max-width: 720px){
       .titlebar{flex-wrap:wrap;height:auto;gap:8px}
       .titlebar .buttons{order:3;width:100%;margin:4px 0 0 0;justify-content:flex-start}
@@ -73,10 +72,6 @@
     <span class="chip" id="statusGateway">Gateway: …</span>
     <span class="chip" id="statusSecure">Context: …</span>
   </div>
-</div>
-
-<div id="webuiWarning" class="banner">
-  ⚠️ OpenClaw WebUI erfordert HTTPS/secure context. Klicke auf <b>WebUI ↗</b>, um es in einem neuen Tab zu öffnen.
 </div>
 
 <div class="main">
@@ -170,9 +165,6 @@
       frames[current].src = src;
       loaded[current] = true;
     }
-
-    document.getElementById('webuiWarning').classList.toggle('visible',
-      mode === 'webui' && inIframe && !window.isSecureContext);
   };
 
   const btnCert = document.getElementById('btnCert');
