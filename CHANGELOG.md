@@ -1,5 +1,10 @@
 # Changelog
 
+## [0.7.9.20] - 2026-08-23
+
+### Fixed
+- **ACPX/Codex harnesses failed to load on OpenClaw 2026.7.1-2.** `run.sh` now strips the `OpenClaw ` prefix and parenthesized build suffix from `OPENCLAW_VERSION` so the plugin API compatibility check receives a valid semver string.
+
 ## [0.7.9.4] - 2026-08-13
 
 ### Added

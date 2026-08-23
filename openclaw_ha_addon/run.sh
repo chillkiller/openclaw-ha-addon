@@ -753,7 +753,12 @@ export SHOW_WEBUI="$ENABLE_WEBUI"
 export SHOW_TERMINAL="$ENABLE_TERMINAL"
 export SHOW_TUI="$ENABLE_TUI"
 export SHOW_DOCS="$ENABLE_DOCS"
-export OPENCLAW_VERSION="$(openclaw --version 2>/dev/null | head -1 || echo 'unknown')"
+# OPENCLAW_VERSION is used by OpenClaw's plugin API compatibility check.
+# `openclaw --version` prints a human-readable label like:
+#   "OpenClaw 2026.7.1-2 (0790d9f)"
+# The plugin loader expects a plain semver string, so strip the prefix
+# and the parenthesized build/suffix before exporting.
+export OPENCLAW_VERSION="$(openclaw --version 2>/dev/null | head -1 | sed -n 's/^OpenClaw \([0-9][0-9.]*\(-[0-9A-Za-z.]*\)\{0,1\}\).*$/\1/p' || echo 'unknown')"
 
 # -----------------------------------------------------------------------------
 # Copy static Ingress assets (TUI, Docs, icon) into nginx web root

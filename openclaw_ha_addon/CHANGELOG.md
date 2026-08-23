@@ -1,12 +1,19 @@
+## [0.7.9.20] - 2026-08-23
+
+### Fixed
+- **Plugin API compatibility check failed on OpenClaw patch releases.** `run.sh` exported `OPENCLAW_VERSION` as the human-readable label from `openclaw --version` (e.g. `OpenClaw 2026.7.1-2 (0790d9f)`). The plugin loader expects a plain semver string, so ACPX, Codex, Lobster and memory-lancedb plugins were skipped with `plugin requires plugin API >=2026.7.1`. The value is now normalized to `2026.7.1-2` before export.
+
 ## [0.7.9.19] - 2026-08-23
 
 ### Fixed
-- **ACPX_ENABLED jq selector was unquoted** in un.sh, causing jq to interpret .acpx_enabled // true as a filename and fail with Is a directory. The selector is now correctly quoted as .acpx_enabled // true.
+- **ACPX_ENABLED jq selector was unquoted** in 
+un.sh, causing jq to interpret .acpx_enabled // true as a filename and fail with Is a directory. The selector is now correctly quoted as .acpx_enabled // true.
 
 ## [0.7.9.18] - 2026-08-23
 
 ### Fixed
-- **LF line endings** for un.sh, oc_acpx_helper.py, and all ACPX wrappers. Files written via PowerShell ended up with CRLF on Windows, which made the container interpreter read the shebang as ash\\r and refuse to launch the scripts.
+- **LF line endings** for 
+un.sh, oc_acpx_helper.py, and all ACPX wrappers. Files written via PowerShell ended up with CRLF on Windows, which made the container interpreter read the shebang as ash\\r and refuse to launch the scripts.
 - **.gitattributes** added so future edits on Windows keep LF for shell, Python and JS source files.
 
 ## [0.7.9.17] - 2026-08-23
@@ -23,7 +30,9 @@
 - **ACPX infrastructure restored** (from v0.7.9.11): wrapper launchers for claude, codex, opencode and the managed npm project with @openclaw/acpx.
 
 ### Changed
-- **oc_acpx_helper.py no longer mutates gents.list.** Existing user-configured coding agents (with untime.acp.agent + untime.acp.backend) are preserved as-is.
+- **oc_acpx_helper.py no longer mutates gents.list.** Existing user-configured coding agents (with 
+untime.acp.agent + 
+untime.acp.backend) are preserved as-is.
 - Only the top-level cp section (nabled, ackend, llowedAgents) is auto-completed when missing. No agent or harness overrides are written.
 
 ## [0.7.9.15] - 2026-08-23
