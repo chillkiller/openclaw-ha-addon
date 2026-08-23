@@ -2,7 +2,7 @@
 
 **Auditor:** coding-review subagent  
 **Date:** 2026-08-23  
-**Files Reviewed:** landing.html.tpl, nginx.conf.tpl, tui/index.html, docs/index.html, render_nginx.py, run.sh (ingress/TUI/docs/env sections), config.yaml (ingress + enable_* options)  
+**Files Reviewed:** `landing.html.tpl`, `nginx.conf.tpl`, `tui/index.html`, `docs/index.html`, `render_nginx.py`, `run.sh` (Ingress/TUI/docs/env sections), `config.yaml` (ingress_port + enable_* options)  
 **Previous Audit:** `AUDIT-ingress-refactor.md` (2026-08-12)
 
 ---
@@ -53,7 +53,7 @@ Content-Security-Policy: "default-src 'self'; base-uri 'none'; object-src 'none'
 
 ### Token Handling
 - ✅ `GATEWAY_TOKEN = '***'` hardcoded dummy in landing.html.tpl template — real token substituted at render time
-- ✅ Token in template uses single-quoted JavaScript string; `encodeURIComponent()` used when constructing URL
+- ✅ Token in template uses single-quoted JavaScript string; `html.escape()` used when constructing URL
 
 ### Network / Proxy
 - ✅ `NO_PROXY` defaults set for all private address ranges when `http_proxy` is configured
