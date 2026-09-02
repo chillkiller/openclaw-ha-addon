@@ -1,3 +1,14 @@
+## [0.7.9.27] - 2026-09-02
+
+### Changed
+- **OpenClaw**: Update to `2026.8.2`.
+- **Node.js**: Update from NodeSource `node_22.x` to `node_24.x`.
+- **mcporter**: Add global install `mcporter@0.12.3` for MCP server auto-configuration.
+- **node-llama-cpp**: Keep at `3.20.0` as requested.
+
+### Notes
+- This release follows the upstream 2026.8.x line. The 2026.8.x OpenClaw release migrates sessions/transcripts to SQLite; a full `/config` backup is required before first start after update.
+
 ## [0.7.9.26] - 2026-08-23
 
 ### Changed
