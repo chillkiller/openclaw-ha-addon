@@ -205,16 +205,37 @@ RUN uv pip install --system --break-system-packages crawl4ai \
 
 # =============================================================================
 # Install Homebrew (Linuxbrew)
+# Robust install: explicit bash execution, verified sudo/su fallback, and
+# required dependencies for the official installer on minimal Debian images.
 # =============================================================================
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    file \
+    ruby \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN useradd -m -s /bin/bash linuxbrew \
-    && echo "linuxbrew ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers \
-    && curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh -o /tmp/install_homebrew.sh \
+    && echo "linuxbrew ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/linuxbrew \
+    && chmod 0440 /etc/sudoers.d/linuxbrew \
+    && mkdir -p /home/linuxbrew/.linuxbrew \
+    && chown -R linuxbrew:linuxbrew /home/linuxbrew
+
+RUN curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh -o /tmp/install_homebrew.sh \
     && chmod +x /tmp/install_homebrew.sh \
-    && sudo -u linuxbrew -i /bin/bash -c "NONINTERACTIVE=1 /tmp/install_homebrew.sh 2>&1 | tee /tmp/homebrew_install.log" \
-    && sudo -u linuxbrew -i /bin/bash -c 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)" && brew --version' \
-    && echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /home/linuxbrew/.bashrc \
+    && if command -v sudo >/dev/null 2>&1; then \
+         sudo -u linuxbrew NONINTERACTIVE=1 bash /tmp/install_homebrew.sh 2>&1 | tee /tmp/homebrew_install.log; \
+       else \
+         su - linuxbrew -c "NONINTERACTIVE=1 bash /tmp/install_homebrew.sh" 2>&1 | tee /tmp/homebrew_install.log; \
+       fi \
     && cat /tmp/homebrew_install.log \
     && rm -f /tmp/install_homebrew.sh /tmp/homebrew_install.log
+
+RUN if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then \
+        su - linuxbrew -c 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)" && brew --version'; \
+    else \
+        echo "ERROR: Homebrew brew binary not found at /home/linuxbrew/.linuxbrew/bin/brew" && exit 1; \
+    fi
+
+RUN echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /home/linuxbrew/.bashrc
 
 ENV PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}"
 ENV HOMEBREW_BREW_FILE="/home/linuxbrew/.linuxbrew/Homebrew"
