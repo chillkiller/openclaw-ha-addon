@@ -48,3 +48,4 @@ venv.bak/
 memory/
 AUDIT_REPORT_*.md
 *.log
+*.md
