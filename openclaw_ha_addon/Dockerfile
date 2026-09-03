@@ -320,8 +320,9 @@ COPY loading.html /openclaw_ha_addon/loading.html
 COPY icon.png /openclaw_ha_addon/icon.png
 COPY logo.png /openclaw_ha_addon/logo.png
 
-RUN chmod +x /run.sh /oc_config_helper.py /oc_acpx_helper.py /render_nginx.py /usr/local/bin/oc-cleanup /usr/local/lib/oom-shim.cjs \
-    && mkdir -p /run/nginx
+RUN chmod +x /run.sh /oc_config_helper.py /oc_acpx_helper.py /render_nginx.py \
+    /usr/local/bin/oc-cleanup /usr/local/lib/oom-shim.cjs /usr/local/lib/openclaw-proxy-shim.cjs \
+    && mkdir -p /run/nginx /openclaw_ha_addon
 
 RUN mkdir -p /config/.local/lib/python3.11/site-packages
 ENV PYTHONPATH=/config/.local/lib/python3.11/site-packages

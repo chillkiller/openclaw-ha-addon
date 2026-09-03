@@ -1,0 +1,12 @@
+build_from:
+  amd64: "ghcr.io/home-assistant/amd64-base-debian:bookworm"
+  aarch64: "ghcr.io/home-assistant/aarch64-base-debian:bookworm"
+codenotary:
+  signer: notary@home-assistant.io
+  base_image: notary@home-assistant.io
+args:
+  # Fixierte Toolchain-Versionen für reproduzierbare Builds.
+  # Werden in der Dockerfile als ARG referenziert.
+  GO_VERSION: "1.24.1"
+  NODE_LLAMA_CPP_VERSION: "3.20.0"
+  MCPORTER_VERSION: "0.12.3"
