@@ -1,7 +1,7 @@
 # OpenClaw Home Assistant Addon v0.7.9.19 Configuration
 # FIX: Inject HA Ingress base path into ControlUI HTML for Nabu Casa WebSocket support
 name: OpenClaw Assistant
-version: "0.7.9.30"
+version: "0.7.10.0"
 slug: openclaw_ha_addon
 description: OpenClaw Home Assistant Addon (Bookworm Full-Stack)
 url: https://github.com/chillkiller/openclaw-ha-addon
@@ -65,24 +65,21 @@ options:
   gateway_mode: local
   gateway_remote_url: ""
 
-  # Gateway network bind mode:
-  # loopback: 127.0.0.1 only (most secure, Ingress/terminal only)
-  # lan: all interfaces (LAN accessible)
-  # tailnet: Tailscale IP only (remote via Tailscale)
-  gateway_bind_mode: loopback
+  # Network mode — single source of truth for gateway.bind/auth/tls/tailscale
+  # ingress_only: loopback + token auth (HA Ingress + terminal only)
+  # lan_http: LAN HTTP without TLS on gateway_port
+  # lan_https: LAN HTTPS with OpenClaw-native auto-generated TLS on gateway_port
+  # tailnet_serve: Tailscale serve HTTPS
+  # tailnet_funnel: Tailscale funnel HTTPS (password auth, public reachable)
+  # reverse_proxy: loopback + trusted-proxy for external reverse proxy
+  network_mode: ingress_only
   gateway_port: 18789
 
-  # Access mode preset — simplifies secure access configuration
-  # custom: use individual settings above (backward compatible)
-  # local_only: loopback + token auth (Ingress/terminal only)
-  # lan_https: Built-in HTTPS proxy for LAN (recommended for phones/tablets)
-  # lan_reverse_proxy: LAN bind + trusted-proxy for external reverse proxy
-  # tailnet_https: Tailscale interface bind + token auth
-  access_mode: custom
-
-  # Gateway authentication mode: token (default) or trusted-proxy
-  gateway_auth_mode: token
+  # Optional: only used when network_mode == reverse_proxy
+  # Comma-separated list of trusted proxy IPs/CIDRs
   gateway_trusted_proxies: ""
+
+  # Optional: additional allowed origins for ControlUI (rarely needed)
   gateway_additional_allowed_origins: ""
 
   # Disable per-device Control UI auth ceremony (avoids pairing error 1008 on LAN)
@@ -99,17 +96,11 @@ options:
 
   # mDNS/Bonjour configuration for LAN discovery
   # off: no mDNS advertisement
-  # minimal: advertise gateway service via internal Gateway mode (default)
-  # full: verbose mDNS with all metadata via internal Gateway mode
-  # avahi: use Avahi daemon for OS-level mDNS (no Gateway mode)
+  # minimal: OpenClaw bundled bonjour plugin, core TXT keys only (default)
+  # full: OpenClaw bundled bonjour plugin, verbose TXT metadata
   mdns_mode: minimal
-  # Hostname to advertise (default: openclaw-ha-addon)
-  mdns_host_name: "openclaw-ha-addon"
-  # Service port to advertise in mDNS (default: gateway_port)
-  # IMPORTANT: In lan_https mode, this should match the public HTTPS port
-  mdns_service_port: 18789
-  # Network interface for mDNS (empty = auto-detect)
-  mdns_interface_name: ""
+  # Hostname to advertise (without .local; default: openclaw)
+  mdns_host_name: "openclaw"
 
   # Gateway log output: mirror gateway stdout/stderr to HA add-on log window
   # When false (default), gateway logs go to /config/clawd/logs/gateway_startup.log only
@@ -182,20 +173,16 @@ schema:
   clean_session_locks_on_exit: bool?
   gateway_mode: list(local|remote)?
   gateway_remote_url: str?
-  gateway_bind_mode: list(loopback|lan|tailnet)?
+  network_mode: list(ingress_only|lan_http|lan_https|tailnet_serve|tailnet_funnel|reverse_proxy)?
   gateway_port: int(1,65535)?
-  access_mode: list(custom|local_only|lan_https|lan_reverse_proxy|tailnet_https)?
-  gateway_auth_mode: list(token|trusted-proxy)?
   gateway_trusted_proxies: str?
   gateway_additional_allowed_origins: str?
   controlui_disable_device_auth: bool?
   enable_openai_api: bool?
   force_ipv4_dns: bool?
   nginx_log_level: list(full|minimal)?
-  mdns_mode: list(off|minimal|full|avahi)?
+  mdns_mode: list(off|minimal|full)?
   mdns_host_name: str?
-  mdns_service_port: int(1,65535)?
-  mdns_interface_name: str?
   gateway_log_to_console: bool?
   gateway_log_level: list(off|info|debug)?
   trace_log_to_console: bool?

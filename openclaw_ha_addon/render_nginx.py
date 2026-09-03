@@ -3,10 +3,9 @@
 Render nginx.conf and landing page HTML from templates.
 
 Called by run.sh with the following env vars:
-  INGRESS_PORT, CERTS_DIR, GW_PUBLIC_URL, GW_TOKEN, TERMINAL_PORT,
-  ENABLE_HTTPS_PROXY, HTTPS_PROXY_PORT, GATEWAY_INTERNAL_PORT, ACCESS_MODE,
-  SHOW_WEBUI, SHOW_TERMINAL, SHOW_TUI, SHOW_DOCS, OPENCLAW_VERSION,
-  DISK_TOTAL, DISK_USED, DISK_AVAIL, DISK_PCT
+  INGRESS_PORT, CERTS_DIR, GW_PUBLIC_URL, GW_TOKEN, TERMINAL_PORT, TUI_PORT,
+  GATEWAY_PORT, NETWORK_MODE, SHOW_WEBUI, SHOW_TERMINAL, SHOW_TUI, SHOW_DOCS,
+  OPENCLAW_VERSION, DISK_TOTAL, DISK_USED, DISK_AVAIL, DISK_PCT
 """
 
 import os
@@ -24,10 +23,8 @@ def main():
     public_url = os.environ.get('GW_PUBLIC_URL', '')
     terminal_port = os.environ.get('TERMINAL_PORT', '7681')
     tui_port = os.environ.get('TUI_PORT', '7682')
-    enable_https = os.environ.get('ENABLE_HTTPS_PROXY', 'false') == 'true'
-    https_port = os.environ.get('HTTPS_PROXY_PORT', '')
-    internal_gw_port = os.environ.get('GATEWAY_INTERNAL_PORT', '')
-    access_mode = os.environ.get('ACCESS_MODE', 'custom')
+    gateway_port = os.environ.get('GATEWAY_PORT', '18789')
+    network_mode = os.environ.get('NETWORK_MODE', 'ingress_only')
     openclaw_version = os.environ.get('OPENCLAW_VERSION', 'unknown')
 
     # Tab visibility flags (render to JS booleans)
@@ -67,58 +64,19 @@ def main():
     conf = conf.replace('__CERTS_DIR__', certs_dir)
     conf = conf.replace('__TERMINAL_PORT__', terminal_port)
     conf = conf.replace('__TUI_PORT__', tui_port)
-    conf = conf.replace('__GATEWAY_INTERNAL_PORT__', internal_gw_port)
-
-    # Build HTTPS gateway proxy block (only for lan_https mode)
-    https_block = ''
-    if enable_https and https_port and internal_gw_port:
-        https_block = f"""
-    # --- HTTPS Gateway Proxy (lan_https mode) ---
-    server {{
-        listen {https_port} ssl;
-
-        ssl_certificate     {certs_dir}/gateway.crt;
-        ssl_certificate_key {certs_dir}/gateway.key;
-        ssl_protocols       TLSv1.2 TLSv1.3;
-        ssl_ciphers         HIGH:!aNULL:!MD5;
-
-        # Proxy all traffic to the loopback gateway with WebSocket support
-        location / {{
-            proxy_pass http://127.0.0.1:{internal_gw_port};
-            proxy_http_version 1.1;
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection "upgrade";
-            proxy_set_header Host $host;
-            proxy_set_header X-Real-IP $remote_addr;
-            proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto https;
-            proxy_read_timeout 86400s;
-            proxy_send_timeout 86400s;
-            proxy_buffering off;
-        }}
-
-        # Download the local CA certificate (install on phone for trusted access)
-        location = /cert/ca.crt {{
-            alias {certs_dir}/ca.crt;
-            default_type application/x-x509-ca-cert;
-            add_header Content-Disposition 'attachment; filename="openclaw-ca.crt"';
-        }}
-    }}
-"""
-
-    conf = conf.replace('__HTTPS_GATEWAY_BLOCK__', https_block)
+    conf = conf.replace('__GATEWAY_PORT__', gateway_port)
     Path('/etc/nginx/nginx.conf').write_text(conf)
 
     # ── landing page ────────────────────────────────────────────
-    # If lan_https and no explicit public URL, auto-construct one
-    if enable_https and not public_url:
+    # If no explicit public URL is set but lan_https is active, auto-construct one.
+    if not public_url and network_mode == 'lan_https':
         try:
             lan_ip = subprocess.check_output(
                 ['hostname', '-I'], text=True, timeout=2
             ).split()[0]
         except Exception:
             lan_ip = '127.0.0.1'
-        public_url = f'https://{lan_ip}:{https_port}'
+        public_url = f'https://{lan_ip}:{gateway_port}'
         gw_path = '/'
 
     landing = landing_tpl.replace('__OPENCLAW_VERSION__', openclaw_version)
@@ -129,8 +87,8 @@ def main():
     landing = landing.replace('__GATEWAY_TOKEN__', html.escape(token, quote=True))
     landing = landing.replace('__GATEWAY_PUBLIC_URL__', public_url)
     landing = landing.replace('__GW_PUBLIC_URL_PATH__', gw_path)
-    landing = landing.replace('__ACCESS_MODE__', access_mode)
-    landing = landing.replace('__HTTPS_PORT__', https_port if enable_https else '')
+    landing = landing.replace('__NETWORK_MODE__', network_mode)
+    landing = landing.replace('__GATEWAY_PORT__', gateway_port)
     landing = landing.replace('__TUI_PORT__', tui_port)
     landing = landing.replace('__DISK_TOTAL__', disk_total)
     landing = landing.replace('__DISK_USED__', disk_used)

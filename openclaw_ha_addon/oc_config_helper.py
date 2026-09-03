@@ -68,29 +68,47 @@ def deep_merge(target, source):
     return target
 
 
-def apply_gateway_settings(
+VALID_NETWORK_MODES = [
+    "ingress_only",
+    "lan_http",
+    "lan_https",
+    "tailnet_serve",
+    "tailnet_funnel",
+    "reverse_proxy",
+]
+
+
+def apply_network_settings(
+    network_mode: str,
     mode: str,
     remote_url: str,
     bind_mode: str,
     port: int,
+    internal_port: int,
     enable_openai_api: bool,
     auth_mode: str,
     trusted_proxies_csv: str,
+    tls_enabled_str: str,
+    tls_auto_str: str,
+    tailscale_mode: str,
 ):
-    """
-    Apply gateway settings to OpenClaw config.
-    Only overwrites keys that differ — preserves everything else.
-    """
-    if mode not in ["local", "remote"]:
-        print(f"ERROR: Invalid mode '{mode}'. Must be 'local' or 'remote'")
+    """Apply OpenClaw-native network, TLS, auth and Tailscale settings."""
+    if network_mode not in VALID_NETWORK_MODES:
+        print(f"ERROR: Invalid network_mode '{network_mode}'")
         return False
-    if bind_mode not in ["loopback", "lan", "tailnet"]:
+    if mode not in ["local", "remote"]:
+        print(f"ERROR: Invalid gateway mode '{mode}'")
+        return False
+    if bind_mode not in ["loopback", "lan", "tailnet", "auto", "custom"]:
         print(f"ERROR: Invalid bind_mode '{bind_mode}'")
         return False
     if port < 1 or port > 65535:
         print(f"ERROR: Invalid port {port}")
         return False
-    if auth_mode not in ["token", "trusted-proxy"]:
+    if internal_port < 1 or internal_port > 65535:
+        print(f"ERROR: Invalid internal_port {internal_port}")
+        return False
+    if auth_mode not in ["token", "trusted-proxy", "password"]:
         print(f"ERROR: Invalid auth_mode '{auth_mode}'")
         return False
 
@@ -101,13 +119,14 @@ def apply_gateway_settings(
     http = gateway.setdefault("http", {})
     endpoints = http.setdefault("endpoints", {})
     chat = endpoints.setdefault("chatCompletions", {})
+    tls = gateway.setdefault("tls", {})
+    tailscale = gateway.setdefault("tailscale", {})
 
-    trusted_proxy_default = {"userHeader": "x-forwarded-user", "allowLoopback": True}
     changes = []
 
     if gateway.get("mode") != mode:
         gateway["mode"] = mode
-        changes.append(f"mode: {gateway.get('mode')} -> {mode}")
+        changes.append(f"mode -> {mode}")
 
     if remote_cfg.get("url") != remote_url:
         remote_cfg["url"] = remote_url
@@ -115,11 +134,33 @@ def apply_gateway_settings(
 
     if gateway.get("bind") != bind_mode:
         gateway["bind"] = bind_mode
-        changes.append(f"bind: {gateway.get('bind')} -> {bind_mode}")
+        changes.append(f"bind -> {bind_mode}")
 
     if gateway.get("port") != port:
         gateway["port"] = port
-        changes.append(f"port: {gateway.get('port')} -> {port}")
+        changes.append(f"port -> {port}")
+
+    tls_enabled = tls_enabled_str.lower() == "true"
+    tls_auto = tls_auto_str.lower() == "true"
+    desired_tls = {"enabled": tls_enabled}
+    if tls_enabled:
+        desired_tls["autoGenerate"] = tls_auto
+
+    # Preserve explicit operator-provided certPath/keyPath.
+    for keep in ("certPath", "keyPath"):
+        if keep in tls:
+            desired_tls[keep] = tls[keep]
+
+    if tls != desired_tls:
+        gateway["tls"] = desired_tls
+        changes.append(f"tls -> {desired_tls}")
+
+    if tailscale_mode and tailscale.get("mode") != tailscale_mode:
+        tailscale["mode"] = tailscale_mode
+        changes.append(f"tailscale.mode -> {tailscale_mode}")
+    elif not tailscale_mode and "mode" in tailscale:
+        del tailscale["mode"]
+        changes.append("removed tailscale.mode")
 
     if chat.get("enabled") != enable_openai_api:
         chat["enabled"] = enable_openai_api
@@ -129,27 +170,65 @@ def apply_gateway_settings(
         auth["mode"] = auth_mode
         changes.append(f"auth.mode -> {auth_mode}")
 
-    # Only overwrite trustedProxies if the user actually supplied values.
-    # An empty add-on field must NOT wipe manually configured entries in
-    # openclaw.json.
-    raw_proxies = [p.strip() for p in trusted_proxies_csv.split(",") if p.strip()]
-    if trusted_proxies_csv.strip() and gateway.get("trustedProxies") != raw_proxies:
-        gateway["trustedProxies"] = raw_proxies
-        changes.append(f"trustedProxies -> {raw_proxies}")
+    trusted_proxy_default = {"userHeader": "x-forwarded-user", "allowLoopback": True}
+    if auth_mode == "trusted-proxy":
+        raw_proxies = [p.strip() for p in trusted_proxies_csv.split(",") if p.strip()]
+        if not raw_proxies:
+            print("ERROR: auth_mode=trusted-proxy requires non-empty gateway_trusted_proxies")
+            return False
+        if gateway.get("trustedProxies") != raw_proxies:
+            gateway["trustedProxies"] = raw_proxies
+            changes.append(f"trustedProxies -> {raw_proxies}")
+        if auth.get("trustedProxy") != trusted_proxy_default:
+            auth["trustedProxy"] = trusted_proxy_default
+            changes.append("auth.trustedProxy -> default")
+    else:
+        if "trustedProxy" in auth:
+            del auth["trustedProxy"]
+            changes.append("removed auth.trustedProxy")
 
-    if auth_mode == "trusted-proxy" and auth.get("trustedProxy") != trusted_proxy_default:
-        auth["trustedProxy"] = trusted_proxy_default
-        changes.append("auth.trustedProxy: configured default userHeader")
+    # Remove legacy/deprecated keys from earlier add-on versions.
+    for stale in ("access_mode", "gateway_bind_mode", "gateway_auth_mode"):
+        if stale in gateway:
+            del gateway[stale]
+            changes.append(f"removed stale key: {stale}")
 
     if changes:
         if write_config(cfg):
-            print(f"INFO: Updated gateway settings: {', '.join(changes)}")
+            print(f"INFO: Updated network settings: {', '.join(changes)}")
             return True
         print("ERROR: Failed to write config")
         return False
 
-    print(f"INFO: Gateway settings already correct (mode={mode}, bind={bind_mode}, port={port})")
+    print(f"INFO: Network settings already correct (mode={network_mode}, bind={bind_mode}, port={port})")
     return True
+
+
+def apply_gateway_settings(
+    mode: str,
+    remote_url: str,
+    bind_mode: str,
+    port: int,
+    enable_openai_api: bool,
+    auth_mode: str,
+    trusted_proxies_csv: str,
+):
+    """DEPRECATED: use apply_network_settings. Kept for emergency CLI use only."""
+    print("WARN: apply_gateway_settings is deprecated; use apply_network_settings")
+    return apply_network_settings(
+        network_mode="ingress_only",
+        mode=mode,
+        remote_url=remote_url,
+        bind_mode=bind_mode,
+        port=port,
+        internal_port=port,
+        enable_openai_api=enable_openai_api,
+        auth_mode=auth_mode,
+        trusted_proxies_csv=trusted_proxies_csv,
+        tls_enabled_str="false",
+        tls_auto_str="false",
+        tailscale_mode="",
+    )
 
 
 def set_control_ui_origins(
@@ -197,52 +276,37 @@ def set_control_ui_origins(
     return False
 
 
-def set_mdns_settings(
-    mode: str, service_port: int, host_name: str = "", interface_name: str = ""
-):
+def set_mdns_settings(mode: str):
     """
-    Configure mDNS/Bonjour discovery for the gateway.
+    Configure OpenClaw's bundled Bonjour mDNS discovery.
 
-    EXCLUSIVE MODE LOGIC:
-    - off: discovery.mdns.mode='off' (no mDNS)
-    - minimal/full: discovery.mdns.mode set to requested value (Gateway internal mDNS)
-    - avahi: discovery.mdns.mode='off' (Avahi handles mDNS, Gateway disabled)
+    - off: discovery.mdns.mode='off'
+    - minimal/full: discovery.mdns.mode set to requested value
+
+    The advertised service port and hostname are derived by OpenClaw from
+    gateway.port and the OPENCLAW_MDNS_HOSTNAME environment variable set by
+    run.sh.
     """
-    cfg = read_config() or {}
-
-    # Validate mode
-    valid_modes = ["off", "minimal", "full", "avahi"]
+    valid_modes = ["off", "minimal", "full"]
     if mode not in valid_modes:
         print(f"ERROR: Invalid mDNS mode '{mode}'. Must be one of: {', '.join(valid_modes)}")
         return False
 
+    cfg = read_config() or {}
     cfg.setdefault("discovery", {})
 
-    # EXCLUSIVE MODE HANDLING
-    if mode == "avahi":
-        # Avahi mode: Gateway mDNS explicitly OFF to prevent collisions
-        cfg["discovery"]["mdns"] = {"mode": "off"}
+    desired_mdns = {"mode": mode}
+    current_mdns = cfg["discovery"].get("mdns")
+    if current_mdns != desired_mdns:
+        cfg["discovery"]["mdns"] = desired_mdns
         if write_config(cfg):
-            print("INFO: Avahi mode - Gateway mDNS disabled (discovery.mdns.mode=off)")
-        else:
-            print("WARN: Failed to write discovery.mdns.mode to config")
-        return True
-    elif mode == "off":
-        # Off mode: No mDNS at all
-        cfg["discovery"]["mdns"] = {"mode": "off"}
-        if write_config(cfg):
-            print("INFO: mDNS disabled (discovery.mdns.mode=off)")
-        else:
-            print("WARN: Failed to write discovery.mdns.mode to config")
-        return True
-    else:
-        # minimal/full: Gateway internal mDNS mode active
-        cfg["discovery"]["mdns"] = {"mode": mode}
-        if write_config(cfg):
-            print(f"INFO: Gateway mDNS enabled (discovery.mdns.mode={mode})")
-        else:
-            print("WARN: Failed to write discovery.mdns.mode to config")
-        return True
+            print(f"INFO: mDNS mode set to: {mode}")
+            return True
+        print("ERROR: Failed to write mDNS settings")
+        return False
+
+    print(f"INFO: mDNS mode already correct ({mode})")
+    return True
 
 
 def cleanup_stale_config_keys():
@@ -355,13 +419,14 @@ def main():
     if len(sys.argv) < 2:
         print("Usage: oc_config_helper.py <command> [args...]")
         print("Commands:")
-        print("  apply-gateway-settings <mode> <remote_url> <bind> <port> <openai_api> <auth_mode> <trusted_proxies>")
+        print("  apply-network-settings <network_mode> <mode> <remote_url> <bind> <port> <internal_port> <openai_api> <auth_mode> <trusted_proxies> <tls_enabled> <tls_auto> <tailscale_mode>")
+        print("  apply-gateway-settings <mode> <remote_url> <bind> <port> <openai_api> <auth_mode> <trusted_proxies>  (deprecated)")
         print("  set-control-ui-origins <origins_csv> [additional_csv] [disable_device_auth]")
-        print("  set-mdns-settings <mode> <port> [hostname] [interface]")
+        print("  set-mdns-settings <mode> [port] [hostname] [interface]")
         print("  cleanup-stale-config")
         print("  get <key>")
         print("  set <key> <value>")
-        print("  mdns-nginx-snippet <public_port> <internal_port> [hostname]")
+        print("  mdns-nginx-snippet <public_port> <internal_port> [hostname]  (deprecated)")
         print("  ensure-plugins")
         print("  ensure-browser-config")
         print("  ensure-memory-core")
@@ -369,7 +434,27 @@ def main():
 
     cmd = sys.argv[1]
 
-    if cmd == "apply-gateway-settings":
+    if cmd == "apply-network-settings":
+        if len(sys.argv) != 14:
+            print("Usage: oc_config_helper.py apply-network-settings <network_mode> <local|remote> <remote_url> <bind> <port> <internal_port> <enable_openai_api:true|false> <auth_mode> <trusted_proxies_csv> <tls_enabled:true|false> <tls_auto:true|false> <tailscale_mode>")
+            sys.exit(1)
+        success = apply_network_settings(
+            sys.argv[2],   # network_mode
+            sys.argv[3],   # mode
+            sys.argv[4],   # remote_url
+            sys.argv[5],   # bind
+            int(sys.argv[6]),  # port
+            int(sys.argv[7]),  # internal_port
+            sys.argv[8].lower() == "true",  # enable_openai_api
+            sys.argv[9],   # auth_mode
+            sys.argv[10],  # trusted_proxies_csv
+            sys.argv[11],  # tls_enabled
+            sys.argv[12],  # tls_auto
+            sys.argv[13],  # tailscale_mode
+        )
+        sys.exit(0 if success else 1)
+
+    elif cmd == "apply-gateway-settings":
         if len(sys.argv) != 9:
             print("Usage: oc_config_helper.py apply-gateway-settings <local|remote> <remote_url> <loopback|lan|tailnet> <port> <enable_openai_api:true|false> <auth_mode> <trusted_proxies_csv>")
             sys.exit(1)
@@ -415,14 +500,11 @@ def main():
         sys.exit(0 if set_control_ui_origins(origins_csv, additional, disable) else 1)
 
     elif cmd == "set-mdns-settings":
-        if len(sys.argv) not in (4, 5, 6):
-            print("Usage: oc_config_helper.py set-mdns-settings <mode> <port> [hostname] [interface]")
+        if len(sys.argv) < 3:
+            print("Usage: oc_config_helper.py set-mdns-settings <mode> [port] [hostname] [interface]")
             sys.exit(1)
         mode = sys.argv[2]
-        port = int(sys.argv[3])
-        hostname = sys.argv[4] if len(sys.argv) >= 5 else ""
-        interface = sys.argv[5] if len(sys.argv) >= 6 else ""
-        sys.exit(0 if set_mdns_settings(mode, port, hostname, interface) else 1)
+        sys.exit(0 if set_mdns_settings(mode) else 1)
 
     elif cmd == "mdns-nginx-snippet":
         if len(sys.argv) not in (4, 5):

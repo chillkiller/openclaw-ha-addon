@@ -62,74 +62,40 @@ configuration:
     name: Control-UI-Geräte-Pairing deaktivieren (lan_https)
     description: "Wenn EIN (empfohlen), setzt dies gateway.controlUi.dangerouslyDisableDeviceAuth=true, überspringt die Gerätefreigabe und vermeidet Fehler 1008 im LAN-HTTPS-Modus. Für Heim-/vertrauenswürdiges LAN eingeschaltet lassen. Nur AUS schalten, wenn du striktes Geräte-Pairing für jeden neuen Browser/jedes neue Gerät willst."
 
-  gateway_bind_mode:
-    name: Gateway-Bindungsmodus
-    description: Netzwerk-Bindungsmodus - loopback (nur 127.0.0.1, am sichersten), lan (alle Schnittstellen) oder tailnet (nur Tailscale-Schnittstelle). Wird durch Zugriffsmodus-Voreinstellungen überschrieben.
+  network_mode:
+    name: Netzwerkmodus
+    description: "Legt gateway.bind, gateway.auth.mode, gateway.tls und gateway.tailscale.mode in einem Schritt fest."
     options:
-      loopback: "Loopback (nur 127.0.0.1, am sichersten)"
-      lan: "LAN (alle Schnittstellen)"
-      tailnet: "Tailnet (nur Tailscale)"
+      ingress_only: "Nur Ingress (Loopback + Token, nur HA Ingress)"
+      lan_http: "LAN HTTP (ohne TLS auf gateway_port)"
+      lan_https: "LAN HTTPS (OpenClaw-TLS auf gateway_port, empfohlen für Smartphones)"
+      tailnet_serve: "Tailscale Serve (sichere Tailnet-HTTPS-URL)"
+      tailnet_funnel: "Tailscale Funnel (öffentlich erreichbar via Tailscale)"
+      reverse_proxy: "Reverse Proxy (Loopback + Trusted-Proxy für externen Proxy)"
 
   gateway_port:
     name: Gateway-Port
-    description: Portnummer, auf der das OpenClaw-Gateway lauscht (Standard - 18789)
-
-  access_mode:
-    name: Zugriffsmodus
-    description: "Vereinfacht die sichere Zugriffskonfiguration. Überschreibt gateway_bind_mode und gateway_auth_mode wenn nicht auf Benutzerdefiniert gesetzt."
-    options:
-      custom: "Benutzerdefiniert (individuelle Einstellungen)"
-      local_only: "Nur lokal (Loopback + Token, nur Ingress)"
-      lan_https: "LAN HTTPS (eingebauter HTTPS-Proxy — empfohlen für Smartphones)"
-      lan_reverse_proxy: "LAN Reverse-Proxy (externer Proxy mit Trusted-Proxy-Auth)"
-      tailnet_https: "Tailscale HTTPS (Tailscale-Bindung + Token)"
-
-  gateway_auth_mode:
-    name: Gateway-Authentifizierungsmodus
-    description: Gateway-Auth-Modus - token (Standard) oder trusted-proxy (für HTTPS-Reverse-Proxys). Wird überschrieben wenn Zugriffsmodus nicht auf Benutzerdefiniert steht.
-    options:
-      token: "Token (Standard)"
-      trusted-proxy: "Vertrauenswürdiger Proxy (für Reverse-Proxys)"
+    description: Portnummer, auf der das OpenClaw-Gateway lauscht (Standard - 18789). Im LAN- und Tailscale-Modus ist das der extern erreichbare Port.
 
   gateway_trusted_proxies:
     name: Vertrauenswürdige Gateway-Proxys
-    description: Komma-getrennte Liste vertrauenswürdiger Proxy-IPs/CIDRs für den Trusted-Proxy-Modus (Beispiel - 127.0.0.1,192.168.88.0/24).
+    description: Komma-getrennte Liste vertrauenswürdiger Proxy-IPs/CIDRs, nur im Netzwerkmodus "Reverse Proxy" (Beispiel - 127.0.0.1,192.168.88.0/24).
 
-  enable_openai_api:
-    name: OpenAI API aktivieren
-    description: OpenAI-kompatiblen Chat-Completions-Endpunkt aktivieren. Ermöglicht die Verwendung von OpenClaw als Gesprächsagent in der HA-Assist-Pipeline über Extended OpenAI Conversation (HACS) oder jeden OpenAI-kompatiblen Client.
-
-  force_ipv4_dns:
-    name: IPv4-DNS-Reihenfolge erzwingen
-    description: Erzwingt IPv4-vorrangige DNS-Auflösung. Die meisten HAOS-VMs haben keinen IPv6-Ausgang — verursacht web_fetch- und Telegram-Timeouts. Empfohlen EIN (Standard).
-
-  nginx_log_level:
-    name: Nginx Log-Level
-    description: "Ausführlichkeit des Nginx-Zugriffslogs. 'minimal' (Standard) unterdrückt wiederholte HA-Healthcheck- und Polling-Anfragen. 'full' protokolliert alles."
-    options:
-      minimal: "Minimal (HA-Polling-Rauschen unterdrücken)"
-      full: "Vollständig (alle Anfragen protokollieren)"
+  gateway_public_url:
+    name: Öffentliche Gateway-URL
+    description: "Optional: URL für den 'WebUI ↗'-Button im Ingress-Titelbar. Beispiel - https://openclaw.local:18789 oder https://mein-gerät.tailnet.ts.net."
 
   mdns_mode:
     name: mDNS-Modus
-    description: "mDNS/Bonjour-Konfiguration für LAN-Erkennung. 'off' deaktiviert mDNS, 'minimal' bewirbt den Gateway-Dienst (Standard), 'full' bewirbt mit allen Metadaten."
+    description: "mDNS/Bonjour-Konfiguration für LAN-Erkennung via OpenClaws eingebautem bonjour-Plugin. 'off' deaktiviert mDNS, 'minimal' bewirbt den Gateway-Dienst (Standard), 'full' bewirbt mit allen Metadaten."
     options:
       off: "Aus (kein mDNS)"
       minimal: "Minimal (Gateway-Dienst bewerben, Standard)"
       full: "Vollständig (alle Metadaten bewerben)"
-      avahi: "Avahi (OS-level mDNS, Gateway-Modus ausgeschaltet)"
 
   mdns_host_name:
     name: mDNS-Hostname
-    description: Optionaler Hostname für mDNS-Advertisements (z.B. homeassistant.local). Standard ist "openclaw-ha-addon". Wenn leer, wird der Container-Hostname automatisch erkannt.
-
-  mdns_service_port:
-    name: mDNS-Dienst-Port
-    description: Port, der über mDNS für die Erkennung angekündigt wird. Standard ist der Gateway-Port (18789). Sollte im lan_https-Modus dem externen Proxy-Port entsprechen.
-
-  mdns_interface_name:
-    name: mDNS-Netzwerkschnittstelle
-    description: Optionaler Name der Netzwerkschnittstelle für mDNS (z.B. eth0, wlan0). Wenn leer, wird die Schnittstelle automatisch erkannt.
+    description: "Hostname für mDNS-Advertisements (ohne .local; Standard - openclaw). Wird in OPENCLAW_MDNS_HOSTNAME gesetzt und als Container-Hostname verwendet, damit das TLS-Zertifikat den Namen enthält."
 
   gateway_log_to_console:
     name: Gateway-Log in HA-Log anzeigen

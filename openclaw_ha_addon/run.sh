@@ -62,28 +62,24 @@ CLEAN_LOCKS_ON_EXIT=$(jq -r '.clean_session_locks_on_exit // true' "$OPTIONS_FIL
 # Gateway configuration
 GATEWAY_MODE=$(jq -r '.gateway_mode // "local"' "$OPTIONS_FILE")
 GATEWAY_REMOTE_URL=$(jq -r '.gateway_remote_url // empty' "$OPTIONS_FILE")
-GATEWAY_BIND_MODE=$(jq -r '.gateway_bind_mode // "loopback"' "$OPTIONS_FILE")
+NETWORK_MODE=$(jq -r '.network_mode // "ingress_only"' "$OPTIONS_FILE")
 GATEWAY_PORT=$(jq -r '.gateway_port // 18789' "$OPTIONS_FILE")
 ENABLE_OPENAI_API=$(jq -r '.enable_openai_api // false' "$OPTIONS_FILE")
-GATEWAY_AUTH_MODE=$(jq -r '.gateway_auth_mode // "token"' "$OPTIONS_FILE")
 GATEWAY_TRUSTED_PROXIES=$(jq -r '.gateway_trusted_proxies // empty' "$OPTIONS_FILE")
 GATEWAY_ADDITIONAL_ALLOWED_ORIGINS=$(jq -r '.gateway_additional_allowed_origins // empty' "$OPTIONS_FILE")
 CONTROLUI_DISABLE_DEVICE_AUTH=$(jq -r '.controlui_disable_device_auth // true' "$OPTIONS_FILE")
 FORCE_IPV4_DNS=$(jq -r '.force_ipv4_dns // true' "$OPTIONS_FILE")
-ACCESS_MODE=$(jq -r '.access_mode // "custom"' "$OPTIONS_FILE")
 NGINX_LOG_LEVEL=$(jq -r '.nginx_log_level // "minimal"' "$OPTIONS_FILE")
 AUTO_CONFIGURE_MCP=$(jq -r '.auto_configure_mcp // false' "$OPTIONS_FILE")
 GW_ENV_VARS_TYPE=$(jq -r 'if .gateway_env_vars == null then "null" else (.gateway_env_vars | type) end' "$OPTIONS_FILE")
 GW_ENV_VARS_RAW=$(jq -r '.gateway_env_vars // empty' "$OPTIONS_FILE")
 GW_ENV_VARS_JSON=$(jq -c '.gateway_env_vars // []' "$OPTIONS_FILE")
 
-# mDNS configuration (was defined in config.yaml but never read — Audit R3)
+# mDNS configuration (OpenClaw native bonjour plugin)
 MDNS_MODE=$(jq -r '.mdns_mode // "minimal"' "$OPTIONS_FILE")
-MDNS_HOST_NAME=$(jq -r '.mdns_host_name // "openclaw-ha-addon"' "$OPTIONS_FILE")
-MDNS_SERVICE_PORT=$(jq -r '.mdns_service_port // 18789' "$OPTIONS_FILE")
-MDNS_INTERFACE_NAME=$(jq -r '.mdns_interface_name // empty' "$OPTIONS_FILE")
+MDNS_HOST_NAME=$(jq -r '.mdns_host_name // "openclaw"' "$OPTIONS_FILE")
 
-# Gateway logging (was defined in config.yaml but never read — Audit R4)
+# Gateway logging
 GATEWAY_LOG_TO_CONSOLE=$(jq -r '.gateway_log_to_console // false' "$OPTIONS_FILE")
 GATEWAY_LOG_LEVEL=$(jq -r '.gateway_log_level // "info"' "$OPTIONS_FILE")
 TRACE_LOG_TO_CONSOLE=$(jq -r '.trace_log_to_console // false' "$OPTIONS_FILE")
@@ -104,44 +100,103 @@ ACPX_ENABLED=$(jq -r '.acpx_enabled // true' "$OPTIONS_FILE")
 
 export TZ="$TZNAME"
 
-# ------------------------------------------------------------------------------
-# Access mode presets — override individual gateway settings for common scenarios
-# ------------------------------------------------------------------------------
-ENABLE_HTTPS_PROXY=false
+# -----------------------------------------------------------------------------
+# Network mode presets — map add-on UI to OpenClaw-native config
+# -----------------------------------------------------------------------------
+GATEWAY_BIND="loopback"
+GATEWAY_AUTH_MODE="token"
+GATEWAY_TLS_ENABLED="false"
+GATEWAY_TLS_AUTO="false"
+TAILSCALE_MODE=""
 GATEWAY_INTERNAL_PORT="$GATEWAY_PORT"
+ENABLE_HTTPS_PROXY=false
 
-case "$ACCESS_MODE" in
-  local_only)
-    GATEWAY_BIND_MODE="loopback"
+require_trusted_proxies() {
+  if [ -z "$GATEWAY_TRUSTED_PROXIES" ]; then
+    echo "ERROR: network_mode=$NETWORK_MODE requires gateway_trusted_proxies."
+    echo "ERROR: Set it to your reverse proxy's IP/CIDR (e.g. 127.0.0.1,192.168.88.0/24)."
+  fi
+}
+
+case "$NETWORK_MODE" in
+  ingress_only)
+    GATEWAY_BIND="loopback"
     GATEWAY_AUTH_MODE="token"
-    echo "INFO: Access mode: local_only (loopback + token, Ingress/terminal only)"
+    GATEWAY_TLS_ENABLED="false"
+    echo "INFO: Network mode: ingress_only (loopback + token, Ingress/terminal only)"
+    ;;
+  lan_http)
+    GATEWAY_BIND="lan"
+    GATEWAY_AUTH_MODE="token"
+    GATEWAY_TLS_ENABLED="false"
+    echo "INFO: Network mode: lan_http (LAN HTTP on 0.0.0.0:${GATEWAY_PORT})"
     ;;
   lan_https)
-    # Gateway binds loopback on internal port; nginx terminates TLS on the external port.
-    GATEWAY_BIND_MODE="loopback"
+    GATEWAY_BIND="lan"
     GATEWAY_AUTH_MODE="token"
-    ENABLE_HTTPS_PROXY=true
-    GATEWAY_INTERNAL_PORT=$((GATEWAY_PORT + 1))
-    echo "INFO: Access mode: lan_https (built-in HTTPS proxy on 0.0.0.0:${GATEWAY_PORT})"
+    GATEWAY_TLS_ENABLED="true"
+    GATEWAY_TLS_AUTO="true"
+    echo "INFO: Network mode: lan_https (LAN HTTPS on 0.0.0.0:${GATEWAY_PORT})"
     ;;
-  lan_reverse_proxy)
-    GATEWAY_BIND_MODE="lan"
+  tailnet_serve)
+    GATEWAY_BIND="loopback"
+    GATEWAY_AUTH_MODE="token"
+    GATEWAY_TLS_ENABLED="true"
+    GATEWAY_TLS_AUTO="true"
+    TAILSCALE_MODE="serve"
+    echo "INFO: Network mode: tailnet_serve (Tailscale serve HTTPS)"
+    ;;
+  tailnet_funnel)
+    GATEWAY_BIND="loopback"
+    GATEWAY_AUTH_MODE="password"
+    GATEWAY_TLS_ENABLED="true"
+    GATEWAY_TLS_AUTO="true"
+    TAILSCALE_MODE="funnel"
+    echo "INFO: Network mode: tailnet_funnel (Tailscale funnel HTTPS)"
+    ;;
+  reverse_proxy)
+    GATEWAY_BIND="loopback"
     GATEWAY_AUTH_MODE="trusted-proxy"
     if [ -z "$GATEWAY_TRUSTED_PROXIES" ]; then
-      echo "ERROR: access_mode=lan_reverse_proxy requires gateway_trusted_proxies to be set."
+      echo "ERROR: network_mode=reverse_proxy requires gateway_trusted_proxies."
       echo "ERROR: Set it to your reverse proxy's IP/CIDR (e.g. 127.0.0.1,192.168.88.0/24)."
+      exit 1
     fi
-    echo "INFO: Access mode: lan_reverse_proxy (LAN bind + trusted-proxy auth)"
+    echo "INFO: Network mode: reverse_proxy (loopback + trusted-proxy)"
     ;;
-  tailnet_https)
-    GATEWAY_BIND_MODE="tailnet"
+  *)
+    echo "WARN: Unknown network_mode '$NETWORK_MODE', falling back to ingress_only"
+    NETWORK_MODE="ingress_only"
+    GATEWAY_BIND="loopback"
     GATEWAY_AUTH_MODE="token"
-    echo "INFO: Access mode: tailnet_https (Tailscale bind + token auth)"
-    ;;
-  custom|*)
-    echo "INFO: Access mode: custom (using individual gateway_bind_mode/auth_mode settings)"
+    GATEWAY_TLS_ENABLED="false"
     ;;
 esac
+
+export NETWORK_MODE
+export GATEWAY_BIND
+export GATEWAY_AUTH_MODE
+export GATEWAY_TLS_ENABLED
+export GATEWAY_TLS_AUTO
+export TAILSCALE_MODE
+export GATEWAY_INTERNAL_PORT
+
+# Export mDNS hostname to OpenClaw's bundled bonjour plugin
+# Sanitize: strip .local suffix, keep valid DNS labels only
+MDNS_HOSTNAME_CLEAN="$(printf '%s' "$MDNS_HOST_NAME" | sed 's/\.local$//; s/[^a-zA-Z0-9-]//g; s/^-*//; s/-*$//')"
+if [ -n "$MDNS_HOSTNAME_CLEAN" ]; then
+  export OPENCLAW_MDNS_HOSTNAME="$MDNS_HOSTNAME_CLEAN"
+  echo "INFO: mDNS hostname set to: ${MDNS_HOSTNAME_CLEAN}.local"
+else
+  export OPENCLAW_MDNS_HOSTNAME="openclaw"
+  echo "INFO: mDNS hostname defaulted to: openclaw.local"
+fi
+
+# Attempt to set the container hostname to the mDNS name so that
+# auto-generated TLS certificates include it as a SAN.
+if [ -n "$MDNS_HOSTNAME_CLEAN" ] && command -v hostname >/dev/null 2>&1; then
+  hostname "$MDNS_HOSTNAME_CLEAN" 2>/dev/null || echo "WARN: Could not set container hostname to $MDNS_HOSTNAME_CLEAN (non-critical)"
+fi
 
 # Reduce risk of secrets ending up in logs
 set +x
@@ -635,115 +690,61 @@ fi
 
 if [ -f "$OPENCLAW_CONFIG_PATH" ]; then
   if [ -f "$HELPER_PATH" ]; then
-    # In lan_https mode the gateway uses an internal port; nginx owns the external one.
-    EFFECTIVE_GW_PORT="$GATEWAY_INTERNAL_PORT"
-    if ! python3 "$HELPER_PATH" apply-gateway-settings "$GATEWAY_MODE" "$GATEWAY_REMOTE_URL" "$GATEWAY_BIND_MODE" "$EFFECTIVE_GW_PORT" "$ENABLE_OPENAI_API" "$GATEWAY_AUTH_MODE" "$GATEWAY_TRUSTED_PROXIES"; then
+    if ! python3 "$HELPER_PATH" apply-network-settings \
+      "$NETWORK_MODE" \
+      "$GATEWAY_MODE" \
+      "$GATEWAY_REMOTE_URL" \
+      "$GATEWAY_BIND" \
+      "$GATEWAY_PORT" \
+      "$GATEWAY_INTERNAL_PORT" \
+      "$ENABLE_OPENAI_API" \
+      "$GATEWAY_AUTH_MODE" \
+      "$GATEWAY_TRUSTED_PROXIES" \
+      "$GATEWAY_TLS_ENABLED" \
+      "$GATEWAY_TLS_AUTO" \
+      "$TAILSCALE_MODE"; then
       rc=$?
-      echo "ERROR: Failed to apply gateway settings via oc_config_helper.py (exit code ${rc})."
+      echo "ERROR: Failed to apply network settings via oc_config_helper.py (exit code ${rc})."
       echo "ERROR: Gateway configuration may be incorrect; aborting startup."
       exit "${rc}"
     fi
   else
-    echo "WARN: oc_config_helper.py not found, cannot apply gateway settings"
+    echo "WARN: oc_config_helper.py not found, cannot apply network settings"
     echo "INFO: Ensure the add-on image includes oc_config_helper.py and restart"
   fi
 else
-  echo "WARN: OpenClaw config not found at $OPENCLAW_CONFIG_PATH, cannot apply gateway settings"
+  echo "WARN: OpenClaw config not found at $OPENCLAW_CONFIG_PATH, cannot apply network settings"
   echo "INFO: Run 'openclaw onboard' first, then restart the add-on"
 fi
 
-if [ "$GATEWAY_AUTH_MODE" = "trusted-proxy" ]; then
-  echo "NOTICE: gateway_auth_mode=trusted-proxy is enabled."
+if [ "$NETWORK_MODE" = "reverse_proxy" ]; then
+  echo "NOTICE: network_mode=reverse_proxy is enabled."
   echo "NOTICE: Direct local CLI calls to the gateway may return unauthorized (trusted_proxy_user_missing) unless identity headers are injected by your reverse proxy."
   echo "NOTICE: For local terminal CLI workflows, temporarily switch to token auth or use commands that don't require direct gateway WS auth."
 fi
 
-# ------------------------------------------------------------------------------
-# TLS certificate generation for built-in HTTPS proxy (lan_https mode)
-# Generates a local CA + server cert so phones/tablets get proper HTTPS.
-# The CA cert can be installed once on a device for trusted access.
-# ------------------------------------------------------------------------------
-LAN_IP=""
-if [ "$ENABLE_HTTPS_PROXY" = "true" ]; then
-  CERT_DIR="/config/certs"
-  mkdir -p "$CERT_DIR"
+# -----------------------------------------------------------------------------
+# LAN IP detection (used for info messages and optional cert fallback)
+# -----------------------------------------------------------------------------
+LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 
-  # Detect primary LAN IP
-  LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
-  STORED_IP=$(cat "$CERT_DIR/.cert_ip" 2>/dev/null || echo "")
-
-  # --- Local CA (generated once, persists across restarts) ---
-  if [ ! -f "$CERT_DIR/ca.key" ] || [ ! -f "$CERT_DIR/ca.crt" ]; then
-    echo "INFO: Generating local CA certificate (one-time)..."
-    openssl genrsa -out "$CERT_DIR/ca.key" 2048 2>/dev/null
-    openssl req -new -x509 -key "$CERT_DIR/ca.key" -out "$CERT_DIR/ca.crt" \
-      -days 3650 -nodes -subj "/CN=OpenClaw Local CA" 2>/dev/null
-    chmod 600 "$CERT_DIR/ca.key"
-    STORED_IP=""  # force server cert regeneration
-    echo "INFO: Local CA created at $CERT_DIR/ca.crt"
-  fi
-
-  # --- Extra SANs from gateway_additional_allowed_origins + gateway_public_url ---
-  EXTRA_SANS=""
-  EXTRA_SAN_SOURCES="${GATEWAY_ADDITIONAL_ALLOWED_ORIGINS},${GW_PUBLIC_URL}"
-  if [ "$EXTRA_SAN_SOURCES" != "," ]; then
-    EXTRA_SANS="$(python3 - "$EXTRA_SAN_SOURCES" "${LAN_IP:-}" <<'PY'
-import sys, re
-from urllib.parse import urlparse
-raw = sys.argv[1] if len(sys.argv) > 1 else ""
-lan_ip = sys.argv[2] if len(sys.argv) > 2 else ""
-entries = [e.strip() for e in raw.split(",") if e.strip()]
-sans = []
-seen = {"127.0.0.1", "localhost", "homeassistant", "homeassistant.local"}
-if lan_ip:
-    seen.add(lan_ip)
-for entry in entries:
-    if "://" not in entry:
-        entry = "https://" + entry
-    host = urlparse(entry).hostname or ""
-    if host and host not in seen:
-        seen.add(host)
-        if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", host):
-            sans.append(f"IP:{host}")
-        else:
-            sans.append(f"DNS:{host}")
-print(",".join(sans), end="")
-PY
-)"
-  fi
-  STORED_EXTRA_SANS=$(cat "$CERT_DIR/.cert_extra_sans" 2>/dev/null || echo "")
-
-  # --- Server cert (regenerated when LAN IP or SANs change) ---
-  if [ ! -f "$CERT_DIR/gateway.crt" ] || [ ! -f "$CERT_DIR/gateway.key" ] || [ "$LAN_IP" != "$STORED_IP" ] || [ "$EXTRA_SANS" != "$STORED_EXTRA_SANS" ]; then
-    echo "INFO: Generating server TLS certificate for IP: ${LAN_IP:-unknown}..."
-    openssl genrsa -out "$CERT_DIR/gateway.key" 2048 2>/dev/null
-    openssl req -new -key "$CERT_DIR/gateway.key" -out "$CERT_DIR/gateway.csr" \
-      -subj "/CN=OpenClaw Gateway" 2>/dev/null
-
-    # SAN extension — include LAN IP, loopback, common mDNS names + user extras
-    cat > "$CERT_DIR/_san.ext" <<SANEOF
-subjectAltName=IP:${LAN_IP:-127.0.0.1},IP:127.0.0.1,DNS:localhost,DNS:homeassistant,DNS:homeassistant.local${EXTRA_SANS:+,${EXTRA_SANS}}
-SANEOF
-
-    openssl x509 -req -in "$CERT_DIR/gateway.csr" \
-      -CA "$CERT_DIR/ca.crt" -CAkey "$CERT_DIR/ca.key" -CAcreateserial \
-      -out "$CERT_DIR/gateway.crt" -days 3650 \
-      -extfile "$CERT_DIR/_san.ext" 2>/dev/null
-
-    rm -f "$CERT_DIR/gateway.csr" "$CERT_DIR/_san.ext" "$CERT_DIR/ca.srl"
-    chmod 600 "$CERT_DIR/gateway.key"
-    printf '%s' "$LAN_IP" > "$CERT_DIR/.cert_ip"
-    printf '%s' "$EXTRA_SANS" > "$CERT_DIR/.cert_extra_sans"
-    echo "INFO: Server TLS certificate generated (SAN: IP:${LAN_IP:-127.0.0.1}${EXTRA_SANS:+,${EXTRA_SANS}})"
-  else
-    echo "INFO: Reusing existing TLS certificate (IP: $STORED_IP)"
-  fi
-
-  # Make CA cert available for download via nginx
-  mkdir -p /etc/nginx/html
-  cp "$CERT_DIR/ca.crt" /etc/nginx/html/openclaw-ca.crt 2>/dev/null || true
-  echo "INFO: CA certificate available for download at /cert/ca.crt on the HTTPS port"
-
+# -----------------------------------------------------------------------------
+# TLS certificate handling
+# In lan_https/tailnet_* OpenClaw generates and manages its own TLS certificate
+# via gateway.tls.autoGenerate. We no longer run a separate nginx HTTPS proxy.
+# A local CA + server cert is still generated as a fallback so that the
+# /cert/ca.crt Ingress download can remain available if OpenClaw's cert path
+# is not yet known.
+# -----------------------------------------------------------------------------
+CERT_DIR="/config/certs"
+mkdir -p "$CERT_DIR"
+if [ ! -f "$CERT_DIR/ca.key" ] || [ ! -f "$CERT_DIR/ca.crt" ]; then
+  echo "INFO: Generating local fallback CA certificate..."
+  openssl genrsa -out "$CERT_DIR/ca.key" 2048 2>/dev/null
+  openssl req -new -x509 -key "$CERT_DIR/ca.key" -out "$CERT_DIR/ca.crt" \
+    -days 3650 -nodes -subj "/CN=OpenClaw Local CA" 2>/dev/null
+  chmod 600 "$CERT_DIR/ca.key"
+  echo "INFO: Local fallback CA created at $CERT_DIR/ca.crt"
 fi
 
 INGRESS_PORT=49200
@@ -780,14 +781,16 @@ fi
 if [ -f /openclaw_ha_addon/logo.png ]; then
   cp -v /openclaw_ha_addon/logo.png /etc/nginx/html/logo.png 2>/dev/null || true
 fi
-# - In lan_https: include HTTPS proxy defaults (LAN IP + common hostnames)
+# ------------------------------------------------------------------
+# Configure ControlUI allowed origins
+# - In lan_https/tailnet_*: include public URL origins when known
 # - In all modes: also include origin from gateway_public_url when present
 # - Helper merges with existing origins + user extras and deduplicates
 # ------------------------------------------------------------------
 if [ -f "$HELPER_PATH" ] && [ -f "$OPENCLAW_CONFIG_PATH" ]; then
   ALLOWED_ORIGINS=""
 
-  if [ "$ENABLE_HTTPS_PROXY" = "true" ] && [ -n "$LAN_IP" ]; then
+  if [ "$NETWORK_MODE" = "lan_https" ] && [ -n "$LAN_IP" ]; then
     ALLOWED_ORIGINS="https://${LAN_IP}:${GATEWAY_PORT}"
     ALLOWED_ORIGINS="${ALLOWED_ORIGINS},https://homeassistant.local:${GATEWAY_PORT}"
     ALLOWED_ORIGINS="${ALLOWED_ORIGINS},https://homeassistant:${GATEWAY_PORT}"
@@ -816,11 +819,9 @@ PY
     echo "WARN: Could not set controlUi settings — gateway may reject the Control UI"
 fi
 
-# ------------------------------------------------------------------------------
-# Apply mDNS settings (Audit R3 — was defined but never implemented)
-# ------------------------------------------------------------------------------
+# Apply mDNS settings (OpenClaw native bonjour plugin)
 if [ -f "$HELPER_PATH" ] && [ -f "$OPENCLAW_CONFIG_PATH" ]; then
-  python3 "$HELPER_PATH" set-mdns-settings "$MDNS_MODE" "$MDNS_SERVICE_PORT" "$MDNS_HOST_NAME" "$MDNS_INTERFACE_NAME" || \
+  python3 "$HELPER_PATH" set-mdns-settings "$MDNS_MODE" || \
     echo "WARN: Could not apply mDNS settings — LAN discovery may not work"
 fi
 
@@ -1012,7 +1013,7 @@ PY
 # otherwise the relay holds the loopback port and the new gateway instance
 # detects it as "already listening" and exits with code 1.
 start_gw_relay() {
-  if [ "$GATEWAY_BIND_MODE" != "tailnet" ]; then
+  if [ "$NETWORK_MODE" != "tailnet_serve" ] && [ "$NETWORK_MODE" != "tailnet_funnel" ]; then
     return 0
   fi
   local ts_ip
@@ -1145,10 +1146,12 @@ else
   echo "D-Bus already running"
 fi
 
-if ! pgrep -x avahi-daemon >/dev/null 2>&1 && [ -x "$AVAHI_SYSTEM_BIN" ]; then
+if [ "$MDNS_MODE" != "off" ] && ! pgrep -x avahi-daemon >/dev/null 2>&1 && [ -x "$AVAHI_SYSTEM_BIN" ]; then
   "$AVAHI_SYSTEM_BIN" --daemonize --no-drop-root &
   AVAHI_PID=$!
   echo "Avahi mDNS daemon started"
+elif [ "$MDNS_MODE" = "off" ]; then
+  echo "INFO: mDNS disabled (mdns_mode=off), skipping Avahi start"
 else
   echo "Avahi already running"
 fi
@@ -1307,8 +1310,7 @@ print(json.load(open(p)).get('gateway',{}).get('auth',{}).get('token',''), end='
   fi
 
   GW_PUBLIC_URL="$GW_PUBLIC_URL" GW_TOKEN="$token" TERMINAL_PORT="$TERMINAL_PORT" \
-    ENABLE_HTTPS_PROXY="$ENABLE_HTTPS_PROXY" HTTPS_PROXY_PORT="$GATEWAY_PORT" \
-    GATEWAY_INTERNAL_PORT="$GATEWAY_INTERNAL_PORT" ACCESS_MODE="$ACCESS_MODE" \
+    TUI_PORT="$TUI_PORT" GATEWAY_PORT="$GATEWAY_PORT" NETWORK_MODE="$NETWORK_MODE" \
     DISK_TOTAL="$disk_total" DISK_USED="$disk_used" DISK_AVAIL="$disk_avail" DISK_PCT="$disk_pct" \
     NGINX_LOG_LEVEL="$NGINX_LOG_LEVEL" \
     python3 /render_nginx.py

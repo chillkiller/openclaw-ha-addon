@@ -60,7 +60,7 @@ http {
     # Health check — proxy to actual OpenClaw Gateway health endpoint
     location = /api/health {
       access_log off;
-      proxy_pass http://127.0.0.1:__GATEWAY_INTERNAL_PORT__/health;
+      proxy_pass http://127.0.0.1:__GATEWAY_PORT__/health;
       proxy_http_version 1.1;
       proxy_set_header Host $host;
       proxy_set_header X-Real-IP $remote_addr;
@@ -78,7 +78,7 @@ http {
 
     # WebUI — OpenClaw Gateway (loopback, WebSocket-capable)
     location ^~ /webui/ {
-      proxy_pass http://127.0.0.1:__GATEWAY_INTERNAL_PORT__/;
+      proxy_pass http://127.0.0.1:__GATEWAY_PORT__/;
       proxy_http_version 1.1;
       proxy_set_header Upgrade $http_upgrade;
       proxy_set_header Connection $connection_upgrade;
@@ -150,5 +150,5 @@ http {
     }
   }
 
-  __HTTPS_GATEWAY_BLOCK__
+  # HTTPS reverse proxy removed — OpenClaw terminates TLS natively via gateway.tls.
 }

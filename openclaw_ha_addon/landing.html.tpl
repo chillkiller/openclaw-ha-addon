@@ -68,7 +68,7 @@
     <a class="btn green small" id="btnCert" href="./cert/ca.crt" download="openclaw-ca.crt">CA Cert</a>
   </div>
   <div class="status">
-    <span class="chip accent" id="modeBadge">__ACCESS_MODE__</span>
+    <span class="chip accent" id="modeBadge">__NETWORK_MODE__</span>
     <span class="chip" id="statusGateway">Gateway: …</span>
     <span class="chip" id="statusSecure">Context: …</span>
   </div>
@@ -105,7 +105,8 @@
   const SHOW_TERMINAL = __SHOW_TERMINAL_JS__;
   const SHOW_TUI = __SHOW_TUI_JS__;
   const SHOW_DOCS = __SHOW_DOCS_JS__;
-  const ACCESS_MODE = '__ACCESS_MODE__';
+  const ACCESS_MODE = '__NETWORK_MODE__';
+  const GATEWAY_PORT = '__GATEWAY_PORT__';
   const GATEWAY_TOKEN = '__GATEWAY_TOKEN__';
 
   let inIframe;
@@ -168,8 +169,12 @@
   };
 
   const btnCert = document.getElementById('btnCert');
-  if (ACCESS_MODE !== 'lan_https') {
+  if (ACCESS_MODE !== 'lan_https' && ACCESS_MODE !== 'tailnet_serve' && ACCESS_MODE !== 'tailnet_funnel') {
     btnCert.style.display = 'none';
+  }
+  // Update cert download href to point at the Ingress CA download path.
+  if (btnCert) {
+    btnCert.href = './cert/ca.crt';
   }
 
   const statusSecure = document.getElementById('statusSecure');

@@ -9,7 +9,7 @@ FROM ghcr.io/home-assistant/${BUILD_ARCH}-base-debian:bookworm
 
 # Labels required when not using the official GitHub builder action
 LABEL \
-  io.hass.version="0.7.9.30" \
+  io.hass.version="0.7.10.0" \
   io.hass.type="app" \
   io.hass.arch="aarch64|amd64"
 
@@ -74,11 +74,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     nginx \
     jq \
     openssl \
-    # mDNS / Bonjour / Avahi (LAN discovery)
-    dbus \
-    avahi-daemon \
-    avahi-utils \
-    libnss-mdns \
     # Audio/Media Stack
     sox \
     libsox-fmt-all \
