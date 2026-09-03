@@ -45,3 +45,6 @@ venv.bak/
 
 # Home Assistant add-on build artifacts
 *.tar.gz
+memory/
+AUDIT_REPORT_*.md
+*.log
