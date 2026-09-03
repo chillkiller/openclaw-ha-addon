@@ -103,7 +103,7 @@ def apply_gateway_settings(
     chat = endpoints.setdefault("chatCompletions", {})
 
     trusted_proxies = [p.strip() for p in trusted_proxies_csv.split(",") if p.strip()]
-    trusted_proxy_default = {"userHeader": "x-forwarded-user"}
+    trusted_proxy_default = {"userHeader": "x-forwarded-user", "allowLoopback": True}
 
     changes = []
 
