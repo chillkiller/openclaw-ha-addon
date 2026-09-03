@@ -2,3 +2,5 @@ memory/
 *.log
 AUDIT_REPORT_*.md
 DESIGN-network-modes.md
+__pycache__/
+*.pyc
