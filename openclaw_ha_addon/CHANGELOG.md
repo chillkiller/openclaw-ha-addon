@@ -1,3 +1,8 @@
+## [0.7.9.28] - 2026-09-03
+
+### Fixed
+- **Homebrew install**: Robustified Homebrew installation path for Node 24 / OpenClaw 2026.8.2.
+
 ## [0.7.9.27] - 2026-09-02
 
 ### Changed
