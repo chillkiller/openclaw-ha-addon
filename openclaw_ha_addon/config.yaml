@@ -1,7 +1,7 @@
 # OpenClaw Home Assistant Addon v0.7.9.19 Configuration
 # FIX: Inject HA Ingress base path into ControlUI HTML for Nabu Casa WebSocket support
 name: OpenClaw Assistant
-version: "0.7.9.27"
+version: "0.7.9.28"
 slug: openclaw_ha_addon
 description: OpenClaw Home Assistant Addon (Bookworm Full-Stack)
 url: https://github.com/chillkiller/openclaw-ha-addon
