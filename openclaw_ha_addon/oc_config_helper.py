@@ -102,9 +102,7 @@ def apply_gateway_settings(
     endpoints = http.setdefault("endpoints", {})
     chat = endpoints.setdefault("chatCompletions", {})
 
-    trusted_proxies = [p.strip() for p in trusted_proxies_csv.split(",") if p.strip()]
     trusted_proxy_default = {"userHeader": "x-forwarded-user", "allowLoopback": True}
-
     changes = []
 
     if gateway.get("mode") != mode:
@@ -131,9 +129,13 @@ def apply_gateway_settings(
         auth["mode"] = auth_mode
         changes.append(f"auth.mode -> {auth_mode}")
 
-    if gateway.get("trustedProxies") != trusted_proxies:
-        gateway["trustedProxies"] = trusted_proxies
-        changes.append(f"trustedProxies -> {trusted_proxies}")
+    # Only overwrite trustedProxies if the user actually supplied values.
+    # An empty add-on field must NOT wipe manually configured entries in
+    # openclaw.json.
+    raw_proxies = [p.strip() for p in trusted_proxies_csv.split(",") if p.strip()]
+    if trusted_proxies_csv.strip() and gateway.get("trustedProxies") != raw_proxies:
+        gateway["trustedProxies"] = raw_proxies
+        changes.append(f"trustedProxies -> {raw_proxies}")
 
     if auth_mode == "trusted-proxy" and auth.get("trustedProxy") != trusted_proxy_default:
         auth["trustedProxy"] = trusted_proxy_default

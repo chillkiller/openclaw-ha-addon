@@ -175,9 +175,9 @@ schema:
   gateway_public_url: str?
   homeassistant_token: str?
   http_proxy: str?
-  router_ssh_host: str
-  router_ssh_user: str
-  router_ssh_key_path: str
+  router_ssh_host: str?
+  router_ssh_user: str?
+  router_ssh_key_path: str?
   clean_session_locks_on_start: bool?
   clean_session_locks_on_exit: bool?
   gateway_mode: list(local|remote)?
