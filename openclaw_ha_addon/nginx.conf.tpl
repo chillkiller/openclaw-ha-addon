@@ -76,15 +76,17 @@ http {
     }
 
     # WebUI — OpenClaw Gateway (loopback, WebSocket-capable)
+    # NOTE: Do NOT set X-Forwarded-* / X-Real-IP here. OpenClaw 2026.8.2
+    # treats loopback requests with forwarded-header evidence as proxy-shaped
+    # traffic and rejects them with proxy_attribution_required unless they pass
+    # trusted-proxy auth. We run the gateway locally in token-auth mode, so we
+    # keep the request as plain local-direct traffic.
     location ^~ /webui/ {
       proxy_pass http://127.0.0.1:__GATEWAY_INTERNAL_PORT__/;
       proxy_http_version 1.1;
       proxy_set_header Upgrade $http_upgrade;
       proxy_set_header Connection $connection_upgrade;
       proxy_set_header Host $host;
-      proxy_set_header X-Real-IP $remote_addr;
-      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-      proxy_set_header X-Forwarded-Proto $scheme;
       __WEBUI_AUTH_HEADER__
       proxy_read_timeout 86400s;
       proxy_send_timeout 86400s;
