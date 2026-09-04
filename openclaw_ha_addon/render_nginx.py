@@ -42,6 +42,9 @@ def main():
 
     # Token comes from environment (best-effort CLI query in run.sh)
     token = os.environ.get('GW_TOKEN', '')
+    # Authorization header forwarded to internal gateway so Ingress works
+    # even when gateway.auth.mode is "token".
+    gateway_auth_header = ('      proxy_set_header Authorization "Bearer ' + token + '";\n') if token else ''
 
     # TLS mode for internal gateway proxy (http vs https)
     gateway_tls_enabled = os.environ.get('GATEWAY_TLS_ENABLED', 'false').lower() in ('1', 'true', 'yes')
@@ -70,21 +73,25 @@ def main():
             '      proxy_ssl_protocols TLSv1.2 TLSv1.3;\n'
             '      proxy_ssl_ciphers HIGH:!aNULL:!MD5;\n'
             '      proxy_ssl_server_name off;\n'
-            '      proxy_ssl_session_reuse on;'
+            '      proxy_ssl_session_reuse on;\n'
+            + gateway_auth_header
         )
         api_health_proxy_block = (
             '      proxy_pass https://127.0.0.1:' + gateway_port + '/health;\n'
             '      proxy_ssl_verify off;\n'
             '      proxy_ssl_protocols TLSv1.2 TLSv1.3;\n'
             '      proxy_ssl_ciphers HIGH:!aNULL:!MD5;\n'
-            '      proxy_ssl_server_name off;'
+            '      proxy_ssl_server_name off;\n'
+            + gateway_auth_header
         )
     else:
         webui_proxy_block = (
-            '      proxy_pass http://127.0.0.1:' + gateway_port + '/;'
+            '      proxy_pass http://127.0.0.1:' + gateway_port + '/;\n'
+            + gateway_auth_header
         )
         api_health_proxy_block = (
-            '      proxy_pass http://127.0.0.1:' + gateway_port + '/health;'
+            '      proxy_pass http://127.0.0.1:' + gateway_port + '/health;\n'
+            + gateway_auth_header
         )
 
     conf = tpl.replace('__NGINX_ACCESS_LOG__', access_log_block)
