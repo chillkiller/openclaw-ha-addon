@@ -69,9 +69,16 @@ def main():
             '      proxy_ssl_verify off;\n'
             '      proxy_ssl_session_reuse on;'
         )
+        api_health_proxy_block = (
+            '      proxy_pass https://127.0.0.1:' + gateway_port + '/health;\n'
+            '      proxy_ssl_verify off;'
+        )
     else:
         webui_proxy_block = (
             '      proxy_pass http://127.0.0.1:' + gateway_port + '/;'
+        )
+        api_health_proxy_block = (
+            '      proxy_pass http://127.0.0.1:' + gateway_port + '/health;'
         )
 
     conf = tpl.replace('__NGINX_ACCESS_LOG__', access_log_block)
@@ -81,6 +88,7 @@ def main():
     conf = conf.replace('__TUI_PORT__', tui_port)
     conf = conf.replace('__GATEWAY_PORT__', gateway_port)
     conf = conf.replace('__WEBUI_PROXY_BLOCK__', webui_proxy_block)
+    conf = conf.replace('__API_HEALTH_PROXY_BLOCK__', api_health_proxy_block)
     Path('/etc/nginx/nginx.conf').write_text(conf)
 
     # ── landing page ────────────────────────────────────────────
