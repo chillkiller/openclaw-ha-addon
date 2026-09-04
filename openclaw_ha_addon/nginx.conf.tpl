@@ -104,7 +104,7 @@ http {
     # Web terminal (ttyd)
     location = /terminal { return 302 /terminal/; }
     location ^~ /terminal/ {
-      proxy_pass http://127.0.0.1:__TERMINAL_PORT__/;
+      proxy_pass http://127.0.0.1:__TERMINAL_PORT__/terminal/;
       proxy_http_version 1.1;
       proxy_set_header Upgrade $http_upgrade;
       proxy_set_header Connection $connection_upgrade;
