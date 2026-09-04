@@ -57,11 +57,11 @@ http {
       add_header Content-Disposition 'attachment; filename="openclaw-ca.crt"';
     }
 
-    # Health check
+    # Health check (JSON ok, so the landing page status badge works)
     location = /api/health {
       access_log off;
-      return 200 "OK\n";
-      add_header Content-Type text/plain;
+      return 200 '{"ok":true}\n';
+      add_header Content-Type application/json;
     }
 
     # Add-on log tail (read-only)
@@ -85,6 +85,20 @@ http {
       proxy_read_timeout 86400s;
       proxy_send_timeout 86400s;
       proxy_buffering off;
+
+      # OpenClaw ControlUI sends DENY framing headers by default. Strip them
+      # here so the UI can be embedded inside the HA Ingress iframe.
+      proxy_hide_header X-Frame-Options;
+      proxy_hide_header Content-Security-Policy;
+      add_header Content-Security-Policy "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' https://fonts.gstatic.com; worker-src 'self'; connect-src 'self' ws: wss: https://api.openai.com https://tweakcn.com" always;
+      add_header X-Frame-Options "SAMEORIGIN" always;
+
+      # Inject the HA Ingress base path into the ControlUI HTML so the bundle
+      # resolves the WebSocket URL against the external Ingress path instead of
+      # window.location. This makes the WebUI work via Nabu Casa remote access.
+      sub_filter "data-openclaw-terminal-enabled=\"false\" lang=\"en\"" "data-openclaw-terminal-enabled=\"false\" lang=\"en\" data-openclaw-control-ui-base-path=\"$http_x_ingress_path/webui/\"";
+      sub_filter "data-openclaw-terminal-enabled=\"true\" lang=\"en\"" "data-openclaw-terminal-enabled=\"true\" lang=\"en\" data-openclaw-control-ui-base-path=\"$http_x_ingress_path/webui/\"";
+      sub_filter_once on;
     }
 
     # Web terminal (ttyd)
