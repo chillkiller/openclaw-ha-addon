@@ -7,6 +7,9 @@ events { worker_connections 1024; }
 
 http {
   gzip off;
+
+  # Disable proxy compression so sub_filter can rewrite HTML
+  proxy_set_header Accept-Encoding "";
   include       /etc/nginx/mime.types;
   default_type  application/octet-stream;
 
@@ -104,6 +107,9 @@ http {
       sub_filter "href=\"/manifest.webmanifest" "href=\"$http_x_ingress_path/webui/manifest.webmanifest";
       sub_filter "href=\"/assets/" "href=\"$http_x_ingress_path/webui/assets/";
       sub_filter "src=\"/assets/" "src=\"$http_x_ingress_path/webui/assets/";
+      # OpenClaw 2026.8.2 uses <base href="/">; rewrite it so assets resolve under HA Ingress path
+      sub_filter '<base href="/"' '<base href="$http_x_ingress_path/webui/"';
+
       sub_filter_once off;
     }
 

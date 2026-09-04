@@ -1,3 +1,8 @@
+## [0.7.10.17] - 2026-09-04
+
+### Fixed
+- **Ingress WebUI assets with OpenClaw 2026.8.2**: OpenClaw 2026.8.2 ships the Control UI with `<base href="/">`, which caused all assets to resolve against the Home Assistant origin and return 404 inside the Ingress iframe. nginx now rewrites `<base href="/">` to the HA Ingress base path and strips `Accept-Encoding` from the upstream request so `sub_filter` can operate on uncompressed HTML.
+
 ## [0.7.10.2] - 2026-09-04
 
 ### Fixed
