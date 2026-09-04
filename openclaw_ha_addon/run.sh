@@ -1205,7 +1205,7 @@ if [ "$ENABLE_TERMINAL" = "true" ] || [ "$ENABLE_TERMINAL" = "1" ]; then
     echo ""
   fi
   echo "Starting web terminal (ttyd) on 127.0.0.1:${TERMINAL_PORT} ..."
-  ttyd -W -i 127.0.0.1 -p "${TERMINAL_PORT}" -b /terminal bash &
+  ttyd -W -i 127.0.0.1 -p "${TERMINAL_PORT}" -b /terminal bash -il &
   TTYD_PID=$!
   echo "$TTYD_PID" > "$TTYD_PID_FILE"
   echo "ttyd started with PID $TTYD_PID"
