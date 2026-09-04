@@ -39,9 +39,12 @@ http {
   # If HA Supervisor sends X-Ingress-Path, use the absolute Ingress route.
   # Otherwise fall back to relative asset URLs so the browser resolves them
   # under the current /webui/ path (inside HA Ingress or direct nginx access).
+  # Base path WITHOUT trailing slash. OpenClaw's ControlUI appends paths
+  # like "/themes/" and "/assets/" itself, so a trailing slash would
+  # produce double slashes (e.g. /webui//themes/claw.css).
   map $ingress_path $control_ui_base_path {
     ""      "";
-    default "$ingress_path/webui/";
+    default "$ingress_path/webui";
   }
 
   map $ingress_path $asset_href_prefix {
@@ -67,6 +70,11 @@ http {
   map $ingress_path $manifest_prefix {
     ""      "manifest.webmanifest";
     default "$ingress_path/webui/manifest.webmanifest";
+  }
+
+  map $ingress_path $theme_prefix {
+    ""      "themes/";
+    default "$ingress_path/webui/themes/";
   }
 
   server {
@@ -151,6 +159,9 @@ http {
       # the Ingress path, set it explicitly so WebSocket/asset URLs resolve there.
       # If the header is missing, leave it empty so OpenClaw falls back to
       # window.location (which is correct inside the HA Ingress iframe).
+      sub_filter_types text/html;
+      sub_filter_once off;
+
       sub_filter 'data-openclaw-control-ui-base-path=""' 'data-openclaw-control-ui-base-path="$control_ui_base_path"';
 
       # Rewrite absolute asset links: relative when no Ingress path is known,
@@ -163,10 +174,12 @@ http {
       sub_filter "href=\"/assets/" "href=\"$asset_href_prefix";
       sub_filter "src=\"/assets/" "src=\"$asset_src_prefix";
 
+      # OpenClaw loads theme CSS dynamically via base + "/themes/theme.css".
+      # Rewrite the absolute form as well, in case the base path injection fails.
+      sub_filter "href=\"/themes/" "href=\"$theme_prefix";
+
       # If OpenClaw ever emits <base href="/">, rewrite it analogously.
       sub_filter '<base href="/"' '<base href="$control_ui_base_path"';
-
-      sub_filter_once off;
     }
 
     # Web terminal (ttyd)

@@ -1,4 +1,9 @@
 
+## 0.7.10.23
+- Fix OpenClaw ControlUI ingress loading: remove trailing slash from base path to avoid double slashes in dynamically constructed URLs (`/webui//themes/...`).
+- Rewrite `/themes/` asset links inside the Ingress proxy (previously only `/assets/` was handled).
+- Restrict nginx `sub_filter` to `text/html` responses to avoid corrupting JS/CSS bundles.
+
 ## 0.7.10.22
 - Fix external HTTPS access (lan_https mode): remove X-Forwarded-* / X-Real-IP headers from the HTTPS proxy block so OpenClaw 2026.8.2 no longer rejects the request with proxy_attribution_required.
 
