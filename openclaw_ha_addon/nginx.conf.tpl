@@ -93,11 +93,11 @@ http {
       add_header Content-Security-Policy "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' https://fonts.gstatic.com; worker-src 'self'; connect-src 'self' ws: wss: https://api.openai.com https://tweakcn.com" always;
       add_header X-Frame-Options "SAMEORIGIN" always;
 
-      # Inject the HA Ingress base path into the ControlUI HTML so the bundle
-      # resolves the WebSocket URL against the external Ingress path instead of
-      # window.location. This makes the WebUI work via Nabu Casa remote access.
-      sub_filter "data-openclaw-terminal-enabled=\"false\" lang=\"en\"" "data-openclaw-terminal-enabled=\"false\" lang=\"en\" data-openclaw-control-ui-base-path=\"$http_x_ingress_path/webui/\"";
-      sub_filter "data-openclaw-terminal-enabled=\"true\" lang=\"en\"" "data-openclaw-terminal-enabled=\"true\" lang=\"en\" data-openclaw-control-ui-base-path=\"$http_x_ingress_path/webui/\"";
+      # OpenClaw 2026.8.2 ships the ControlUI with an empty
+      # data-openclaw-control-ui-base-path attribute. Fill it with the HA Ingress
+      # path so the bundle resolves WebSocket and asset URLs against the Ingress
+      # route instead of window.location. This fixes 404s for /assets/* etc.
+      sub_filter 'data-openclaw-control-ui-base-path=""' 'data-openclaw-control-ui-base-path="$http_x_ingress_path/webui/"';
       sub_filter_once on;
     }
 
