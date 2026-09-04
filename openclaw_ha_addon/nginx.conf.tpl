@@ -87,6 +87,14 @@ http {
       proxy_set_header Upgrade $http_upgrade;
       proxy_set_header Connection $connection_upgrade;
       proxy_set_header Host $host;
+      # Strip any forwarded/proxy evidence headers that HA (or another upstream)
+      # may have added. OpenClaw 2026.8.2 treats their presence on loopback as
+      # proxy-shaped traffic and rejects the request with proxy_attribution_required.
+      proxy_set_header X-Real-IP "";
+      proxy_set_header X-Forwarded-For "";
+      proxy_set_header X-Forwarded-Host "";
+      proxy_set_header X-Forwarded-Proto "";
+      proxy_set_header Forwarded "";
       __WEBUI_AUTH_HEADER__
       proxy_read_timeout 86400s;
       proxy_send_timeout 86400s;
