@@ -67,11 +67,17 @@ def main():
         webui_proxy_block = (
             '      proxy_pass https://127.0.0.1:' + gateway_port + '/;\n'
             '      proxy_ssl_verify off;\n'
+            '      proxy_ssl_protocols TLSv1.2 TLSv1.3;\n'
+            '      proxy_ssl_ciphers HIGH:!aNULL:!MD5;\n'
+            '      proxy_ssl_server_name off;\n'
             '      proxy_ssl_session_reuse on;'
         )
         api_health_proxy_block = (
             '      proxy_pass https://127.0.0.1:' + gateway_port + '/health;\n'
-            '      proxy_ssl_verify off;'
+            '      proxy_ssl_verify off;\n'
+            '      proxy_ssl_protocols TLSv1.2 TLSv1.3;\n'
+            '      proxy_ssl_ciphers HIGH:!aNULL:!MD5;\n'
+            '      proxy_ssl_server_name off;'
         )
     else:
         webui_proxy_block = (
