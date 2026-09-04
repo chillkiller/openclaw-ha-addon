@@ -12,6 +12,8 @@ Called by run.sh with the following env vars:
 import os
 import subprocess
 from pathlib import Path
+import html
+
 
 
 def main():
@@ -132,7 +134,7 @@ def main():
     landing = landing.replace('__SHOW_TERMINAL_JS__', 'true' if show_terminal else 'false')
     landing = landing.replace('__SHOW_TUI_JS__', 'true' if show_tui else 'false')
     landing = landing.replace('__SHOW_DOCS_JS__', 'true' if show_docs else 'false')
-    landing = landing.replace('__GATEWAY_TOKEN__', token)
+    landing = landing.replace('__GATEWAY_TOKEN__', html.escape(token))
     landing = landing.replace('__GATEWAY_PUBLIC_URL__', public_url)
     landing = landing.replace('__GW_PUBLIC_URL_PATH__', gw_path)
     landing = landing.replace('__ACCESS_MODE__', access_mode)
