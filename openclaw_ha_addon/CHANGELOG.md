@@ -1,3 +1,10 @@
+## [0.7.10.2] - 2026-09-04
+
+### Fixed
+- **Ingress WebUI with HTTPS gateway**: nginx now proxies `/webui/` to `https://127.0.0.1:18789/` when the gateway runs in `lan_https` / TLS mode, accepting the auto-generated self-signed certificate. Previously Ingress broke when `network_mode` was switched from `ingress_only` to `lan_https`.
+- **TUI startup**: `openclaw tui` now starts with `--session agent:coding-main:main` for OpenClaw 2026.8.2 multi-agent requirement (0.7.10.1).
+- **Ingress base-path injection**: nginx `sub_filter` now injects the HA Ingress base path for both `data-openclaw-terminal-enabled="false"` and `"true"` (0.7.10.1).
+
 ## [0.7.10.1] - 2026-09-04
 
 ### Fixed

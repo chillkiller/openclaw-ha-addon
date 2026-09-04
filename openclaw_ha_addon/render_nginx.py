@@ -43,6 +43,9 @@ def main():
     # Token comes from environment (best-effort CLI query in run.sh)
     token = os.environ.get('GW_TOKEN', '')
 
+    # TLS mode for internal gateway proxy (http vs https)
+    gateway_tls_enabled = os.environ.get('GATEWAY_TLS_ENABLED', 'false').lower() in ('1', 'true', 'yes')
+
     gw_path = '' if public_url.endswith('/') else '/'
 
     # ── nginx.conf ──────────────────────────────────────────────
@@ -65,6 +68,7 @@ def main():
     conf = conf.replace('__TERMINAL_PORT__', terminal_port)
     conf = conf.replace('__TUI_PORT__', tui_port)
     conf = conf.replace('__GATEWAY_PORT__', gateway_port)
+    conf = conf.replace('__GATEWAY_TLS_ENABLED__', 'true' if gateway_tls_enabled else 'false')
     Path('/etc/nginx/nginx.conf').write_text(conf)
 
     # ── landing page ────────────────────────────────────────────
