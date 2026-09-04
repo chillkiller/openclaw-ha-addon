@@ -68,7 +68,7 @@ def main():
     conf = conf.replace('__TERMINAL_PORT__', terminal_port)
     conf = conf.replace('__TUI_PORT__', tui_port)
     conf = conf.replace('__GATEWAY_PORT__', gateway_port)
-    conf = conf.replace('__GATEWAY_TLS_ENABLED__', 'true' if gateway_tls_enabled else 'false')
+    conf = conf.replace('__GATEWAY_TLS_ENABLED__', str(gateway_tls_enabled).lower())
     Path('/etc/nginx/nginx.conf').write_text(conf)
 
     # ── landing page ────────────────────────────────────────────
@@ -114,3 +114,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
