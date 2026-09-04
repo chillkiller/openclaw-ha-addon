@@ -1,3 +1,6 @@
+
+## 0.7.10.21
+- Fix OpenClaw ControlUI asset loading inside HA Ingress when X-Ingress-Path header is missing by rewriting asset links to relative URLs (with absolute fallback when the header is present).
 ## [0.7.9.24] - 2026-08-23
 
 ### Changed

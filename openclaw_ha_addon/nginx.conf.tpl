@@ -27,6 +27,48 @@ http {
     ''      close;
   }
 
+  # Infer the HA Ingress base path from the request URI when the supervisor
+  # does not send the X-Ingress-Path header. OpenClaw 2026.8.2 uses this
+  # prefix to resolve WebSocket and asset URLs in the ControlUI.
+  map $request_uri $ingress_path {
+    ~^(/api/hassio_ingress/[^/]+)/    $1;
+    default                          $http_x_ingress_path;
+  }
+
+  # Conditional prefixes for ControlUI asset rewriting.
+  # If HA Supervisor sends X-Ingress-Path, use the absolute Ingress route.
+  # Otherwise fall back to relative asset URLs so the browser resolves them
+  # under the current /webui/ path (inside HA Ingress or direct nginx access).
+  map $ingress_path $control_ui_base_path {
+    ""      "";
+    default "$ingress_path/webui/";
+  }
+
+  map $ingress_path $asset_href_prefix {
+    ""      "assets/";
+    default "$ingress_path/webui/assets/";
+  }
+
+  map $ingress_path $asset_src_prefix {
+    ""      "assets/";
+    default "$ingress_path/webui/assets/";
+  }
+
+  map $ingress_path $favicon_prefix {
+    ""      "favicon";
+    default "$ingress_path/webui/favicon";
+  }
+
+  map $ingress_path $apple_prefix {
+    ""      "apple-touch-icon";
+    default "$ingress_path/webui/apple-touch-icon";
+  }
+
+  map $ingress_path $manifest_prefix {
+    ""      "manifest.webmanifest";
+    default "$ingress_path/webui/manifest.webmanifest";
+  }
+
   server {
     listen __INGRESS_PORT__;
     server_name _;
@@ -108,17 +150,24 @@ http {
       add_header X-Frame-Options "SAMEORIGIN" always;
 
       # OpenClaw 2026.8.2 ships the ControlUI with an empty
-      # data-openclaw-control-ui-base-path attribute. Fill it with the HA Ingress
-      # path so the bundle resolves WebSocket and asset URLs against the Ingress
-      # route instead of window.location. This fixes 404s for /assets/* etc.
-      sub_filter 'data-openclaw-control-ui-base-path=""' 'data-openclaw-control-ui-base-path="$http_x_ingress_path/webui/"';
-      sub_filter "href=\"/favicon" "href=\"$http_x_ingress_path/webui/favicon";
-      sub_filter "href=\"/apple-touch-icon" "href=\"$http_x_ingress_path/webui/apple-touch-icon";
-      sub_filter "href=\"/manifest.webmanifest" "href=\"$http_x_ingress_path/webui/manifest.webmanifest";
-      sub_filter "href=\"/assets/" "href=\"$http_x_ingress_path/webui/assets/";
-      sub_filter "src=\"/assets/" "src=\"$http_x_ingress_path/webui/assets/";
-      # OpenClaw 2026.8.2 uses <base href="/">; rewrite it so assets resolve under HA Ingress path
-      sub_filter '<base href="/"' '<base href="$http_x_ingress_path/webui/"';
+      # data-openclaw-control-ui-base-path attribute. When HA Supervisor tells us
+      # the Ingress path, set it explicitly so WebSocket/asset URLs resolve there.
+      # If the header is missing, leave it empty so OpenClaw falls back to
+      # window.location (which is correct inside the HA Ingress iframe).
+      sub_filter 'data-openclaw-control-ui-base-path=""' 'data-openclaw-control-ui-base-path="$control_ui_base_path"';
+
+      # Rewrite absolute asset links: relative when no Ingress path is known,
+      # absolute under the Ingress path when X-Ingress-Path is sent. nginx
+      # proxies both /webui/assets/* and /api/hassio_ingress/*/webui/assets/*
+      # to the gateway's /assets/* regardless of the route.
+      sub_filter "href=\"/favicon" "href=\"$favicon_prefix";
+      sub_filter "href=\"/apple-touch-icon" "href=\"$apple_prefix";
+      sub_filter "href=\"/manifest.webmanifest" "href=\"$manifest_prefix";
+      sub_filter "href=\"/assets/" "href=\"$asset_href_prefix";
+      sub_filter "src=\"/assets/" "src=\"$asset_src_prefix";
+
+      # If OpenClaw ever emits <base href="/">, rewrite it analogously.
+      sub_filter '<base href="/"' '<base href="$control_ui_base_path"';
 
       sub_filter_once off;
     }
@@ -170,3 +219,4 @@ http {
 
   __HTTPS_GATEWAY_BLOCK__
 }
+
