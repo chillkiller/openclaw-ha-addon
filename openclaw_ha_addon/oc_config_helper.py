@@ -132,16 +132,26 @@ def apply_network_settings(
         remote_cfg["url"] = remote_url
         changes.append(f"remote.url -> {remote_url}")
 
-    if gateway.get("bind") != bind_mode:
-        gateway["bind"] = bind_mode
-        changes.append(f"bind -> {bind_mode}")
-
-    if gateway.get("port") != port:
-        gateway["port"] = port
-        changes.append(f"port -> {port}")
-
+    effective_bind = bind_mode
+    effective_port = port
     tls_enabled = tls_enabled_str.lower() == "true"
     tls_auto = tls_auto_str.lower() == "true"
+
+    # In lan_https mode the OpenClaw gateway runs HTTP on a loopback internal port;
+    # nginx provides the external HTTPS proxy on the configured gateway_port.
+    if network_mode == "lan_https":
+        effective_bind = "loopback"
+        effective_port = internal_port
+        tls_enabled = False
+
+    if gateway.get("bind") != effective_bind:
+        gateway["bind"] = effective_bind
+        changes.append(f"bind -> {effective_bind}")
+
+    if gateway.get("port") != effective_port:
+        gateway["port"] = effective_port
+        changes.append(f"port -> {effective_port}")
+
     desired_tls = {"enabled": tls_enabled}
     if tls_enabled:
         desired_tls["autoGenerate"] = tls_auto

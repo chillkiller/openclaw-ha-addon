@@ -110,13 +110,7 @@ GATEWAY_TLS_AUTO="false"
 TAILSCALE_MODE=""
 GATEWAY_INTERNAL_PORT="$GATEWAY_PORT"
 ENABLE_HTTPS_PROXY=false
-
-require_trusted_proxies() {
-  if [ -z "$GATEWAY_TRUSTED_PROXIES" ]; then
-    echo "ERROR: network_mode=$NETWORK_MODE requires gateway_trusted_proxies."
-    echo "ERROR: Set it to your reverse proxy's IP/CIDR (e.g. 127.0.0.1,192.168.88.0/24)."
-  fi
-}
+HTTPS_PROXY_PORT=""
 
 case "$NETWORK_MODE" in
   ingress_only)
@@ -132,11 +126,14 @@ case "$NETWORK_MODE" in
     echo "INFO: Network mode: lan_http (LAN HTTP on 0.0.0.0:${GATEWAY_PORT})"
     ;;
   lan_https)
-    GATEWAY_BIND="lan"
+    # OpenClaw gateway runs HTTP on loopback internal port; nginx provides external HTTPS.
+    GATEWAY_BIND="loopback"
     GATEWAY_AUTH_MODE="token"
-    GATEWAY_TLS_ENABLED="true"
-    GATEWAY_TLS_AUTO="true"
-    echo "INFO: Network mode: lan_https (LAN HTTPS on 0.0.0.0:${GATEWAY_PORT})"
+    GATEWAY_TLS_ENABLED="false"
+    GATEWAY_INTERNAL_PORT=$((GATEWAY_PORT + 1))
+    ENABLE_HTTPS_PROXY=true
+    HTTPS_PROXY_PORT="$GATEWAY_PORT"
+    echo "INFO: Network mode: lan_https (HTTPS proxy on 0.0.0.0:${GATEWAY_PORT}, gateway loopback on :${GATEWAY_INTERNAL_PORT})"
     ;;
   tailnet_serve)
     GATEWAY_BIND="loopback"
@@ -157,6 +154,7 @@ case "$NETWORK_MODE" in
   reverse_proxy)
     GATEWAY_BIND="loopback"
     GATEWAY_AUTH_MODE="trusted-proxy"
+    GATEWAY_TLS_ENABLED="false"
     if [ -z "$GATEWAY_TRUSTED_PROXIES" ]; then
       echo "ERROR: network_mode=reverse_proxy requires gateway_trusted_proxies."
       echo "ERROR: Set it to your reverse proxy's IP/CIDR (e.g. 127.0.0.1,192.168.88.0/24)."
@@ -174,12 +172,15 @@ case "$NETWORK_MODE" in
 esac
 
 export NETWORK_MODE
+export ACCESS_MODE="$NETWORK_MODE"
 export GATEWAY_BIND
 export GATEWAY_AUTH_MODE
 export GATEWAY_TLS_ENABLED
 export GATEWAY_TLS_AUTO
 export TAILSCALE_MODE
 export GATEWAY_INTERNAL_PORT
+export ENABLE_HTTPS_PROXY
+export HTTPS_PROXY_PORT
 
 # Export mDNS hostname to OpenClaw's bundled bonjour plugin
 # Sanitize: strip .local suffix, keep valid DNS labels only
@@ -1310,7 +1311,9 @@ print(json.load(open(p)).get('gateway',{}).get('auth',{}).get('token',''), end='
   fi
 
   GW_PUBLIC_URL="$GW_PUBLIC_URL" GW_TOKEN="$token" TERMINAL_PORT="$TERMINAL_PORT" \
-    TUI_PORT="$TUI_PORT" GATEWAY_PORT="$GATEWAY_PORT" NETWORK_MODE="$NETWORK_MODE" \
+    TUI_PORT="$TUI_PORT" \
+    ENABLE_HTTPS_PROXY="$ENABLE_HTTPS_PROXY" HTTPS_PROXY_PORT="$HTTPS_PROXY_PORT" \
+    GATEWAY_INTERNAL_PORT="$GATEWAY_INTERNAL_PORT" ACCESS_MODE="$ACCESS_MODE" \
     DISK_TOTAL="$disk_total" DISK_USED="$disk_used" DISK_AVAIL="$disk_avail" DISK_PCT="$disk_pct" \
     NGINX_LOG_LEVEL="$NGINX_LOG_LEVEL" \
     python3 /render_nginx.py

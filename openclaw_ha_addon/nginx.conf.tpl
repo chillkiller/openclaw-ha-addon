@@ -57,16 +57,11 @@ http {
       add_header Content-Disposition 'attachment; filename="openclaw-ca.crt"';
     }
 
-    # Health check — proxy to actual OpenClaw Gateway health endpoint
+    # Health check
     location = /api/health {
       access_log off;
-      __API_HEALTH_PROXY_BLOCK__
-      proxy_http_version 1.1;
-      proxy_set_header Host $host;
-      proxy_set_header X-Real-IP $remote_addr;
-      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-      proxy_set_header X-Forwarded-Proto $scheme;
-      proxy_connect_timeout 5s;
+      return 200 "OK\n";
+      add_header Content-Type text/plain;
     }
 
     # Add-on log tail (read-only)
@@ -77,43 +72,25 @@ http {
     }
 
     # WebUI — OpenClaw Gateway (loopback, WebSocket-capable)
-    # Scheme is chosen by render_nginx.py based on NETWORK_MODE.
-    # External HTTPS access is handled by __HTTPS_GATEWAY_BLOCK__.
     location ^~ /webui/ {
-__WEBUI_PROXY_BLOCK__
+      proxy_pass http://127.0.0.1:__GATEWAY_INTERNAL_PORT__/;
       proxy_http_version 1.1;
       proxy_set_header Upgrade $http_upgrade;
       proxy_set_header Connection $connection_upgrade;
       proxy_set_header Host $host;
       proxy_set_header X-Real-IP $remote_addr;
-      proxy_set_header X-Forwarded-User "homeassistant";
       proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
       proxy_set_header X-Forwarded-Proto $scheme;
+      __WEBUI_AUTH_HEADER__
       proxy_read_timeout 86400s;
       proxy_send_timeout 86400s;
       proxy_buffering off;
-
-      # OpenClaw ControlUI sends DENY framing headers by default. Strip them
-      # here so the UI can be embedded inside the HA Ingress iframe.
-      proxy_hide_header X-Frame-Options;
-      proxy_hide_header Content-Security-Policy;
-      add_header Content-Security-Policy "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; script-src 'self'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' https://fonts.gstatic.com; worker-src 'self'; connect-src 'self' ws: wss: https://api.openai.com https://tweakcn.com" always;
-      add_header X-Frame-Options "SAMEORIGIN" always;
-
-      # Inject the HA Ingress base path into the ControlUI HTML so the bundle
-      # resolves the WebSocket URL against the external Ingress path instead of
-      # window.location. This makes the WebUI work via Nabu Casa remote access.
-      # Match both terminal-enabled="false" and "true" so the injection works
-      # regardless of whether the terminal tab is enabled.
-      sub_filter "data-openclaw-terminal-enabled=\"false\" lang=\"en\"" "data-openclaw-terminal-enabled=\"false\" lang=\"en\" data-openclaw-control-ui-base-path=\"$http_x_ingress_path/webui/\"";
-      sub_filter "data-openclaw-terminal-enabled=\"true\" lang=\"en\"" "data-openclaw-terminal-enabled=\"true\" lang=\"en\" data-openclaw-control-ui-base-path=\"$http_x_ingress_path/webui/\"";
-      sub_filter_once on;
     }
 
-    # Web terminal (ttyd) — keep /terminal/ prefix because ttyd is started with -b /terminal
+    # Web terminal (ttyd)
     location = /terminal { return 302 /terminal/; }
     location ^~ /terminal/ {
-      proxy_pass http://127.0.0.1:__TERMINAL_PORT__;
+      proxy_pass http://127.0.0.1:__TERMINAL_PORT__/;
       proxy_http_version 1.1;
       proxy_set_header Upgrade $http_upgrade;
       proxy_set_header Connection $connection_upgrade;
@@ -155,10 +132,5 @@ __WEBUI_PROXY_BLOCK__
     }
   }
 
-  # HTTPS reverse proxy removed — OpenClaw terminates TLS natively via gateway.tls.
+  __HTTPS_GATEWAY_BLOCK__
 }
-
-
-
-
-
