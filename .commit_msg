@@ -1,8 +1,0 @@
-fix(nginx): set control-ui base path for OpenClaw 2026.8.2
-
-OpenClaw 2026.8.2 already includes data-openclaw-control-ui-base-path=\"\" in
-the ControlUI HTML. Replace the empty value with the HA Ingress path via
-sub_filter so assets and WebSocket URLs resolve correctly inside Ingress.
-This fixes the 404 errors on /assets/* and the blank WebUI iframe.
-
-Bump version to 0.7.10.14.
