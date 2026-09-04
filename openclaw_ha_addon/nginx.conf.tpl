@@ -101,7 +101,10 @@ http {
       # Inject the HA Ingress base path into the ControlUI HTML so the bundle
       # resolves the WebSocket URL against the external Ingress path instead of
       # window.location. This makes the WebUI work via Nabu Casa remote access.
+      # Match both terminal-enabled="false" and "true" so the injection works
+      # regardless of whether the terminal tab is enabled.
       sub_filter "data-openclaw-terminal-enabled=\"false\" lang=\"en\"" "data-openclaw-terminal-enabled=\"false\" lang=\"en\" data-openclaw-control-ui-base-path=\"$http_x_ingress_path/webui/\"";
+      sub_filter "data-openclaw-terminal-enabled=\"true\" lang=\"en\"" "data-openclaw-terminal-enabled=\"true\" lang=\"en\" data-openclaw-control-ui-base-path=\"$http_x_ingress_path/webui/\"";
       sub_filter_once on;
     }
 

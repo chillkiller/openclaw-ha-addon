@@ -1,3 +1,9 @@
+## [0.7.10.1] - 2026-09-04
+
+### Fixed
+- **TUI startup**: `openclaw tui` now starts with `--session agent:coding-main:main` to satisfy OpenClaw 2026.8.2 multi-agent requirement.
+- **Ingress WebUI**: nginx `sub_filter` now injects the HA Ingress base path for both `data-openclaw-terminal-enabled="false"` and `"true"`, fixing WebUI inside HA Ingress.
+
 ## [0.7.9.28] - 2026-09-03
 
 ### Fixed

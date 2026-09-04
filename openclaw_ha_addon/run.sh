@@ -1241,7 +1241,7 @@ if [ "$ENABLE_TUI" = "true" ] || [ "$ENABLE_TUI" = "1" ]; then
     echo ""
   fi
   echo "Starting OpenClaw TUI (ttyd) on 127.0.0.1:${TUI_PORT} ..."
-  ttyd -W -i 127.0.0.1 -p "${TUI_PORT}" -b /tui openclaw tui &
+  ttyd -W -i 127.0.0.1 -p "${TUI_PORT}" -b /tui openclaw tui --session agent:coding-main:main &
   TTYD_TUI_PID=$!
   echo "$TTYD_TUI_PID" > "$TTYD_TUI_PID_FILE"
   echo "TUI ttyd started with PID $TTYD_TUI_PID"
