@@ -77,14 +77,10 @@ http {
     }
 
     # WebUI — OpenClaw Gateway (loopback, WebSocket-capable)
-    # When the gateway runs with TLS (lan_https/tailnet modes) we proxy to
-    # https://127.0.0.1 and accept the auto-generated self-signed certificate.
+    # For Ingress we always proxy via plain HTTP to the loopback gateway.
+    # External HTTPS access is handled by __HTTPS_GATEWAY_BLOCK__.
     location ^~ /webui/ {
-      set $gw_scheme http;
-      if ("__GATEWAY_TLS_ENABLED__" = "true") {
-        set $gw_scheme https;
-      }
-      proxy_pass $gw_scheme://127.0.0.1:__GATEWAY_PORT__/;
+      proxy_pass http://127.0.0.1:__GATEWAY_PORT__/;
       proxy_http_version 1.1;
       proxy_set_header Upgrade $http_upgrade;
       proxy_set_header Connection $connection_upgrade;
@@ -96,8 +92,6 @@ http {
       proxy_read_timeout 86400s;
       proxy_send_timeout 86400s;
       proxy_buffering off;
-      proxy_ssl_verify off;
-      proxy_ssl_session_reuse on;
 
       # OpenClaw ControlUI sends DENY framing headers by default. Strip them
       # here so the UI can be embedded inside the HA Ingress iframe.
@@ -163,3 +157,4 @@ http {
 
   # HTTPS reverse proxy removed — OpenClaw terminates TLS natively via gateway.tls.
 }
+
