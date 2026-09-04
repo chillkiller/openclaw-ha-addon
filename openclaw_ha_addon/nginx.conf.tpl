@@ -77,10 +77,10 @@ http {
     }
 
     # WebUI — OpenClaw Gateway (loopback, WebSocket-capable)
-    # For Ingress we always proxy via plain HTTP to the loopback gateway.
+    # Scheme is chosen by render_nginx.py based on NETWORK_MODE.
     # External HTTPS access is handled by __HTTPS_GATEWAY_BLOCK__.
     location ^~ /webui/ {
-      proxy_pass http://127.0.0.1:__GATEWAY_PORT__/;
+__WEBUI_PROXY_BLOCK__
       proxy_http_version 1.1;
       proxy_set_header Upgrade $http_upgrade;
       proxy_set_header Connection $connection_upgrade;
@@ -157,4 +157,5 @@ http {
 
   # HTTPS reverse proxy removed — OpenClaw terminates TLS natively via gateway.tls.
 }
+
 
