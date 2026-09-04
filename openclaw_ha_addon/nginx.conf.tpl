@@ -6,6 +6,7 @@ error_log stderr notice;
 events { worker_connections 1024; }
 
 http {
+  gzip off;
   include       /etc/nginx/mime.types;
   default_type  application/octet-stream;
 
@@ -98,7 +99,12 @@ http {
       # path so the bundle resolves WebSocket and asset URLs against the Ingress
       # route instead of window.location. This fixes 404s for /assets/* etc.
       sub_filter 'data-openclaw-control-ui-base-path=""' 'data-openclaw-control-ui-base-path="$http_x_ingress_path/webui/"';
-      sub_filter_once on;
+      sub_filter "href=\"/favicon" "href=\"$http_x_ingress_path/webui/favicon";
+      sub_filter "href=\"/apple-touch-icon" "href=\"$http_x_ingress_path/webui/apple-touch-icon";
+      sub_filter "href=\"/manifest.webmanifest" "href=\"$http_x_ingress_path/webui/manifest.webmanifest";
+      sub_filter "href=\"/assets/" "href=\"$http_x_ingress_path/webui/assets/";
+      sub_filter "src=\"/assets/" "src=\"$http_x_ingress_path/webui/assets/";
+      sub_filter_once off;
     }
 
     # Web terminal (ttyd)
