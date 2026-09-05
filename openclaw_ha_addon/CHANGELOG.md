@@ -1,3 +1,17 @@
+## [0.7.10.25] - 2026-09-05
+
+### Changed
+- **OpenClaw**: Update to `2026.9.1`.
+- **Add-on schema**: Add `cron_skip_missed_jobs` (default `true`) and `blocked_hostnames` options for OpenClaw 2026.9.1 configuration controls.
+- **run.sh**: Log detected OpenClaw version at startup for easier support diagnosis.
+
+### Fixed
+- **Ingress WebUI asset loading**: `nginx.conf.tpl` already forces uncompressed upstream HTML and rewrites ControlUI asset paths; kept compatible with 2026.9.1. Verify after upgrade.
+
+### Notes
+- OpenClaw 2026.9.1 introduces `cron.skipMissedJobs` and `blockedHostnames`. Back up `/config/clawd` before first start after update.
+
+
 ## [0.7.10.17] - 2026-09-04
 
 ### Fixed

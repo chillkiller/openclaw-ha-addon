@@ -1,7 +1,7 @@
-# OpenClaw Home Assistant Addon v0.7.10.24 Configuration
-# FIX: Force uncompressed ControlUI HTML from gateway so nginx sub_filter can rewrite asset links
+# OpenClaw Home Assistant Addon v0.7.10.25 Configuration
+# FIX: OpenClaw 2026.9.1 compatibility — ingress asset loading, cron_skip_missed_jobs schema
 name: OpenClaw Assistant
-version: "0.7.10.24"
+version: "0.7.10.25"
 slug: openclaw_ha_addon
 description: OpenClaw Home Assistant Addon (Bookworm Full-Stack)
 url: https://github.com/chillkiller/openclaw-ha-addon
@@ -155,6 +155,15 @@ options:
   # Example: "/share/scripts/my-init.sh"
   custom_init_script: ""
 
+  # Skip missed cron executions after a restart. OpenClaw 2026.9.1 introduces
+  # cron.skipMissedJobs; for an HA add-on that restarts frequently, true avoids
+  # accidental backfills of overdue recurring jobs.
+  cron_skip_missed_jobs: true
+
+  # Comma-separated list of hostnames blocked from outbound SSRP (OpenClaw 2026.9.1).
+  # Leave empty to allow all hostnames. Example: "router.lan,192.168.178.1"
+  blocked_hostnames: ""
+
 schema:
   timezone: str
   enable_terminal: bool?
@@ -194,5 +203,7 @@ schema:
   ollama_base_url: str?
   runtime_apt_packages: str?
   custom_init_script: str?
+  cron_skip_missed_jobs: bool?
+  blocked_hostnames: str?
 
 

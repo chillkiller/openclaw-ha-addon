@@ -1,5 +1,5 @@
-# OpenClaw HA-Addon v0.7.9.30 — Debian Bookworm Full-Stack
-# OpenClaw 2026.8.2 + node-llama-cpp@3.20.0 + mcporter@0.12.3 + CUPS/Scanner + crawl4ai + Go-PATH-Fix + D-Bus/Avahi
+# OpenClaw HA-Addon v0.7.10.25 — Debian Bookworm Full-Stack
+# OpenClaw 2026.9.1 + node-llama-cpp@3.20.0 + mcporter@0.12.3 + CUPS/Scanner + crawl4ai + Go-PATH-Fix + D-Bus/Avahi
 # Builder stage removed (dead code since v0.7.5.1 — never wired)
 # Build dependencies are kept in the final image so runtime native builds work
 # NOTE: Since HA Supervisor 2026.04, build.yaml is obsolete. Base image must be
@@ -9,7 +9,7 @@ FROM ghcr.io/home-assistant/${BUILD_ARCH}-base-debian:bookworm
 
 # Labels required when not using the official GitHub builder action
 LABEL \
-  io.hass.version="0.7.10.24" \
+  io.hass.version="0.7.10.25" \
   io.hass.type="app" \
   io.hass.arch="aarch64|amd64"
 
@@ -266,7 +266,7 @@ RUN ARCH=$(echo ${TARGETARCH:-$(dpkg --print-architecture)} | sed 's|arm64|aarch
 # conservative thread count. The compiled binary is baked into the image.
 # =============================================================================
 ENV NODE_LLAMA_CPP_POSTINSTALL=skip
-RUN npm install -g openclaw@2026.8.2 \
+RUN npm install -g openclaw@2026.9.1 \
     && npm install -g node-llama-cpp@3.20.0 \
     && npm install -g mcporter@0.12.3 \
     && npm install -g pnpm \

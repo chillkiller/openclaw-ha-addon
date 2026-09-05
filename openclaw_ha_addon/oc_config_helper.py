@@ -319,6 +319,50 @@ def set_mdns_settings(mode: str):
     return True
 
 
+def apply_cron_settings(skip_missed_jobs: bool):
+    """Apply OpenClaw 2026.9.1 cron.skipMissedJobs setting."""
+    cfg = read_config() or {}
+    cron = cfg.setdefault("cron", {})
+
+    if cron.get("skipMissedJobs") != skip_missed_jobs:
+        cron["skipMissedJobs"] = skip_missed_jobs
+        if write_config(cfg):
+            print(f"INFO: cron.skipMissedJobs -> {skip_missed_jobs}")
+            return True
+        print("ERROR: Failed to write cron settings")
+        return False
+
+    print(f"INFO: cron.skipMissedJobs already correct ({skip_missed_jobs})")
+    return True
+
+
+def apply_blocked_hostnames(blocked_hostnames_csv: str):
+    """Apply OpenClaw 2026.9.1 blockedHostnames SSRF policy."""
+    cfg = read_config() or {}
+    security = cfg.setdefault("security", {})
+
+    raw = [h.strip() for h in blocked_hostnames_csv.split(",") if h.strip()]
+    desired = raw if raw else []
+
+    current = security.get("blockedHostnames", [])
+    if not isinstance(current, list):
+        current = []
+
+    if current != desired:
+        if desired:
+            security["blockedHostnames"] = desired
+        elif "blockedHostnames" in security:
+            del security["blockedHostnames"]
+        if write_config(cfg):
+            print(f"INFO: security.blockedHostnames -> {desired}")
+            return True
+        print("ERROR: Failed to write blockedHostnames")
+        return False
+
+    print(f"INFO: security.blockedHostnames already correct ({desired})")
+    return True
+
+
 def cleanup_stale_config_keys():
     """Remove stale/invalid config keys no longer supported by OpenClaw."""
     cfg = read_config()
@@ -433,6 +477,8 @@ def main():
         print("  apply-gateway-settings <mode> <remote_url> <bind> <port> <openai_api> <auth_mode> <trusted_proxies>  (deprecated)")
         print("  set-control-ui-origins <origins_csv> [additional_csv] [disable_device_auth]")
         print("  set-mdns-settings <mode> [port] [hostname] [interface]")
+        print("  apply-cron-settings <skip_missed_jobs:true|false>")
+        print("  apply-blocked-hostnames <csv>")
         print("  cleanup-stale-config")
         print("  get <key>")
         print("  set <key> <value>")
@@ -515,6 +561,19 @@ def main():
             sys.exit(1)
         mode = sys.argv[2]
         sys.exit(0 if set_mdns_settings(mode) else 1)
+
+    elif cmd == "apply-cron-settings":
+        if len(sys.argv) != 3:
+            print("Usage: oc_config_helper.py apply-cron-settings <skip_missed_jobs:true|false>")
+            sys.exit(1)
+        skip = sys.argv[2].strip().lower() == "true"
+        sys.exit(0 if apply_cron_settings(skip) else 1)
+
+    elif cmd == "apply-blocked-hostnames":
+        if len(sys.argv) != 3:
+            print("Usage: oc_config_helper.py apply-blocked-hostnames <csv>")
+            sys.exit(1)
+        sys.exit(0 if apply_blocked_hostnames(sys.argv[2]) else 1)
 
     elif cmd == "mdns-nginx-snippet":
         if len(sys.argv) not in (4, 5):
