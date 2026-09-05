@@ -48,32 +48,32 @@ http {
   }
 
   map $ingress_path $asset_href_prefix {
-    ""      "assets/";
+    ""      "./assets/";
     default "$ingress_path/webui/assets/";
   }
 
   map $ingress_path $asset_src_prefix {
-    ""      "assets/";
+    ""      "./assets/";
     default "$ingress_path/webui/assets/";
   }
 
   map $ingress_path $favicon_prefix {
-    ""      "favicon";
+    ""      "./favicon";
     default "$ingress_path/webui/favicon";
   }
 
   map $ingress_path $apple_prefix {
-    ""      "apple-touch-icon";
+    ""      "./apple-touch-icon";
     default "$ingress_path/webui/apple-touch-icon";
   }
 
   map $ingress_path $manifest_prefix {
-    ""      "manifest.webmanifest";
+    ""      "./manifest.webmanifest";
     default "$ingress_path/webui/manifest.webmanifest";
   }
 
   map $ingress_path $theme_prefix {
-    ""      "themes/";
+    ""      "./themes/";
     default "$ingress_path/webui/themes/";
   }
 
@@ -133,6 +133,7 @@ http {
     # keep the request as plain local-direct traffic.
     location ^~ /webui/ {
       proxy_pass http://127.0.0.1:__GATEWAY_INTERNAL_PORT__/;
+      proxy_set_header Accept-Encoding identity;
       proxy_http_version 1.1;
       proxy_set_header Upgrade $http_upgrade;
       proxy_set_header Connection $connection_upgrade;
