@@ -1,6 +1,9 @@
 memory/
+memory/**
 *.log
 AUDIT_REPORT_*.md
+AUDIT-*.md
+openclaw_ha_addon/AUDIT-*.md
 DESIGN-network-modes.md
 __pycache__/
 *.pyc
