@@ -94,6 +94,30 @@
 - Line-ending normalization in `run.sh` so HA picks up the file correctly.
 
 
-## 0.7.10.26
-- Bump OpenClaw to 2026.9.2 (no breaking add-on changes).
+## [0.7.10.28] - 2026-09-08
+
+### Changed
+- **OpenClaw**: Update to `2026.9.3`.
+- **Node.js**: NodeSource `node_24.x` channel provides Node 24.20.0, satisfying the OpenClaw 2026.9.3 minimum requirement (Node 24.16.0+ on 24.x).
+
+### Fixed
+- **Release build correctness**: Previous 0.7.10.26/27 releases bumped the add-on version while the Dockerfile still installed OpenClaw 2026.9.1/2026.9.2. This release aligns add-on version, Dockerfile, and installed OpenClaw version.
+
+### Notes
+- OpenClaw 2026.9.3 requires Node 24.16.0+ or Node 26.1.0+. The add-on continues to use the NodeSource 24.x LTS channel.
+- OpenClaw 2026.9.3 introduces breaking SDK changes for plugin authors (execution-policy SDK, approval SDK, SDK aliases, search/directory callbacks) and agent-owned Workshop skills. These do not affect the add-on image itself but may affect custom plugins/skills you develop.
+- Back up `/config/clawd` before first start after update.
+
+## [0.7.10.27] - 2026-09-08
+
+### Fixed
+- **Dockerfile alignment**: Actually install `openclaw@2026.9.2` (the 0.7.10.26 release only updated `config.yaml` version metadata). Bumped add-on version to 0.7.10.27 so Home Assistant rebuilds the image.
+
+## [0.7.10.26] - 2026-09-08
+
+### Changed
+- **OpenClaw**: Intended update to `2026.9.2`.
+
+### Notes
+- This release did not update the Dockerfile install line, so the built image still contained OpenClaw 2026.9.1. Superseded by 0.7.10.27 and 0.7.10.28.
 - Compatibility note: preserves active settings, enabled skills, and default-agent ownership across Gateway restarts triggered by HA add-on updates.
