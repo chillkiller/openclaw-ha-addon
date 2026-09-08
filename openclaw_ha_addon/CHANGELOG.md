@@ -93,3 +93,7 @@
 ### Fixed
 - Line-ending normalization in `run.sh` so HA picks up the file correctly.
 
+
+## 0.7.10.26
+- Bump OpenClaw to 2026.9.2 (no breaking add-on changes).
+- Compatibility note: preserves active settings, enabled skills, and default-agent ownership across Gateway restarts triggered by HA add-on updates.

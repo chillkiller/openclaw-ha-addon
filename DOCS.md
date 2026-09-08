@@ -240,6 +240,23 @@ This means the browser is connecting over plain HTTP. **Solutions**:
 - Set `access_mode` to **lan_reverse_proxy** and use an HTTPS reverse proxy
 - Use SSH port forwarding to `localhost` (desktop only)
 
+### Home Assistant Ingress and secure context
+
+The OpenClaw ControlUI uses browser APIs that require a **secure context** (HTTPS or `localhost`). Home Assistant Ingress serves the add-on over plain HTTP when your Home Assistant instance is **not configured for HTTPS**.
+
+When you open the ControlUI through Ingress in that case, you may see errors such as:
+
+> Attachment storage not available. Use HTTPS or localhost...
+
+This is expected browser behavior, not an add-on bug.
+
+To get full ControlUI functionality, use one of these methods:
+- **Enable HTTPS on Home Assistant** (e.g. Nginx Proxy Manager, Tailscale Serve, Let's Encrypt, Nabu Casa). Ingress then becomes a secure context automatically.
+- Use `access_mode: lan_https` and open `https://<ha-ip>:18789` directly.
+- Use SSH port forwarding to `http://localhost:18789` (desktop only).
+
+The embedded **Terminal** on the add-on landing page still works over plain HTTP.
+
 ### Unauthorized error
 
 If the Gateway UI shows **Unauthorized**, re-check your token:
@@ -873,6 +890,18 @@ Go to **Settings → Add-ons → OpenClaw Assistant → Log** tab. Logs show sta
 1. **Easiest**: Set `access_mode` to **lan_https** in add-on Configuration → restart. This adds a built-in HTTPS proxy with zero external setup.
 2. **External proxy**: Set `access_mode` to **lan_reverse_proxy** and configure NPM/Caddy/Traefik with TLS.
 3. **SSH tunnel** (desktop only): `ssh -L 18789:127.0.0.1:18789 user@ha-ip` then open `http://localhost:18789`.
+
+### "attachment storage not available" inside Home Assistant Ingress
+
+**Symptom**: When opening the ControlUI via the add-on's **Open Web UI** button inside Home Assistant, the browser shows an error like "attachment storage not available" or "Use HTTPS or localhost".
+
+**Cause**: The ControlUI uses browser APIs (IndexedDB, CacheStorage, Clipboard, etc.) that require a **secure context** (HTTPS or `localhost`). Home Assistant Ingress is served over plain HTTP whenever Home Assistant itself is not configured for HTTPS. The browser therefore blocks those APIs inside the Ingress iframe.
+
+**Fix**: Enable HTTPS for your Home Assistant instance. Once HA is on HTTPS, Ingress is also a secure context and the ControlUI works fully. Alternative workarounds:
+- Use `access_mode: lan_https` and open `https://<ha-ip>:18789` directly.
+- Use SSH port forwarding to `http://localhost:18789` (desktop only).
+
+The embedded **Terminal** on the add-on landing page still works over plain HTTP.
 
 ### "disconnected (1008): origin not allowed"
 
