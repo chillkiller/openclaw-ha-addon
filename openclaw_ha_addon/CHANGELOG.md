@@ -94,6 +94,16 @@
 - Line-ending normalization in `run.sh` so HA picks up the file correctly.
 
 
+## [0.7.10.29] - 2026-09-12
+
+### Changed
+- **OpenClaw**: Update to `2026.9.4`.
+- **Add-on version**: Bump to `0.7.10.29`; Dockerfile and metadata aligned.
+
+### Notes
+- OpenClaw 2026.9.4 introduces safer rollback for compatible failed updates. Database migrations still require a verified pre-update backup; back up `/config/clawd` before first start after update.
+- No new add-on schema options in this release.
+
 ## [0.7.10.28] - 2026-09-08
 
 ### Changed

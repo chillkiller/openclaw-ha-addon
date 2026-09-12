@@ -1,4 +1,9 @@
 
+## 0.7.10.29
+- Update OpenClaw to **2026.9.4**.
+- No schema or Node changes required; NodeSource `node_24.x` (Node 24.20.0) continues to satisfy OpenClaw's minimum requirement.
+- Highlights: safer rollback for compatible failed updates, unified Plugins workspace in Control UI, terminal question prompts, improved conversation-history recovery, read-only config mode via `OPENCLAW_CONFIG_READONLY=1`.
+
 ## 0.7.10.28
 - Update OpenClaw to **2026.9.3**.
 - Align add-on version, Dockerfile, and installed OpenClaw version (fixes prior 0.7.10.26/27 mismatch where the image still contained older OpenClaw releases).

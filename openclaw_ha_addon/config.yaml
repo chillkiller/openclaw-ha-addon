@@ -1,7 +1,7 @@
-# OpenClaw Home Assistant Addon v0.7.10.28 Configuration
-# FIX: OpenClaw 2026.9.3 compatibility — ingress asset loading, cron_skip_missed_jobs schema
+# OpenClaw Home Assistant Addon v0.7.10.29 Configuration
+# OpenClaw 2026.9.4 — safer update rollback, unified Plugins workspace, terminal prompts
 name: OpenClaw Assistant
-version: "0.7.10.28"
+version: "0.7.10.29"
 slug: openclaw_ha_addon
 description: OpenClaw Home Assistant Addon (Bookworm Full-Stack)
 url: https://github.com/chillkiller/openclaw-ha-addon
