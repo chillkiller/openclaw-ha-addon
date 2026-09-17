@@ -137,3 +137,9 @@
   OpenClaw 2026.9.4 no longer ships the empty `data-openclaw-control-ui-base-path` attribute,
   so nginx now adds it explicitly when missing. This fixes "Gateway not reachable 127.0.0.1:18789"
   when loading the dashboard through the HA Ingress iframe.
+
+## 0.7.10.31
+- fix(ingress): inject a client-side base-path fallback for OpenClaw 2026.9.4
+  when HA Supervisor does not pass X-Ingress-Path (e.g. Companion App iframe).
+  The ControlUI now reads `data-openclaw-control-ui-base-path` from the actual
+  browser URL instead of falling back to `127.0.0.1:18789`.

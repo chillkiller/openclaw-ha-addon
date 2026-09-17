@@ -166,6 +166,15 @@ http {
       sub_filter '<html ' '<html data-openclaw-control-ui-base-path="$control_ui_base_path" ';
       sub_filter 'data-openclaw-control-ui-base-path=""' 'data-openclaw-control-ui-base-path="$control_ui_base_path"';
 
+      # OpenClaw 2026.9.4 reads the base path from a data attribute on <html>.
+      # When HA Supervisor does not send X-Ingress-Path (e.g. for iframe content
+      # inside the Companion App) the nginx variable above is empty and the
+      # attribute ends up as "". The ControlUI then falls back to ws://127.0.0.1:18789.
+      # We inject a tiny script immediately after <head> that derives the base
+      # path from the actual browser URL and sets the attribute before any
+      # ControlUI script runs. This is idempotent and only overrides an empty value.
+      sub_filter '<head>' '<head><script data-cfasync="false">(function(){var p=window.location.pathname||"/";var i=p.indexOf("/webui/");var b=i>=0?p.slice(0,i+6):"";var e=document.documentElement;var a="data-openclaw-control-ui-base-path";if(b&&!e.getAttribute(a))e.setAttribute(a,b);})();</script>';
+
       # Rewrite absolute asset links: relative when no Ingress path is known,
       # absolute under the Ingress path when X-Ingress-Path is sent. nginx
       # proxies both /webui/assets/* and /api/hassio_ingress/*/webui/assets/*
