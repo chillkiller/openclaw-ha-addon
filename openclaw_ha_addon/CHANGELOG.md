@@ -131,3 +131,9 @@
 ### Notes
 - This release did not update the Dockerfile install line, so the built image still contained OpenClaw 2026.9.1. Superseded by 0.7.10.27 and 0.7.10.28.
 - Compatibility note: preserves active settings, enabled skills, and default-agent ownership across Gateway restarts triggered by HA add-on updates.
+
+## 0.7.10.30
+- fix(ingress): inject OpenClaw ControlUI base path on <html> tag for 2026.9.4.
+  OpenClaw 2026.9.4 no longer ships the empty `data-openclaw-control-ui-base-path` attribute,
+  so nginx now adds it explicitly when missing. This fixes "Gateway not reachable 127.0.0.1:18789"
+  when loading the dashboard through the HA Ingress iframe.
