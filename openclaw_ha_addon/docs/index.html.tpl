@@ -37,9 +37,11 @@
       <span class="pill" id="gwStatus">Gateway: …</span>
       <span class="pill" id="ingressStatus">Ingress: …</span>
       <span class="pill" id="versionStatus">Version: __OPENCLAW_VERSION__</span>
+      <span class="pill" id="modeStatus">Mode: __ACCESS_MODE__</span>
+      <span class="pill" id="networkStatus">Network: __NETWORK_MODE__</span>
     </div>
 
-    <div class="tip">
+    <div class="tip" id="staticTip" style="display:none">
       ℹ️ Diese Seite zeigt Live-Status vom Ingress-Proxy. Detaillierte Agent-/Modell-/Token-Daten stehen über den <b>TUI</b>- oder <b>Terminal</b>-Tab zur Verfügung.
     </div>
 
@@ -62,12 +64,7 @@
         <tr><th>Komponente</th><th>Standard-Port</th><th>HA Ingress-Port</th></tr>
       </thead>
       <tbody>
-        <tr><td>Hermes Agent</td><td>8080 / 8443 / 9119</td><td>49169</td></tr>
         <tr><td>OpenClaw Assistant</td><td>18789</td><td>49200</td></tr>
-        <tr><td>n8n</td><td>5678</td><td>49201</td></tr>
-        <tr><td>Ollama</td><td>11434</td><td>49202</td></tr>
-        <tr><td>Unsloth Studio</td><td>9000</td><td>49203</td></tr>
-        <tr><td>ComfyUI</td><td>8188</td><td>49204</td></tr>
       </tbody>
     </table>
 
@@ -109,7 +106,8 @@ tail -f /config/clawd/logs/gateway_startup.log</pre>
 
       async function refresh() {
         try {
-          const r = await fetch('./api/health', { cache: 'no-store' });
+          // Docs is served under /docs/, so ../api/health resolves to /api/health in Ingress.
+          const r = await fetch('../api/health', { cache: 'no-store' });
           const data = await r.json();
           if (data && data.ok) {
             setPill(gwStatus, 'Gateway: reachable', 'ok');
@@ -122,8 +120,8 @@ tail -f /config/clawd/logs/gateway_startup.log</pre>
           setPill(ingressStatus, 'Ingress: unknown', 'warn');
         }
 
-        // Version comes from template substitution; if unknown, hide it
-        if (versionStatus.textContent.includes('unknown')) {
+        // If the version placeholder was not substituted, hide the static version pill.
+        if (versionStatus.textContent.includes('__OPENCLAW_VERSION__') || versionStatus.textContent.includes('unknown')) {
           versionStatus.style.display = 'none';
         }
       }

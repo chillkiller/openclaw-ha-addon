@@ -29,6 +29,7 @@ def main():
     https_port = os.environ.get('HTTPS_PROXY_PORT', '')
     internal_gw_port = os.environ.get('GATEWAY_INTERNAL_PORT', '')
     access_mode = os.environ.get('ACCESS_MODE', 'custom')
+    network_mode = os.environ.get('NETWORK_MODE', 'ingress_only')
     openclaw_version = os.environ.get('OPENCLAW_VERSION', 'unknown')
 
     # Tab visibility flags (render to JS booleans)
@@ -154,6 +155,17 @@ def main():
     out_dir.mkdir(parents=True, exist_ok=True)
     out_file = out_dir / 'index.html'
     out_file.write_text(landing)
+
+    # Render the Docs page with the same runtime values.
+    docs_tpl = Path('/openclaw_ha_addon/docs/index.html.tpl')
+    if docs_tpl.exists():
+        docs_out_dir = Path('/etc/nginx/html/docs')
+        docs_out_dir.mkdir(parents=True, exist_ok=True)
+        docs = docs_tpl.read_text()
+        docs = docs.replace('__OPENCLAW_VERSION__', openclaw_version)
+        docs = docs.replace('__ACCESS_MODE__', access_mode)
+        docs = docs.replace('__NETWORK_MODE__', network_mode)
+        (docs_out_dir / 'index.html').write_text(docs)
 
     # Ensure nginx can read it even if base image uses restrictive umask/permissions.
     try:

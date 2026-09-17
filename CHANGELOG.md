@@ -1,4 +1,11 @@
 
+## 0.7.11.2
+- Fix the Docs/Info tab showing unrendered placeholders (`__OPENCLAW_VERSION__`, `Gateway: unreachable`, `Ingress: unknown`):
+  - Convert `docs/index.html` into a rendered template (`docs/index.html.tpl`) so `render_nginx.py` can substitute version, access mode, and network mode at startup.
+  - Update Dockerfile to copy the template into the image.
+  - Correct the JS health probe path from `./api/health` to `../api/health` because the docs page is served under `/docs/`.
+  - Remove the unrelated AI-Stack port table entries (Hermes, n8n, Ollama, etc.) from the add-on docs page to avoid confusion.
+
 ## 0.7.11.1
 - Add `tui_session` configuration option (default `agent:main:main`) so the embedded OpenClaw TUI opens the correct default session after onboarding instead of hard-coded `agent:coding-main:main`.
 - Update `DOCS.md`:

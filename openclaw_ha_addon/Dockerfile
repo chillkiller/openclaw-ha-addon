@@ -9,7 +9,7 @@ FROM ghcr.io/home-assistant/${BUILD_ARCH}-base-debian:bookworm
 
 # Labels required when not using the official GitHub builder action
 LABEL \
-  io.hass.version="0.7.11.1" \
+  io.hass.version="0.7.11.2" \
   io.hass.type="app" \
   io.hass.arch="aarch64|amd64"
 
@@ -319,7 +319,7 @@ COPY nginx.conf.tpl /etc/nginx/nginx.conf.tpl
 COPY landing.html.tpl /etc/nginx/landing.html.tpl
 COPY acpx /openclaw_ha_addon/acpx
 COPY tui/index.html /openclaw_ha_addon/tui/index.html
-COPY docs/index.html /openclaw_ha_addon/docs/index.html
+COPY docs/index.html.tpl /openclaw_ha_addon/docs/index.html.tpl
 COPY loading.html /openclaw_ha_addon/loading.html
 COPY icon.png /openclaw_ha_addon/icon.png
 COPY logo.png /openclaw_ha_addon/logo.png
