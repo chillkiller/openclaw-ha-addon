@@ -155,25 +155,26 @@ http {
       add_header Content-Security-Policy "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' https://fonts.gstatic.com; worker-src 'self'; connect-src 'self' ws: wss: https://api.openai.com https://tweakcn.com" always;
       add_header X-Frame-Options "SAMEORIGIN" always;
 
-      # OpenClaw 2026.8.2+ ships the ControlUI without a
-      # data-openclaw-control-ui-base-path attribute. When HA Supervisor tells us
-      # the Ingress path, set it explicitly on the <html> tag so WebSocket/asset
-      # URLs resolve under /api/hassio_ingress/.../webui/. If the attribute is
-      # already present (older OpenClaw), replace it instead.
+      # OpenClaw 2026.8.2+ reads the base path from a data attribute on <html>.
+      # When HA Supervisor sends X-Ingress-Path, set the attribute server-side.
+      # When it doesn't (e.g. iframe/Companion App), a client-side script below
+      # derives the path from window.location.pathname. We replace an existing
+      # empty attribute to avoid duplicate attributes.
       sub_filter_types text/html;
       sub_filter_once off;
 
+      sub_filter '<html data-openclaw-control-ui-base-path=""' '<html data-openclaw-control-ui-base-path="$control_ui_base_path"';
       sub_filter '<html ' '<html data-openclaw-control-ui-base-path="$control_ui_base_path" ';
-      sub_filter 'data-openclaw-control-ui-base-path=""' 'data-openclaw-control-ui-base-path="$control_ui_base_path"';
 
-      # OpenClaw 2026.9.4 reads the base path from a data attribute on <html>.
-      # When HA Supervisor does not send X-Ingress-Path (e.g. for iframe content
-      # inside the Companion App) the nginx variable above is empty and the
-      # attribute ends up as "". The ControlUI then falls back to ws://127.0.0.1:18789.
-      # We inject a tiny script immediately after <head> that derives the base
-      # path from the actual browser URL and sets the attribute before any
-      # ControlUI script runs. This is idempotent and only overrides an empty value.
-      sub_filter '<head>' '<head><script data-cfasync="false">(function(){var p=window.location.pathname||"/";var i=p.indexOf("/webui/");var b=i>=0?p.slice(0,i+6):"";var e=document.documentElement;var a="data-openclaw-control-ui-base-path";if(b&&!e.getAttribute(a))e.setAttribute(a,b);})();</script>';
+      # OpenClaw 2026.9.4: when X-Ingress-Path is missing the attribute above is
+      # empty, so the ControlUI falls back to ws://127.0.0.1:18789. We inject a
+      # script immediately after <head> that:
+      #  - Derives the Ingress base path from window.location.pathname.
+      #  - Forces the data attribute on <html> (overwriting any duplicate/empty).
+      #  - Removes stale localStorage gatewayUrl/bootRecord entries that would
+      #    otherwise override the path and keep pointing at 127.0.0.1:18789.
+      # This runs before any ControlUI module evaluates.
+      sub_filter '<head>' '<head><script data-cfasync="false">(function(){var p=window.location.pathname||"/";var i=p.lastIndexOf("/webui/");var b=i>=0?p.slice(0,i+6):"";var e=document.documentElement;var a="data-openclaw-control-ui-base-path";if(b){e.removeAttribute(a);e.setAttribute(a,b);}try{var keys=Object.keys(localStorage);for(var k=0;k<keys.length;k++){var key=keys[k];if((key.indexOf("openclaw.control.gatewayUrl.v1:")===0||key.indexOf("openclaw.control.bootRecord.v1:")===0)&&localStorage.getItem(key)&&localStorage.getItem(key).indexOf("127.0.0.1:18789")>=0){localStorage.removeItem(key);}}}catch(_){}})();</script>';
 
       # Rewrite absolute asset links: relative when no Ingress path is known,
       # absolute under the Ingress path when X-Ingress-Path is sent. nginx
