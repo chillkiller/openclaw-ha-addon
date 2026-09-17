@@ -1,9 +1,4 @@
 
-## 0.7.10.32
-- Fix OpenClaw ControlUI ingress WebSocket fallback to `127.0.0.1:18789`:
-  - Remove duplicate `sub_filter` on `<html>` that produced an invalid double `data-openclaw-control-ui-base-path=""` attribute.
-  - Inject a client-side script that derives the HA Ingress base path from `window.location.pathname`, removes any duplicate attribute, and deletes stale `localStorage` gateway/boot-record entries that still contain `127.0.0.1:18789`.
-
 ## 0.7.10.29
 - Update OpenClaw to **2026.9.4**.
 - No schema or Node changes required; NodeSource `node_24.x` (Node 24.20.0) continues to satisfy OpenClaw's minimum requirement.
