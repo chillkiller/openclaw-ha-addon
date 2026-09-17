@@ -107,6 +107,7 @@
   const SHOW_DOCS = __SHOW_DOCS_JS__;
   const ACCESS_MODE = '__ACCESS_MODE__';
   const GATEWAY_TOKEN = '__GATEWAY_TOKEN__';
+  const GATEWAY_INTERNAL_PORT = '__GATEWAY_INTERNAL_PORT__';
 
   let inIframe;
   try { inIframe = window !== window.top; } catch (e) { inIframe = true; }
@@ -196,16 +197,30 @@
       .then(r => r.json())
       .then(data => {
         if (data && data.ok) {
-          statusGateway.textContent = 'Gateway online';
+          statusGateway.textContent = 'Ingress online';
           statusGateway.className = 'chip ok';
         } else {
           throw new Error('not ok');
         }
       })
       .catch(() => {
-        statusGateway.textContent = 'Gateway offline';
+        statusGateway.textContent = 'Ingress offline';
         statusGateway.className = 'chip err';
       });
+    // Also probe the actual OpenClaw gateway port for a deeper readiness check.
+    const gwPort = GATEWAY_INTERNAL_PORT || '';
+    if (gwPort) {
+      fetch('./webui/healthz', { cache: 'no-store' })
+        .then(r => { if (!r.ok) throw new Error('not ok'); })
+        .then(() => {
+          if (statusGateway.classList.contains('ok')) {
+            statusGateway.textContent = 'Gateway online';
+          }
+        })
+        .catch(() => {
+          // keep ingress status as the source of truth if gateway probe fails
+        });
+    }
   }
   pollGateway();
   setInterval(pollGateway, 15000);

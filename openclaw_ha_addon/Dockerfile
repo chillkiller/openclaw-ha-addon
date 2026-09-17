@@ -9,7 +9,7 @@ FROM ghcr.io/home-assistant/${BUILD_ARCH}-base-debian:bookworm
 
 # Labels required when not using the official GitHub builder action
 LABEL \
-  io.hass.version="0.7.10.29" \
+  io.hass.version="0.7.11.0" \
   io.hass.type="app" \
   io.hass.arch="aarch64|amd64"
 
@@ -332,9 +332,14 @@ RUN mkdir -p /config/.local/lib/python3.11/site-packages
 ENV PYTHONPATH=/config/.local/lib/python3.11/site-packages
 
 # Health check for Home Assistant Supervisor Watchdog
-# 120s start-period accounts for Homebrew sync, skill copy, and gateway init on slow hardware
+# 120s start-period accounts for Homebrew sync, skill copy, and gateway init on slow hardware.
+# /api/health proves nginx is up; /startupz proves the OpenClaw gateway is ready for traffic.
+# The gateway port is read at check time from the persisted config so it works across
+# ingress_only / lan_http / lan_https internal port differences.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://localhost:49200/api/health || exit 1
+  CMD sh -c 'GW_PORT=$(jq -r ".gateway.port // 18789" /config/.openclaw/openclaw.json 2>/dev/null || echo 18789); \
+    wget --no-verbose --tries=1 --spider http://localhost:49200/api/health \
+    && wget --no-verbose --tries=1 --spider http://127.0.0.1:${GW_PORT}/startupz || exit 1'
 
 ENTRYPOINT [ "/usr/bin/tini", "-g", "--" ]
 CMD [ "/run.sh" ]

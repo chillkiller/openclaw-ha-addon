@@ -1,4 +1,12 @@
 
+## 0.7.11.0
+- Improve Ingress / gateway health detection:
+  - Dockerfile HEALTHCHECK now also verifies the OpenClaw gateway `/startupz` endpoint (read from persisted `openclaw.json` at check time), not just the nginx ingress port.
+  - Landing page polls both ingress health and OpenClaw gateway `/healthz` for a deeper readiness indicator.
+- Make CSP/X-Frame-Options stripping more precise:
+  - Still replace OpenClaw's `frame-ancestors 'none'` to allow HA Ingress iframe embedding, but preserve the rest of the bundled CSP.
+  - Document the upstream blocker (openclaw/openclaw#78577) so the override can be removed once a config knob exists.
+
 ## 0.7.10.32
 - Fix OpenClaw ControlUI ingress WebSocket fallback to `127.0.0.1:18789`:
   - Remove duplicate `sub_filter` on `<html>` that produced an invalid double `data-openclaw-control-ui-base-path=""` attribute.

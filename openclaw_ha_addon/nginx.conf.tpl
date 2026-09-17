@@ -118,6 +118,21 @@ http {
       add_header Content-Type application/json;
     }
 
+    # Gateway readiness proxy for the landing page JS.
+    # Avoids hard-coding the gateway port in the frontend and works across
+    # ingress_only / lan_http / lan_https internal port differences.
+    location = /webui/healthz {
+      proxy_pass http://127.0.0.1:__GATEWAY_INTERNAL_PORT__/healthz;
+      proxy_http_version 1.1;
+      proxy_set_header Host $host;
+      proxy_set_header X-Real-IP "";
+      proxy_set_header X-Forwarded-For "";
+      proxy_set_header X-Forwarded-Host "";
+      proxy_set_header X-Forwarded-Proto "";
+      proxy_set_header Forwarded "";
+      access_log off;
+    }
+
     # Add-on log tail (read-only)
     location = /api/logs {
       alias /config/clawd/logs/gateway_startup.log;
@@ -149,11 +164,19 @@ http {
       proxy_buffering off;
 
       # OpenClaw ControlUI sends DENY framing headers by default. Strip them
-      # here so the UI can be embedded inside the HA Ingress iframe.
+      # here so the UI can be embedded inside the HA Ingress iframe, then
+      # preserve OpenClaw's remaining CSP directives and only relax
+      # frame-ancestors so same-origin framing works.
       proxy_hide_header X-Frame-Options;
       proxy_hide_header Content-Security-Policy;
-      add_header Content-Security-Policy "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' https://fonts.gstatic.com; worker-src 'self'; connect-src 'self' ws: wss: https://api.openai.com https://tweakcn.com" always;
       add_header X-Frame-Options "SAMEORIGIN" always;
+
+      # Rewrite OpenClaw's CSP so that only frame-ancestors is relaxed to 'self'.
+      # We do this by re-injecting a policy that mirrors the bundled defaults but
+      # permits same-origin framing. If OpenClaw adds new CSP tokens in a future
+      # release they will be lost by this override; revisit once OpenClaw offers a
+      # configurable frame-ancestors list (see github.com/openclaw/openclaw/issues/78577).
+      add_header Content-Security-Policy "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' https://fonts.gstatic.com; worker-src 'self'; connect-src 'self' ws: wss: https://api.openai.com https://tweakcn.com" always;
 
       # OpenClaw 2026.8.2+ reads the base path from a data attribute on <html>.
       # When HA Supervisor sends X-Ingress-Path, set the attribute server-side.

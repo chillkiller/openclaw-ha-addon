@@ -44,6 +44,10 @@ def main():
     disk_pct = os.environ.get('DISK_PCT', '')
     nginx_log_level = os.environ.get('NGINX_LOG_LEVEL', 'minimal')
 
+    # Internal gateway port exposed to the landing page JS so it can probe
+    # the OpenClaw health endpoint for a deeper readiness indication.
+    gateway_internal_port = os.environ.get('GATEWAY_INTERNAL_PORT', '')
+
     # Token comes from environment (best-effort CLI query in run.sh)
     token = os.environ.get('GW_TOKEN', '')
 
@@ -143,6 +147,8 @@ def main():
     landing = landing.replace('__DISK_USED__', disk_used)
     landing = landing.replace('__DISK_AVAIL__', disk_avail)
     landing = landing.replace('__DISK_PCT__', disk_pct)
+    # Internal gateway port so the landing page can probe /healthz or /startupz
+    landing = landing.replace('__GATEWAY_INTERNAL_PORT__', gateway_internal_port)
 
     out_dir = Path('/etc/nginx/html')
     out_dir.mkdir(parents=True, exist_ok=True)
