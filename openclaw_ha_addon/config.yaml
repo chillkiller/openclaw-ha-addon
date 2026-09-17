@@ -1,7 +1,7 @@
-# OpenClaw Home Assistant Addon v0.7.10.32 Configuration
+# OpenClaw Home Assistant Addon v0.7.11.1 Configuration
 # OpenClaw 2026.9.4 — safer update rollback, unified Plugins workspace, terminal prompts
 name: OpenClaw Assistant
-version: "0.7.11.0"
+version: "0.7.11.1"
 slug: openclaw_ha_addon
 description: OpenClaw Home Assistant Addon (Bookworm Full-Stack)
 url: https://github.com/chillkiller/openclaw-ha-addon
@@ -136,7 +136,10 @@ options:
   # preserved as-is; the add-on does not modify agents.list.
   acpx_enabled: true
 
-  # Ollama base URL used by ACPX harness wrappers (claude/codex/opencode).
+  # TUI session to open inside the embedded terminal. After onboarding the
+  # default agent is typically "main", so the default session is "agent:main:main".
+  # Change this if you want the TUI to open a different agent/session by default.
+  tui_session: "agent:main:main"
   # When no ANTHROPIC_API_KEY / OPENAI_API_KEY is configured, the wrappers
   # point the respective CLI at this URL and use 'ollama' as a placeholder
   # token. Set this to your remote Ollama instance (e.g.
@@ -203,7 +206,7 @@ schema:
   ollama_base_url: str?
   runtime_apt_packages: str?
   custom_init_script: str?
-  cron_skip_missed_jobs: bool?
+  tui_session: str?
   blocked_hostnames: str?
 
 

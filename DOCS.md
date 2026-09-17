@@ -24,17 +24,24 @@ This add-on runs [OpenClaw](https://github.com/openclaw/openclaw) inside Home As
 
 ### What runs inside the add-on
 
-The add-on container runs three services:
+The add-on container runs four services:
 
 | Service | Port | Purpose |
 |---|---|---|
 | **OpenClaw Gateway** | 18789 (configurable) | The AI agent server — handles skills, chat, automations |
-| **nginx** (Ingress proxy) | 48099 (fixed) | Serves the landing page inside Home Assistant |
-| **ttyd** (Web terminal) | 7681 (configurable) | Provides a browser-based terminal for setup and management |
+| **nginx** (Ingress proxy) | 49200 (fixed) | Serves the landing page inside Home Assistant |
+| **ttyd** (Web terminal) | 7681 (configurable) | Browser-based terminal for setup and management |
+| **ttyd** (OpenClaw TUI) | 7682 (configurable) | Browser-based TUI for the selected OpenClaw session |
 
-When you open the add-on page in Home Assistant, nginx serves a landing page with:
-- An **Open Gateway Web UI** button (opens in a new tab to avoid WebSocket issues with Ingress)
-- An embedded **terminal** for running commands
+When you open the add-on page in Home Assistant, nginx serves a landing page with tabs for:
+- **WebUI** — OpenClaw Control UI embedded inside HA Ingress
+- **Terminal** — bash shell inside the add-on container
+- **TUI** — OpenClaw TUI for the configured session (`tui_session`, default `agent:main:main`)
+- **Docs** — this documentation
+
+The Control UI is embedded via HA Ingress rather than opened in a separate tab.
+It is proxied through nginx at `/webui/`, with the gateway token injected server-side
+so you do not need to enter it manually.
 
 ### Key directories
 
@@ -123,30 +130,31 @@ Save this token — you'll need it to access the Gateway Web UI and for API inte
 
 ## 4. Accessing the Gateway Web UI
 
-The Gateway Web UI (Control UI) is OpenClaw's main web interface. It opens in a **separate browser tab** because Home Assistant's Ingress proxy has WebSocket limitations.
+The Gateway Web UI (Control UI) is OpenClaw's main web interface. It is embedded directly inside Home Assistant via the add-on's Ingress landing page, or can be opened in a separate browser tab via the **Open Gateway Web UI** button.
 
-> **Important (v2026.2.21+):** OpenClaw now requires a **secure context** (HTTPS or localhost) for the Control UI. Plain HTTP over LAN is no longer accepted. The add-on's `access_mode` option makes this easy — see below.
+> **Important (v2026.2.21+):** OpenClaw now requires a **secure context** (HTTPS or localhost) for the Control UI. Plain HTTP over LAN is no longer accepted. The add-on's `network_mode` option makes this easy — see below.
 >
 > **v2026.2.22 note:** The gateway now emits a startup security warning when `dangerouslyDisableDeviceAuth` is active (used by `lan_https` mode). This warning is **expected and safe to ignore** — token authentication is still enforced.
 
 ### Choosing an access mode
 
-Set `access_mode` in **Settings → Add-ons → OpenClaw Assistant → Configuration**:
+Set `network_mode` in **Settings → Add-ons → OpenClaw Assistant → Configuration**:
 
 | Mode | Best for | What it does |
 |---|---|---|
+| **`lan_http`** | LAN browsers / local network | Gateway binds to LAN on `gateway_port` (default 18789) with token auth. |
 | **`lan_https`** | Phones, tablets, LAN browsers | Adds a built-in HTTPS proxy inside the add-on. No external setup needed. |
-| **`lan_reverse_proxy`** | Users with NPM / Caddy / Traefik | Binds gateway to LAN; your proxy terminates TLS. |
-| **`tailnet_https`** | Tailscale users | Binds to Tailscale interface; use Tailscale HTTPS certs. |
-| **`local_only`** | Terminal/Ingress only | Loopback — gateway not reachable from other devices. |
-| **`custom`** | Advanced / backward compat | Uses the individual `gateway_bind_mode` / `gateway_auth_mode` settings. |
+| **`tailnet_serve`** | Tailscale users | Publishes the Control UI via Tailscale serve with auto-generated HTTPS certs. |
+| **`tailnet_funnel`** | Remote public access via Tailscale | Publishes publicly via Tailscale funnel with password auth. |
+| **`ingress_only`** | Terminal/Ingress only (default) | Loopback — gateway only reachable through HA Ingress or the add-on terminal. |
+| **`reverse_proxy`** | Users with NPM / Caddy / Traefik | Gateway stays on loopback; your reverse proxy terminates TLS and forwards traffic. Set `gateway_trusted_proxies`. |
 
 ### Method A — Built-in HTTPS proxy (`lan_https` — recommended)
 
 This is the simplest way to get secure LAN access, especially for phones and tablets.
 
 1. Go to **Settings → Add-ons → OpenClaw Assistant → Configuration**
-2. Set `access_mode`: **lan_https**
+2. Set `network_mode`: **lan_https**
 3. Restart the add-on
 
 **What happens automatically:**
@@ -169,7 +177,7 @@ This is the simplest way to get secure LAN access, especially for phones and tab
 Use this when you already run Nginx Proxy Manager (or Caddy/Traefik).
 
 **OpenClaw add-on settings**
-1. Set `access_mode`: **lan_reverse_proxy**
+1. Set `network_mode`: **reverse_proxy**
 2. Set `gateway_trusted_proxies` to your proxy source CIDR/IP.
    - Example for NPM add-on network: `172.30.0.0/16`
    - Or strict single IP: `172.30.x.y/32`
@@ -207,15 +215,15 @@ This is the practical flow users report as stable in HAOS.
 1. In **Tailscale add-on**:
    - Disable `userspace_networking` (must be `false` so other add-ons can reach tailnet interface)
 2. In **OpenClaw add-on**:
-   - Preferred: set `access_mode` to **tailnet_https**
-   - Alternative (equivalent): `gateway_bind_mode: tailnet`, token auth
+   - Preferred: set `network_mode` to **tailnet_serve**
+   - Alternative (equivalent): `network_mode: tailnet_serve`, token auth
 3. In **NPM**:
    - Forward target to `http://<HA-TAILNET-IP>:18789`
    - Enable websockets
    - Configure TLS cert on the public host
 4. Set `gateway_public_url` to the final HTTPS URL and restart OpenClaw
 
-> **Why this flow**: `tailnet_https` in this add-on is a bind/auth preset. It does not automatically run `tailscale serve` inside OpenClaw.
+> **Why this flow**: `tailnet_serve` in this add-on is a bind/auth preset. It does not automatically run `tailscale serve` inside OpenClaw.
 
 ### Setting up the "Open Gateway Web UI" button
 
@@ -236,8 +244,8 @@ If you see:
 > disconnected (1008): control ui requires device identity
 
 This means the browser is connecting over plain HTTP. **Solutions**:
-- Set `access_mode` to **lan_https** (easiest — no external setup)
-- Set `access_mode` to **lan_reverse_proxy** and use an HTTPS reverse proxy
+- Set `network_mode` to **lan_https** (easiest — no external setup)
+- Set `network_mode` to **reverse_proxy** and use an HTTPS reverse proxy
 - Use SSH port forwarding to `localhost` (desktop only)
 
 ### Home Assistant Ingress and secure context
@@ -252,7 +260,7 @@ This is expected browser behavior, not an add-on bug.
 
 To get full ControlUI functionality, use one of these methods:
 - **Enable HTTPS on Home Assistant** (e.g. Nginx Proxy Manager, Tailscale Serve, Let's Encrypt, Nabu Casa). Ingress then becomes a secure context automatically.
-- Use `access_mode: lan_https` and open `https://<ha-ip>:18789` directly.
+- Use `network_mode: lan_https` and open `https://<ha-ip>:18789` directly.
 - Use SSH port forwarding to `http://localhost:18789` (desktop only).
 
 The embedded **Terminal** on the add-on landing page still works over plain HTTP.
@@ -269,6 +277,19 @@ jq -r '.gateway.auth.token' /config/.openclaw/openclaw.json
 
 ---
 
+### Health checks
+
+The add-on exposes two health endpoints through nginx:
+
+| Path | What it checks |
+|------|----------------|
+| `/api/health` | nginx ingress proxy is up (used by the landing page badge) |
+| `/webui/healthz` | OpenClaw gateway `/healthz` proxied for the landing page JS |
+
+Additionally, the Dockerfile `HEALTHCHECK` verifies both `/api/health` and the OpenClaw gateway `/startupz` endpoint so Home Assistant Supervisor waits until the gateway is actually ready before marking the add-on as started.
+
+---
+
 ## 5. Configuration Reference
 
 All options are set via **Settings → Apps/Add-ons → OpenClaw Assistant → Configuration** in Home Assistant. They are applied automatically on each add-on restart.
@@ -279,15 +300,14 @@ All options are set via **Settings → Apps/Add-ons → OpenClaw Assistant → C
 |---|---|---|---|
 | `timezone` | string | `Europe/Berlin` | Timezone for the add-on (e.g., `America/New_York`, `Europe/London`) |
 
-### Gateway
+### Gateway / Network
 
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `gateway_mode` | `local` / `remote` | `local` | **local**: run gateway in this add-on. **remote**: connect to an external gateway |
 | `gateway_remote_url` | string | _(empty)_ | Remote gateway WebSocket URL used when `gateway_mode: remote` (example: `ws://192.168.1.20:18789` or `wss://gateway.example.com:443`) |
-| `gateway_bind_mode` | `loopback` / `lan` / `tailnet` | `loopback` | **loopback**: 127.0.0.1 only (secure). **lan**: all interfaces (LAN-accessible). **tailnet**: Tailscale interface only. Only applies when `gateway_mode` is `local` |
 | `gateway_port` | int | `18789` | Port for the gateway. Only applies when `gateway_mode` is `local` |
-| `access_mode` | `custom` / `local_only` / `lan_https` / `lan_reverse_proxy` / `tailnet_https` | `custom` | **Simplifies secure access setup.** `custom`: use individual settings (backward-compatible). `lan_https`: built-in HTTPS proxy for LAN (recommended for phones). `lan_reverse_proxy`: external reverse proxy. `tailnet_https`: Tailscale. `local_only`: Ingress only. See [Accessing the Gateway Web UI](#4-accessing-the-gateway-web-ui) |
+| `network_mode` | `ingress_only` / `lan_http` / `lan_https` / `reverse_proxy` / `tailnet_serve` / `tailnet_funnel` | `ingress_only` | **Single source of truth** for gateway bind/auth/TLS presets. See [Accessing the Gateway Web UI](#4-accessing-the-gateway-web-ui) |
 | `gateway_public_url` | string | _(empty)_ | Public URL for the "Open Gateway Web UI" button. Auto-constructed in `lan_https` mode if empty. Example: `https://192.168.1.119:18789`. In newer versions this origin is also merged into `gateway.controlUi.allowedOrigins` to reduce reverse-proxy origin errors. |
 | `enable_openai_api` | bool | `false` | Enable the OpenAI-compatible `/v1/chat/completions` endpoint. Required for [Assist pipeline integration](#6c-assist-pipeline-integration-openai-api) |
 | `gateway_auth_mode` | `token` / `trusted-proxy` | `token` | Gateway auth mode. Use `trusted-proxy` when terminating HTTPS in a reverse proxy and forwarding trusted auth headers. |
@@ -298,14 +318,20 @@ All options are set via **Settings → Apps/Add-ons → OpenClaw Assistant → C
 | `gateway_env_vars` | list of `{name, value}` | `[]` | Environment variables exported to the gateway process at startup. UI format: list entries with `name` and `value` (example: `name=OPENAI_API_KEY`, `value=sk-...`). Limits: max 50 vars, key length 255, value length 10000. Reserved runtime keys are blocked (for example `PATH`, `HOME`, `NODE_OPTIONS`, `NODE_PATH`, `OPENCLAW_*`, proxy vars). Legacy string/object formats are still accepted for backward compatibility. |
 | `nginx_log_level` | `full` / `minimal` | `minimal` | Nginx access log verbosity. `minimal` suppresses repetitive Home Assistant health-check and polling requests (`GET /`, `GET /v1/models`). `full` logs everything. |
 
-When `gateway_auth_mode: trusted-proxy` is used, the add-on sets `gateway.auth.trustedProxy.userHeader` to `x-forwarded-user` by default.
-
 ### Terminal
 
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `enable_terminal` | bool | `true` | Show the web terminal on the add-on page |
 | `terminal_port` | int | `7681` | Port for the terminal (ttyd). Change if 7681 conflicts. Range: 1024-65535 |
+
+### OpenClaw TUI
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `enable_tui` | bool | `true` | Show the OpenClaw TUI tab on the add-on page |
+| `tui_port` | int | `7682` | Port for the TUI (ttyd). Change if 7682 conflicts. Range: 1024-65535 |
+| `tui_session` | string | `agent:main:main` | OpenClaw session the TUI opens by default. After onboarding the default agent is `main`; change this if you want another session. |
 
 ### Security & Tokens
 
@@ -341,12 +367,12 @@ To provide the SSH key: place the private key file in the add-on config director
 
 This is the most common setup — accessing the Gateway Web UI from a browser on your local network (including phones and tablets).
 
-> **Since OpenClaw v2026.2.21**, the Control UI requires a secure context (HTTPS or localhost). Use the `access_mode` option for easy setup.
+> **Since OpenClaw v2026.2.21**, the Control UI requires a secure context (HTTPS or localhost). Use the `network_mode` option for easy setup.
 
 #### Option 1 — Built-in HTTPS proxy (recommended)
 
 1. Go to **Settings → Add-ons → OpenClaw Assistant → Configuration**
-2. Set `access_mode`: **lan_https**
+2. Set `network_mode`: **lan_https**
 3. Restart the add-on
 4. Click the **Open Gateway Web UI** button — it uses HTTPS automatically
 
@@ -359,7 +385,7 @@ This is the most common setup — accessing the Gateway Web UI from a browser on
 
 | Option | Value |
 |---|---|
-| `access_mode` | **lan_reverse_proxy** |
+| `network_mode` | **reverse_proxy** |
 | `gateway_trusted_proxies` | **127.0.0.1,192.168.88.0/24** |
 | `gateway_public_url` | `https://<your-domain>` |
 
@@ -379,7 +405,7 @@ If you have an OpenClaw gateway running on a different machine (e.g., a more pow
 When `gateway_mode` is `remote`:
 - The add-on does **not** start a local gateway process
 - The add-on writes `gateway.remote.url` from `gateway_remote_url` on startup
-- `gateway_bind_mode` and `gateway_port` are ignored
+- `gateway_port` is ignored
 - The terminal and landing page still work normally
 - You still need the remote gateway's auth token
 
@@ -477,7 +503,7 @@ openclaw config set gateway.http.endpoints.chatCompletions.enabled true
    - **Organization**: leave empty
    - **Skip Authentication**: **true**
 
-> If using `gateway_bind_mode: lan`, you can also use `http://<your-ha-ip>:18789/v1` — this allows other HA instances on your network to connect too.
+> If using `network_mode: lan_http` or `network_mode: lan_https`, you can also use `http://<your-ha-ip>:18789/v1` — this allows other HA instances on your network to connect too.
 
 **Step 4 — Set as conversation agent**
 
@@ -856,9 +882,9 @@ Then restart the add-on. It will re-bootstrap a fresh configuration.
 
 Go to **Settings → Add-ons → OpenClaw Assistant → Log** tab. Logs show startup messages, errors, and service status.
 
-### Port 48099 conflict (add-on page won't load)
+### Port 49200 conflict (add-on page won't load)
 
-**Symptom**: `bind() to 0.0.0.0:48099 failed (98: Address already in use)` in logs.
+**Symptom**: `bind() to 0.0.0.0:49200 failed (98: Address already in use)` in logs.
 
 **Cause**: A stale nginx process from a previous run is still holding the port. This can happen after a crash or unclean restart.
 
@@ -887,8 +913,8 @@ Go to **Settings → Add-ons → OpenClaw Assistant → Log** tab. Logs show sta
 **Cause**: OpenClaw v2026.2.21+ requires HTTPS or localhost. Plain HTTP over LAN is blocked. (v2026.2.22 further hardens this by defaulting remote onboarding to `wss://` and rejecting insecure non-loopback targets.)
 
 **Fix** (pick one):
-1. **Easiest**: Set `access_mode` to **lan_https** in add-on Configuration → restart. This adds a built-in HTTPS proxy with zero external setup.
-2. **External proxy**: Set `access_mode` to **lan_reverse_proxy** and configure NPM/Caddy/Traefik with TLS.
+1. **Easiest**: Set `network_mode` to **lan_https** in add-on Configuration → restart. This adds a built-in HTTPS proxy with zero external setup.
+2. **External proxy**: Set `network_mode` to **reverse_proxy** and configure NPM/Caddy/Traefik with TLS.
 3. **SSH tunnel** (desktop only): `ssh -L 18789:127.0.0.1:18789 user@ha-ip` then open `http://localhost:18789`.
 
 ### "attachment storage not available" inside Home Assistant Ingress
@@ -898,7 +924,7 @@ Go to **Settings → Add-ons → OpenClaw Assistant → Log** tab. Logs show sta
 **Cause**: The ControlUI uses browser APIs (IndexedDB, CacheStorage, Clipboard, etc.) that require a **secure context** (HTTPS or `localhost`). Home Assistant Ingress is served over plain HTTP whenever Home Assistant itself is not configured for HTTPS. The browser therefore blocks those APIs inside the Ingress iframe.
 
 **Fix**: Enable HTTPS for your Home Assistant instance. Once HA is on HTTPS, Ingress is also a secure context and the ControlUI works fully. Alternative workarounds:
-- Use `access_mode: lan_https` and open `https://<ha-ip>:18789` directly.
+- Use `network_mode: lan_https` and open `https://<ha-ip>:18789` directly.
 - Use SSH port forwarding to `http://localhost:18789` (desktop only).
 
 The embedded **Terminal** on the add-on landing page still works over plain HTTP.
@@ -1101,7 +1127,7 @@ Yes. Set `gateway_mode` to `remote` and set `gateway_remote_url` in add-on confi
 Run `openclaw configure` in the terminal to reconfigure your AI providers, or edit `/config/.openclaw/openclaw.json` directly. You can use OpenAI, Google (Gemini), Anthropic (Claude), local models, and more.
 
 **Can other devices on my network use the OpenClaw API?**
-Yes. Set `access_mode` to `lan_https` (recommended) or `lan_reverse_proxy`. Any device on your network can connect to `https://<ha-ip>:18789`. Use the gateway token for authentication. This also enables the [Assist pipeline integration](#6c-assist-pipeline-integration-openai-api) from other HA instances or standalone OpenClaw integrations.
+Yes. Set `network_mode` to **lan_https** (recommended) or **reverse_proxy**. Any device on your network can connect to `https://<ha-ip>:18789`. Use the gateway token for authentication. This also enables the [Assist pipeline integration](#6c-assist-pipeline-integration-openai-api) from other HA instances or standalone OpenClaw integrations.
 
 **Where is my data stored on the host?**
 The add-on's `/config/` directory maps to `/addon_configs/<slug>/` on the Home Assistant host. This is included in HA backups automatically.

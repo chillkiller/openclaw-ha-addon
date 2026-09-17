@@ -1,4 +1,12 @@
 
+## 0.7.11.1
+- Add `tui_session` configuration option (default `agent:main:main`) so the embedded OpenClaw TUI opens the correct default session after onboarding instead of hard-coded `agent:coding-main:main`.
+- Update `DOCS.md`:
+  - Correct Ingress port (49200) and service list (WebUI, Terminal, TUI, Docs).
+  - Replace all outdated `access_mode` / `gateway_bind_mode` references with the current `network_mode` presets.
+  - Add health-check documentation (`/api/health`, `/webui/healthz`, `/startupz`).
+  - Document the new `tui_session` option.
+
 ## 0.7.11.0
 - Improve Ingress / gateway health detection:
   - Dockerfile HEALTHCHECK now also verifies the OpenClaw gateway `/startupz` endpoint (read from persisted `openclaw.json` at check time), not just the nginx ingress port.

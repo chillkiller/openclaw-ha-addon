@@ -25,6 +25,7 @@ ENABLE_TERMINAL=$(jq -r '.enable_terminal // true' "$OPTIONS_FILE")
 TERMINAL_PORT_RAW=$(jq -r '.terminal_port // 7681' "$OPTIONS_FILE")
 ENABLE_TUI=$(jq -r '.enable_tui // true' "$OPTIONS_FILE")
 TUI_PORT_RAW=$(jq -r '.tui_port // 7682' "$OPTIONS_FILE")
+TUI_SESSION=$(jq -r '.tui_session // "agent:main:main"' "$OPTIONS_FILE")
 ENABLE_WEBUI=$(jq -r '.enable_webui // true' "$OPTIONS_FILE")
 ENABLE_DOCS=$(jq -r '.enable_docs // true' "$OPTIONS_FILE")
 
@@ -1250,7 +1251,7 @@ if [ "$ENABLE_TUI" = "true" ] || [ "$ENABLE_TUI" = "1" ]; then
     echo ""
   fi
   echo "Starting OpenClaw TUI (ttyd) on 127.0.0.1:${TUI_PORT} ..."
-  ttyd -W -i 127.0.0.1 -p "${TUI_PORT}" -b /tui openclaw tui --session agent:coding-main:main &
+  ttyd -W -i 127.0.0.1 -p "${TUI_PORT}" -b /tui openclaw tui --session "${TUI_SESSION}" &
   TTYD_TUI_PID=$!
   echo "$TTYD_TUI_PID" > "$TTYD_TUI_PID_FILE"
   echo "TUI ttyd started with PID $TTYD_TUI_PID"
