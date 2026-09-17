@@ -155,14 +155,15 @@ http {
       add_header Content-Security-Policy "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' https://fonts.gstatic.com; worker-src 'self'; connect-src 'self' ws: wss: https://api.openai.com https://tweakcn.com" always;
       add_header X-Frame-Options "SAMEORIGIN" always;
 
-      # OpenClaw 2026.8.2 ships the ControlUI with an empty
+      # OpenClaw 2026.8.2+ ships the ControlUI without a
       # data-openclaw-control-ui-base-path attribute. When HA Supervisor tells us
-      # the Ingress path, set it explicitly so WebSocket/asset URLs resolve there.
-      # If the header is missing, leave it empty so OpenClaw falls back to
-      # window.location (which is correct inside the HA Ingress iframe).
+      # the Ingress path, set it explicitly on the <html> tag so WebSocket/asset
+      # URLs resolve under /api/hassio_ingress/.../webui/. If the attribute is
+      # already present (older OpenClaw), replace it instead.
       sub_filter_types text/html;
       sub_filter_once off;
 
+      sub_filter '<html ' '<html data-openclaw-control-ui-base-path="$control_ui_base_path" ';
       sub_filter 'data-openclaw-control-ui-base-path=""' 'data-openclaw-control-ui-base-path="$control_ui_base_path"';
 
       # Rewrite absolute asset links: relative when no Ingress path is known,
