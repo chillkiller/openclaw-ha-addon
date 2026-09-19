@@ -1,4 +1,11 @@
 
+## 0.7.11.3
+
+- **Fix OpenClaw OpenAI-compatible endpoint for HA Assist pipeline** (OpenClaw 2026.9.4 regression):
+  - The `/v1/chat/completions` endpoint was returning `500 internal error` because `buildAgentCommandInput` did not pass the resolved `agentId` to `agentCommandFromGatewayIngress`.
+  - Patched `openai-http-CACctX8Y.mjs` at build time to preserve `agentId` through the request lifecycle.
+  - This restores Assist Pipeline / conversation agent functionality for multi-agent (`agents.ownership: explicit`) setups.
+
 ## 0.7.11.2
 - Fix the Docs/Info tab showing unrendered placeholders (`__OPENCLAW_VERSION__`, `Gateway: unreachable`, `Ingress: unknown`):
   - Convert `docs/index.html` into a rendered template (`docs/index.html.tpl`) so `render_nginx.py` can substitute version, access mode, and network mode at startup.

@@ -9,7 +9,7 @@ FROM ghcr.io/home-assistant/${BUILD_ARCH}-base-debian:bookworm
 
 # Labels required when not using the official GitHub builder action
 LABEL \
-  io.hass.version="0.7.11.2" \
+  io.hass.version="0.7.11.3" \
   io.hass.type="app" \
   io.hass.arch="aarch64|amd64"
 
@@ -271,6 +271,15 @@ RUN npm install -g openclaw@2026.9.4 \
     && npm install -g mcporter@0.12.3 \
     && npm install -g pnpm \
     && npm cache clean --force
+
+# PATCH: OpenClaw 2026.9.4 OpenAI-compatible endpoint loses agentId on the
+# way into agentCommandFromGatewayIngress when agents.ownership is "explicit".
+# Without this, the /v1/chat/completions endpoint returns 500 internal error
+# for Home Assistant Assist pipeline and any other multi-agent caller.
+# See: https://github.com/openclaw/openclaw/issues (upstream bug report TBD)
+RUN sed -i 's/clientTools: params.clientTools,$/clientTools: params.clientTools,\\n\\t\\tagentId: params.agentId,/' /usr/lib/node_modules/openclaw/dist/openai-http-CACctX8Y.mjs && \
+    sed -i 's/clientTools: resolvedClientTools.length > 0 ? resolvedClientTools : void 0,$/clientTools: resolvedClientTools.length > 0 ? resolvedClientTools : void 0,\\n\\t\\tagentId,/' /usr/lib/node_modules/openclaw/dist/openai-http-CACctX8Y.mjs && \
+    node --check /usr/lib/node_modules/openclaw/dist/openai-http-CACctX8Y.mjs
 
 # Patch node-llama-cpp to honor NLC_BUILD_PARALLEL for constrained builds
 RUN node - <<'NODE'
