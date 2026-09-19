@@ -277,9 +277,27 @@ RUN npm install -g openclaw@2026.9.4 \
 # Without this, the /v1/chat/completions endpoint returns 500 internal error
 # for Home Assistant Assist pipeline and any other multi-agent caller.
 # See: https://github.com/openclaw/openclaw/issues (upstream bug report TBD)
-RUN sed -i 's/clientTools: params.clientTools,$/clientTools: params.clientTools,\\n\\t\\tagentId: params.agentId,/' /usr/lib/node_modules/openclaw/dist/openai-http-CACctX8Y.mjs && \
-    sed -i 's/clientTools: resolvedClientTools.length > 0 ? resolvedClientTools : void 0,$/clientTools: resolvedClientTools.length > 0 ? resolvedClientTools : void 0,\\n\\t\\tagentId,/' /usr/lib/node_modules/openclaw/dist/openai-http-CACctX8Y.mjs && \
-    node --check /usr/lib/node_modules/openclaw/dist/openai-http-CACctX8Y.mjs
+# Apply via Node to avoid Docker/sed escape-chain fragility.
+RUN node - <<'NODE'
+const fs = require('fs');
+const path = '/usr/lib/node_modules/openclaw/dist/openai-http-CACctX8Y.mjs';
+if (!fs.existsSync(path)) {
+  console.error('ERROR: openai-http chunk not found at', path);
+  process.exit(1);
+}
+let src = fs.readFileSync(path, 'utf8');
+const markA = 'clientTools: params.clientTools,';
+const markB = 'clientTools: resolvedClientTools.length > 0 ? resolvedClientTools : void 0,';
+if (!src.includes(markA) || !src.includes(markB)) {
+  console.error('ERROR: required markers missing');
+  process.exit(1);
+}
+src = src.replace(markA, 'clientTools: params.clientTools,\n\t\tagentId: params.agentId,');
+src = src.replace(markB, 'clientTools: resolvedClientTools.length > 0 ? resolvedClientTools : void 0,\n\t\tagentId,');
+fs.writeFileSync(path, src);
+require('child_process').execFileSync('node', ['--check', path], { stdio: 'inherit' });
+console.log('openai-http patch applied and syntax-checked.');
+NODE
 
 # Patch node-llama-cpp to honor NLC_BUILD_PARALLEL for constrained builds
 RUN node - <<'NODE'
