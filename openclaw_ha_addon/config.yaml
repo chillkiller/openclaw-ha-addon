@@ -1,7 +1,7 @@
-# OpenClaw Home Assistant Addon v0.7.11.14 Configuration
-# OpenClaw 2026.9.4 - safer update rollback, unified Plugins workspace, terminal prompts
+# OpenClaw Home Assistant Addon v0.7.11.15 Configuration
+# OpenClaw 2026.9.5 - keep Ingress fixes, fix SQLite startup
 name: OpenClaw Assistant
-version: "0.7.11.14"
+version: "0.7.11.15"
 slug: openclaw_ha_addon
 description: OpenClaw Home Assistant Addon (Bookworm Full-Stack)
 url: https://github.com/chillkiller/openclaw-ha-addon
@@ -65,7 +65,7 @@ options:
   gateway_mode: local
   gateway_remote_url: ""
 
-  # Network mode — single source of truth for gateway.bind/auth/tls/tailscale
+  # Network mode â€” single source of truth for gateway.bind/auth/tls/tailscale
   # ingress_only: loopback + token auth (HA Ingress + terminal only)
   # lan_http: LAN HTTP without TLS on gateway_port
   # lan_https: LAN HTTPS with OpenClaw-native auto-generated TLS on gateway_port
