@@ -9,7 +9,7 @@ FROM ghcr.io/home-assistant/${BUILD_ARCH}-base-debian:bookworm
 
 # Labels required when not using the official GitHub builder action
 LABEL \
-  io.hass.version="0.7.11.11" \
+  io.hass.version="0.7.11.13" \
   io.hass.type="app" \
   io.hass.arch="aarch64|amd64"
 
@@ -272,32 +272,9 @@ RUN npm install -g openclaw@2026.9.5 \
     && npm install -g pnpm \
     && npm cache clean --force
 
-# PATCH: OpenClaw 2026.9.4 OpenAI-compatible endpoint loses agentId on the
-# way into agentCommandFromGatewayIngress when agents.ownership is "explicit".
-# Without this, the /v1/chat/completions endpoint returns 500 internal error
-# for Home Assistant Assist pipeline and any other multi-agent caller.
-# See: https://github.com/openclaw/openclaw/issues (upstream bug report TBD)
-# Apply via Node to avoid Docker/sed escape-chain fragility.
-RUN node - <<'NODE'
-const fs = require('fs');
-const path = '/usr/lib/node_modules/openclaw/dist/openai-http-CACctX8Y.mjs';
-if (!fs.existsSync(path)) {
-  console.error('ERROR: openai-http chunk not found at', path);
-  process.exit(1);
-}
-let src = fs.readFileSync(path, 'utf8');
-const markA = 'clientTools: params.clientTools,';
-const markB = 'clientTools: resolvedClientTools.length > 0 ? resolvedClientTools : void 0,';
-if (!src.includes(markA) || !src.includes(markB)) {
-  console.error('ERROR: required markers missing');
-  process.exit(1);
-}
-src = src.replace(markA, 'clientTools: params.clientTools,\n\t\tagentId: params.agentId,');
-src = src.replace(markB, 'clientTools: resolvedClientTools.length > 0 ? resolvedClientTools : void 0,\n\t\tagentId,');
-fs.writeFileSync(path, src);
-require('child_process').execFileSync('node', ['--check', path], { stdio: 'inherit' });
-console.log('openai-http patch applied and syntax-checked.');
-NODE
+# OpenClaw 2026.9.5 already includes the openai-http agentId fix natively.
+# The previous patch block for 2026.9.4 is removed because the published
+# dist/openai-http chunk now forwards agentId without modification.
 
 # Patch node-llama-cpp to honor NLC_BUILD_PARALLEL for constrained builds
 RUN node - <<'NODE'

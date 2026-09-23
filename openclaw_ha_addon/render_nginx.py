@@ -99,15 +99,21 @@ def main():
         # treats their presence on loopback as proxy-shaped traffic and rejects
         # the request with proxy_attribution_required. We use token auth, so the
         # request is kept as plain local-direct traffic.
+        #
+        # Keep the plain HTTP proxy headers before the WebSocket upgrade
+        # headers. When the client does not request an Upgrade, the map block
+        # yields an empty $http_upgrade and $connection_upgrade=close. Sending
+        # Upgrade/Connection headers unconditionally caused OpenClaw 2026.9.5
+        # to reject plain HTTP requests on the loopback gateway.
         location / {{
             proxy_pass http://127.0.0.1:{internal_gw_port};
             proxy_http_version 1.1;
-            proxy_set_header Upgrade $http_upgrade;
-            proxy_set_header Connection $connection_upgrade;
             proxy_set_header Host $host;
             proxy_read_timeout 86400s;
             proxy_send_timeout 86400s;
             proxy_buffering off;
+            proxy_set_header Upgrade $http_upgrade;
+            proxy_set_header Connection $connection_upgrade;
         }}
 
         # Download the local CA certificate (install on phone for trusted access)
