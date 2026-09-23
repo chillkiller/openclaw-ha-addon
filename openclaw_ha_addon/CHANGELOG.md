@@ -1,5 +1,17 @@
 ## [0.7.10.25] - 2026-09-05
 
+## [0.7.11.11] - 2026-09-23
+
+### Changed
+- **Rollback**: Revert add-on code base to v0.7.11.3, which was the last release where HA Ingress (including Nabu Casa remote access) worked reliably.
+- **OpenClaw**: Stay on `2026.9.4` as included in v0.7.11.3.
+
+### Notes
+- This release intentionally does **not** include the nginx/Ingress changes from v0.7.11.4–v0.7.11.10, because those releases broke the ControlUI WebSocket connection through Nabu Casa Ingress.
+- The OpenAI-compatible `agentId` patch for 2026.9.4 remains in place.
+- If you are already on v0.7.11.10 and seeing “Gateway not reachable” through Ingress, install this update and reload the add-on store in HA (`Settings → Add-ons → Add-on Store → ⋮ → Reload`).
+
+
 ### Changed
 - **OpenClaw**: Update to `2026.9.1`.
 - **Add-on schema**: Add `cron_skip_missed_jobs` (default `true`) and `blocked_hostnames` options for OpenClaw 2026.9.1 configuration controls.
