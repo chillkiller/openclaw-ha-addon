@@ -266,7 +266,7 @@ RUN ARCH=$(echo ${TARGETARCH:-$(dpkg --print-architecture)} | sed 's|arm64|aarch
 # conservative thread count. The compiled binary is baked into the image.
 # =============================================================================
 ENV NODE_LLAMA_CPP_POSTINSTALL=skip
-RUN npm install -g openclaw@2026.9.4 \
+RUN npm install -g openclaw@2026.9.5 \
     && npm install -g node-llama-cpp@3.20.0 \
     && npm install -g mcporter@0.12.3 \
     && npm install -g pnpm \
