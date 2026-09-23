@@ -42,39 +42,51 @@ http {
   # Base path WITHOUT trailing slash. OpenClaw's ControlUI appends paths
   # like "/themes/" and "/assets/" itself, so a trailing slash would
   # produce double slashes (e.g. /webui//themes/claw.css).
-  map $ingress_path $control_ui_base_path {
+  # Normalize the ingress path: defend against supervisor variants that
+  # already include the /webui panel path (double-/webui bug, 2026-09-22)
+  # and against the current variant that omits it (asset 404s, 2026-09-23).
+  # All ControlUI prefixes are built as $ingress_path_norm + "/webui/..."
+  # so the browser always resolves assets under the path the page was
+  # loaded from (/api/hassio_ingress/<token>/webui/).
+  map $ingress_path $ingress_path_norm {
+    ""                        "";
+    ~^(?<ip_base>.*)/webui/?$  $ip_base;
+    default                    $ingress_path;
+  }
+
+  map $ingress_path_norm $control_ui_base_path {
     ""      "";
-    default "$ingress_path";
+    default "$ingress_path_norm/webui";
   }
 
-  map $ingress_path $asset_href_prefix {
+  map $ingress_path_norm $asset_href_prefix {
     ""      "./assets/";
-    default "$ingress_path/assets/";
+    default "$ingress_path_norm/webui/assets/";
   }
 
-  map $ingress_path $asset_src_prefix {
+  map $ingress_path_norm $asset_src_prefix {
     ""      "./assets/";
-    default "$ingress_path/assets/";
+    default "$ingress_path_norm/webui/assets/";
   }
 
-  map $ingress_path $favicon_prefix {
+  map $ingress_path_norm $favicon_prefix {
     ""      "./favicon";
-    default "$ingress_path/favicon";
+    default "$ingress_path_norm/webui/favicon";
   }
 
-  map $ingress_path $apple_prefix {
+  map $ingress_path_norm $apple_prefix {
     ""      "./apple-touch-icon";
-    default "$ingress_path/apple-touch-icon";
+    default "$ingress_path_norm/webui/apple-touch-icon";
   }
 
-  map $ingress_path $manifest_prefix {
+  map $ingress_path_norm $manifest_prefix {
     ""      "./manifest.webmanifest";
-    default "$ingress_path/manifest.webmanifest";
+    default "$ingress_path_norm/webui/manifest.webmanifest";
   }
 
-  map $ingress_path $theme_prefix {
+  map $ingress_path_norm $theme_prefix {
     ""      "./themes/";
-    default "$ingress_path/themes/";
+    default "$ingress_path_norm/webui/themes/";
   }
 
   server {
