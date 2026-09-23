@@ -1,3 +1,13 @@
+## [0.7.11.15.1] - 2026-09-23
+
+### Fixed
+- **Ingress WebSocket through HA/Nabu Casa**: Force loopback `Host` header in nginx `/webui/` proxy so OpenClaw 2026.9.5 treats HA Ingress traffic as local loopback.
+- **Ingress asset loading**: Add unauthenticated nginx locations under `/webui/` for static assets, themes, favicon, apple-touch-icon and manifest, so HA Supervisor can fetch them without the add-on bearer token.
+- **Ingress asset paths**: Remove duplicate `/webui` suffix from X-Ingress-Path base path maps so ControlUI builds correct asset URLs under `/api/hassio_ingress/<token>/webui`.
+
+### Notes
+- Conservative fix release based on 0.7.11.15. Only nginx configuration changed; no OpenClaw version or add-on startup changes.
+
 ## [0.7.10.25] - 2026-09-05
 
 ## [0.7.11.11] - 2026-09-23

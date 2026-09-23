@@ -44,37 +44,37 @@ http {
   # produce double slashes (e.g. /webui//themes/claw.css).
   map $ingress_path $control_ui_base_path {
     ""      "";
-    default "$ingress_path/webui";
+    default "$ingress_path";
   }
 
   map $ingress_path $asset_href_prefix {
     ""      "./assets/";
-    default "$ingress_path/webui/assets/";
+    default "$ingress_path/assets/";
   }
 
   map $ingress_path $asset_src_prefix {
     ""      "./assets/";
-    default "$ingress_path/webui/assets/";
+    default "$ingress_path/assets/";
   }
 
   map $ingress_path $favicon_prefix {
     ""      "./favicon";
-    default "$ingress_path/webui/favicon";
+    default "$ingress_path/favicon";
   }
 
   map $ingress_path $apple_prefix {
     ""      "./apple-touch-icon";
-    default "$ingress_path/webui/apple-touch-icon";
+    default "$ingress_path/apple-touch-icon";
   }
 
   map $ingress_path $manifest_prefix {
     ""      "./manifest.webmanifest";
-    default "$ingress_path/webui/manifest.webmanifest";
+    default "$ingress_path/manifest.webmanifest";
   }
 
   map $ingress_path $theme_prefix {
     ""      "./themes/";
-    default "$ingress_path/webui/themes/";
+    default "$ingress_path/themes/";
   }
 
   server {
@@ -124,7 +124,11 @@ http {
     location = /webui/healthz {
       proxy_pass http://127.0.0.1:__GATEWAY_INTERNAL_PORT__/healthz;
       proxy_http_version 1.1;
-      proxy_set_header Host $host;
+      # OpenClaw 2026.9.5 identifies loopback requests by the Host header.
+      # If we forward the original HA/Nabu Casa hostname, the gateway treats
+      # the connection as remote and rejects the WebSocket handshake.
+      # Force the loopback Host so the gateway keeps treating this as local.
+      proxy_set_header Host 127.0.0.1:__GATEWAY_INTERNAL_PORT__;
       proxy_set_header X-Real-IP "";
       proxy_set_header X-Forwarded-For "";
       proxy_set_header X-Forwarded-Host "";
@@ -146,13 +150,86 @@ http {
     # traffic and rejects them with proxy_attribution_required unless they pass
     # trusted-proxy auth. We run the gateway locally in token-auth mode, so we
     # keep the request as plain local-direct traffic.
+
+    # Static assets served under /webui/ must not require the add-on bearer
+    # token because HA Supervisor proxies them without injecting that header.
+    # HA Ingress already authenticates the user before forwarding the request.
+    location ^~ /webui/assets/ {
+      proxy_pass http://127.0.0.1:__GATEWAY_INTERNAL_PORT__/assets/;
+      proxy_http_version 1.1;
+      proxy_set_header Host 127.0.0.1:__GATEWAY_INTERNAL_PORT__;
+      proxy_set_header X-Real-IP "";
+      proxy_set_header X-Forwarded-For "";
+      proxy_set_header X-Forwarded-Host "";
+      proxy_set_header X-Forwarded-Proto "";
+      proxy_set_header Forwarded "";
+      proxy_set_header Accept-Encoding identity;
+      proxy_buffering off;
+    }
+
+    location ^~ /webui/themes/ {
+      proxy_pass http://127.0.0.1:__GATEWAY_INTERNAL_PORT__/themes/;
+      proxy_http_version 1.1;
+      proxy_set_header Host 127.0.0.1:__GATEWAY_INTERNAL_PORT__;
+      proxy_set_header X-Real-IP "";
+      proxy_set_header X-Forwarded-For "";
+      proxy_set_header X-Forwarded-Host "";
+      proxy_set_header X-Forwarded-Proto "";
+      proxy_set_header Forwarded "";
+      proxy_set_header Accept-Encoding identity;
+      proxy_buffering off;
+    }
+
+    location ^~ /webui/favicon {
+      proxy_pass http://127.0.0.1:__GATEWAY_INTERNAL_PORT__/favicon;
+      proxy_http_version 1.1;
+      proxy_set_header Host 127.0.0.1:__GATEWAY_INTERNAL_PORT__;
+      proxy_set_header X-Real-IP "";
+      proxy_set_header X-Forwarded-For "";
+      proxy_set_header X-Forwarded-Host "";
+      proxy_set_header X-Forwarded-Proto "";
+      proxy_set_header Forwarded "";
+      proxy_set_header Accept-Encoding identity;
+      proxy_buffering off;
+    }
+
+    location ^~ /webui/apple-touch-icon {
+      proxy_pass http://127.0.0.1:__GATEWAY_INTERNAL_PORT__/apple-touch-icon;
+      proxy_http_version 1.1;
+      proxy_set_header Host 127.0.0.1:__GATEWAY_INTERNAL_PORT__;
+      proxy_set_header X-Real-IP "";
+      proxy_set_header X-Forwarded-For "";
+      proxy_set_header X-Forwarded-Host "";
+      proxy_set_header X-Forwarded-Proto "";
+      proxy_set_header Forwarded "";
+      proxy_set_header Accept-Encoding identity;
+      proxy_buffering off;
+    }
+
+    location ^~ /webui/manifest.webmanifest {
+      proxy_pass http://127.0.0.1:__GATEWAY_INTERNAL_PORT__/manifest.webmanifest;
+      proxy_http_version 1.1;
+      proxy_set_header Host 127.0.0.1:__GATEWAY_INTERNAL_PORT__;
+      proxy_set_header X-Real-IP "";
+      proxy_set_header X-Forwarded-For "";
+      proxy_set_header X-Forwarded-Host "";
+      proxy_set_header X-Forwarded-Proto "";
+      proxy_set_header Forwarded "";
+      proxy_set_header Accept-Encoding identity;
+      proxy_buffering off;
+    }
+
     location ^~ /webui/ {
       proxy_pass http://127.0.0.1:__GATEWAY_INTERNAL_PORT__/;
       proxy_set_header Accept-Encoding identity;
       proxy_http_version 1.1;
       proxy_set_header Upgrade $http_upgrade;
       proxy_set_header Connection $connection_upgrade;
-      proxy_set_header Host $host;
+      # OpenClaw 2026.9.5 identifies loopback requests by the Host header.
+      # If we forward the original HA/Nabu Casa hostname, the gateway treats
+      # the connection as remote and rejects the WebSocket handshake.
+      # Force the loopback Host so the gateway keeps treating this as local.
+      proxy_set_header Host 127.0.0.1:__GATEWAY_INTERNAL_PORT__;
       proxy_set_header X-Real-IP "";
       proxy_set_header X-Forwarded-For "";
       proxy_set_header X-Forwarded-Host "";
