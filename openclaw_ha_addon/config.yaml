@@ -1,7 +1,7 @@
-# OpenClaw Home Assistant Addon v0.7.11.13 Configuration
-# OpenClaw 2026.9.5 
+# OpenClaw Home Assistant Addon v0.7.11.14 Configuration
+# OpenClaw 2026.9.4 — safer update rollback, unified Plugins workspace, terminal prompts
 name: OpenClaw Assistant
-version: "0.7.11.13"
+version: "0.7.11.14"
 slug: openclaw_ha_addon
 description: OpenClaw Home Assistant Addon (Bookworm Full-Stack)
 url: https://github.com/chillkiller/openclaw-ha-addon
