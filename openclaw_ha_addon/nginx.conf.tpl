@@ -286,7 +286,7 @@ http {
       #  - Removes stale localStorage gatewayUrl/bootRecord entries that would
       #    otherwise override the path and keep pointing at 127.0.0.1:18789.
       # This runs before any ControlUI module evaluates.
-      sub_filter '<head>' '<head><script data-cfasync="false">(function(){var p=window.location.pathname||"/";var i=p.lastIndexOf("/webui/");var b=i>=0?p.slice(0,i+6):"";var e=document.documentElement;var a="data-openclaw-control-ui-base-path";if(b){e.removeAttribute(a);e.setAttribute(a,b);}try{var keys=Object.keys(localStorage);for(var k=0;k<keys.length;k++){var key=keys[k];if((key.indexOf("openclaw.control.gatewayUrl.v1:")===0||key.indexOf("openclaw.control.bootRecord.v1:")===0)&&localStorage.getItem(key)&&localStorage.getItem(key).indexOf("127.0.0.1:18789")>=0){localStorage.removeItem(key);}}}catch(_){}})();</script>';
+      sub_filter '<head>' '<head><script data-cfasync="false">(function(){var p=window.location.pathname||"/";var i=p.lastIndexOf("/webui/");var b=i>=0?p.slice(0,i+6):"";var e=document.documentElement;var a="data-openclaw-control-ui-base-path";if(b){e.removeAttribute(a);e.setAttribute(a,b);}try{var keys=Object.keys(localStorage);for(var k=0;k<keys.length;k++){var key=keys[k];if(key.indexOf("openclaw.control.gatewayUrl.v1:")===0||key.indexOf("openclaw.control.bootRecord.v1:")===0){var v=localStorage.getItem(key)||"";if(b?v.indexOf(b)<0:v.indexOf("127.0.0.1:18789")>=0){localStorage.removeItem(key);}}}}catch(_){}})();</script>';
 
       # Rewrite absolute asset links: relative when no Ingress path is known,
       # absolute under the Ingress path when X-Ingress-Path is sent. nginx
