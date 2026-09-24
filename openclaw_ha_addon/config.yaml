@@ -1,7 +1,7 @@
-# OpenClaw Home Assistant Addon v0.7.11.15.1 Configuration
-# OpenClaw 2026.9.5 — conservative Ingress fix on top of 0.7.11.15
+# OpenClaw Home Assistant Addon v0.7.11.15.2 Configuration
+# OpenClaw 2026.9.5 — ingress asset-path and stale-cache fixes on top of 0.7.11.15
 name: OpenClaw Assistant
-version: "0.7.11.15.1"
+version: "0.7.11.15.2"
 slug: openclaw_ha_addon
 description: OpenClaw Home Assistant Addon (Bookworm Full-Stack)
 url: https://github.com/chillkiller/openclaw-ha-addon

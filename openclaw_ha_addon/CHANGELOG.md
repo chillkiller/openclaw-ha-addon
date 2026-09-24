@@ -1,3 +1,13 @@
+## [0.7.11.15.2] - 2026-09-24
+
+### Fixed
+- **Ingress ControlUI asset 404s (local + Nabu Casa)**: HA Supervisor sends `X-Ingress-Path` *without* the `/webui` panel suffix. The previous maps built asset and base-path prefixes directly from that value, so the ControlUI bundle resolved assets as `/api/hassio_ingress/<token>/assets/...` — after the supervisor strips the ingress prefix those requests hit the nginx catch-all 404. New `$ingress_path_norm` map strips any trailing `/webui` (also defends against the 2026-09-22 double-`/webui` variant) and rebuilds **all** prefixes as `norm + "/webui/..."`. Direct nginx access without an ingress path keeps relative `./assets/` URLs. (dbc00fe)
+- **Nabu Casa "Gateway nicht erreichbar" connect dialog**: The injected ControlUI cleanup script only removed localStorage `gatewayUrl`/`bootRecord` entries pointing at `127.0.0.1:18789`. Browsers that had cached a gateway URL with the bare Nabu host and no ingress path (pre-fix era) kept trying `wss://<slug>.ui.nabu.casa/` instead of the ingress route, so no WebSocket attempt ever reached the gateway. The script now removes ANY `gatewayUrl`/`bootRecord` entry whose value does not contain the current ingress base path, forcing the ControlUI to re-derive the WebSocket URL from the injected `data-openclaw-control-ui-base-path` attribute on every load. (0d32951)
+
+### Notes
+- Both fixes are nginx `sub_filter`/map changes only; no OpenClaw version, add-on startup, or gateway changes.
+- Server-side verified live: ControlUI HTML + script tags resolve under `/api/hassio_ingress/<token>/webui/`, WebSocket upgrade with Nabu origin returns `101 Switching Protocols` + `connect.challenge`.
+
 ## [0.7.11.15.1] - 2026-09-23
 
 ### Fixed
