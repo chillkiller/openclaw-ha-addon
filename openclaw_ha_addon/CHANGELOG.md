@@ -1,3 +1,20 @@
+## [0.7.12.0] - 2026-09-25
+
+### Changed
+- **OpenClaw**: Update to `2026.9.6` (from 2026.9.5). Major upstream improvements relevant to this add-on:
+  - **Restart recovery**: unfinished conversations survive restarts with saved history, progress and tool results; interrupted subagents are continued by the leading agent instead of auto-relaunching (fixes the recurring boot-time "Cannot delete session while competing work is in flight" zombie sessions).
+  - **Slow-startup detection**: health/restart checks now distinguish "still starting" from "failed" (exit code 2 = starting). Directly mitigates the SQLite session-reclamation startup timeout on high-usage SD-card installs.
+  - **`openclaw doctor --session-sqlite recover`**: new repair tool for session databases.
+  - **Storage compaction** (agent schema 23, shared-state schema 18): lossless history compression + compact memory vectors. Migration is one-way — downgrades require the pre-upgrade backup. A full WAL-consistent backup of all 31 agent/state DBs was taken before this release (integrity-verified).
+  - **WebChat reconnect resilience**: chat stays usable during reconnects; "Forget this browser" in Settings → Connections resets stale browser sign-ins (the tool we were missing during the localStorage debugging).
+  - **KillMode=mixed systemd policy repair** via Doctor (resolves the long-standing stale service-unit warning).
+- **Dockerfile**: no agentId patch block needed — the openai-http agentId fix remains native in 2026.9.6 (tarball-verified).
+
+### Notes
+- Ingress fixes from 0.7.11.15.x (asset paths dbc00fe, localStorage cleanup 0d32951, /webui WS proxy d037bd1) are all retained and unaffected by the OpenClaw bump.
+- Verified against the full 2026.9.6 changelog: no changes to loopback Host-header validation (proxy_attribution), controlUi.basePath, Ollama provider, or gateway auth model. Only breaking change is TypeScript-only code cells (not used by this setup).
+- Disk usage at release time: 84% (37GB free). Old full backups under /share/backups (42GB) are cleanup candidates for future headroom.
+
 ## [0.7.11.15.3] - 2026-09-25
 
 ### Fixed

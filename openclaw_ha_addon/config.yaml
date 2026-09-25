@@ -1,7 +1,7 @@
-# OpenClaw Home Assistant Addon v0.7.11.15.3 Configuration
-# OpenClaw 2026.9.5 — ingress WebSocket reconnect fixes on top of 0.7.11.15
+# OpenClaw Home Assistant Addon v0.7.12.0 Configuration
+# OpenClaw 2026.9.6 — restart recovery, startup detection, storage compaction
 name: OpenClaw Assistant
-version: "0.7.11.15.3"
+version: "0.7.12.0"
 slug: openclaw_ha_addon
 description: OpenClaw Home Assistant Addon (Bookworm Full-Stack)
 url: https://github.com/chillkiller/openclaw-ha-addon

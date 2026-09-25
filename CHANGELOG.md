@@ -1,4 +1,10 @@
 
+## 0.7.12.0
+- **OpenClaw 2026.9.6**: restart recovery for interrupted conversations and subagents, slow-startup detection (exit 2 = starting, not failed), `openclaw doctor --session-sqlite recover`, lossless history/storage compaction (schema 23/18 — one-way migration, backup taken), WebChat reconnect resilience with "Forget this browser", KillMode=mixed repair via Doctor.
+- agentId patch remains native in 2026.9.6 (tarball-verified).
+- All 0.7.11.15.x ingress fixes retained.
+
+
 ## 0.7.11.3
 
 - **Fix OpenClaw OpenAI-compatible endpoint for HA Assist pipeline** (OpenClaw 2026.9.4 regression):
