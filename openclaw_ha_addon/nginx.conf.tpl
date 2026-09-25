@@ -231,6 +231,31 @@ http {
       proxy_buffering off;
     }
 
+    # WebSocket clients (HA Supervisor ingress bridge) request the panel path
+    # WITHOUT a trailing slash when the ControlUI stored the gateway URL as
+    # .../webui (its normalized localStorage form). The previous implicit
+    # 301 redirect to /webui/ breaks WebSocket upgrades: WS clients never
+    # follow redirects, so the HA Supervisor closed the client socket right
+    # after its 101 and the ControlUI showed "Gateway nicht erreichbar".
+    # Proxy the exact /webui path directly to the gateway instead; browser
+    # loads always use /webui/ (panel URL), so only the WS bridge hits this.
+    location = /webui {
+      proxy_pass http://127.0.0.1:18790/webui/;
+      proxy_http_version 1.1;
+      proxy_set_header Upgrade $http_upgrade;
+      proxy_set_header Connection $connection_upgrade;
+      proxy_set_header Host 127.0.0.1:18790;
+      proxy_set_header X-Real-IP "";
+      proxy_set_header X-Forwarded-For "";
+      proxy_set_header X-Forwarded-Host "";
+      proxy_set_header X-Forwarded-Proto "";
+      proxy_set_header Forwarded "";
+      proxy_set_header Accept-Encoding identity;
+      proxy_read_timeout 86400s;
+      proxy_send_timeout 86400s;
+      proxy_buffering off;
+    }
+
     location ^~ /webui/ {
       proxy_pass http://127.0.0.1:__GATEWAY_INTERNAL_PORT__/;
       proxy_set_header Accept-Encoding identity;
