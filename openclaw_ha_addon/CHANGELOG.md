@@ -1,3 +1,8 @@
+## [0.7.11.15.3] - 2026-09-25
+
+### Fixed
+- **Nabu Casa / external "Gateway nicht erreichbar" after reconnects (the real killer)**: The ControlUI stores the gateway URL in its normalized localStorage form as `.../webui` *without* a trailing slash. The HA Supervisor ingress WS bridge forwards that exact path to nginx after stripping the ingress prefix, but the config only had trailing-slash locations — so `/webui` fell through to an implicit 301 redirect to `/webui/`. WebSocket clients never follow redirects: the supervisor completed the client-side 101 and then silently dropped the tunneled socket. First panel loads (via `/webui/`) worked, but every reconnect after Nabu Casa idle disconnects (1006 every ~2min) used the stored slash-less URL and died at the redirect — leaving the ControlUI in the "Gateway nicht erreichbar" connect dialog with an `ha-panel-app.ts:339 Uncaught (in promise) 3` crash. New explicit `location = /webui` proxies directly to the gateway (WebSocket headers included) instead of redirecting. Verified live: GET `/webui` -> 200 (was 301), WS upgrade `/webui` -> 101, `/webui/` unchanged, panel load 200. Confirmed working end-to-end via Nabu Casa from the iOS Companion App after the fix. (d037bd1)
+
 ## [0.7.11.15.2] - 2026-09-24
 
 ### Fixed
