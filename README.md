@@ -1,181 +1,115 @@
-# OpenClaw Home Assistant Addon
+# OpenClaw Assistant — Home Assistant Add-on
 
-[![Version](https://img.shields.io/badge/version-0.7.9.4-blue.svg)](https://github.com/chillkiller/openclaw-ha-addon/releases)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Home Assistant](https://img.shields.io/badge/Home_Assistant-2024.12+-blue.svg)](https://www.home-assistant.io/)
-[![Platform](https://img.shields.io/badge/Platform-amd64%20%7C%20aarch64-green.svg)](https://www.home-assistant.io/)
+[![Latest release](https://img.shields.io/github/v/release/chillkiller/openclaw-ha-addon.svg?style=flat-square)](https://github.com/chillkiller/openclaw-ha-addon/releases)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat-square)](LICENSE)
+[![Home Assistant](https://img.shields.io/badge/Home_Assistant-2024.12%2B-blue.svg?style=flat-square)](https://www.home-assistant.io/)
+[![Platform](https://img.shields.io/badge/Platform-amd64%20%7C%20aarch64-green.svg?style=flat-square)](#-requirements)
+[![Open your Home Assistant instance and show the add-on store with this repository](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fchillkiller%2Fopenclaw-ha-addon)
 
-A powerful Home Assistant add-on that brings OpenClaw's agentic AI capabilities to your smart home. OpenClaw can autonomously plan, reason, and execute actions to help you manage and automate your home.
+OpenClaw Assistant brings [OpenClaw](https://github.com/openclaw/openclaw) — an agentic AI runtime — into your Home Assistant installation as a self-contained add-on. It plans, reasons, and executes: control your smart home through conversation, automate away routine tasks, and give your assistant real tools — a web terminal, browser automation, scheduled jobs, and a growing skill ecosystem.
 
-## 🚀 Features
+Everything runs locally on your HAOS machine. No external Docker setup, no cloud dependency — the add-on ships the complete OpenClaw runtime.
 
-- **Agentic AI Assistant**: OpenClaw can plan, reason, and execute actions autonomously
-- **Full-Stack Integration**: Complete OpenClaw runtime with all features enabled
-- **Web UI**: Beautiful web interface accessible via Home Assistant Ingress
-- **Web Terminal**: Built-in terminal for direct access (optional)
-- **Network Flexibility**: Support for loopback, LAN, and Tailscale access modes
-- **mDNS/Bonjour**: Automatic service discovery on your local network
-- **OpenAI-Compatible API**: Integrate with Home Assistant's Assist pipeline
-- **MCP Support**: Model Context Protocol for Home Assistant integration
-- **Customizable**: Extensive configuration options for security and functionality
+## 🤖 How this project is built
 
-## 📋 Prerequisites
+This project is a **vibe-coding product**: the overwhelming majority of its code and documentation was generated and iterated through AI-assisted development (OpenClaw agents, including this add-on's own maintainer team). The owner reviews, tests on real hardware, and decides what ships.
 
-- Home Assistant 2024.12 or later
-- Supported architecture: amd64 or aarch64
-- At least 2GB RAM recommended (4GB+ for optimal performance)
-- 5GB+ free disk space
+We say this openly for two reasons:
 
-## 🔧 Installation
+- **Honesty** — you should know what you are installing and how it was made.
+- **Proof** — this add-on is also the reference deployment of its own toolchain: the code that runs it, wrote it.
 
-### Method 1: Add Repository (Recommended)
+Every release is verified on a real Home Assistant OS installation (aarch64) before it is tagged.
 
-1. Go to **Settings** → **Add-ons** → **Add-on Store** in Home Assistant
-2. Click the three dots in the top right corner
-3. Select **Add repository**
-4. Enter: `https://github.com/chillkiller/openclaw-ha-addon`
-5. Click **Add**
-6. Find "OpenClaw Assistant" in the store and install it
+## ✨ Features
 
-## ⚙️ Configuration
+- **Ingress Web UI** — the full OpenClaw Control UI embedded directly in Home Assistant, with web terminal and offline docs tabs on the add-on landing page
+- **Six network modes** — from locked-down Ingress-only to LAN HTTPS (built-in self-signed TLS), Tailscale serve/funnel, and reverse-proxy presets
+- **Home Assistant deep integration** — Assist pipeline conversation agent via an OpenAI-compatible endpoint, MCP server auto-registration, and native device/entity control
+- **Companion integration** — works with the [OpenClaw Home Assistant integration](https://github.com/techartdev/OpenClawHomeAssistantIntegration) for auto-discovery, a Lovelace chat card, and voice mode
+- **ACPX coding-agent harness** — optional managed wrappers for Claude Code, Codex, and OpenCode running inside the add-on
+- **Local AI** — bundled `node-llama-cpp` for on-device embeddings; Ollama-ready for local models
+- **Browser automation** — headless Chromium included
+- **Persistent skills & config** — everything survives updates through HA's backup system
+- **Six languages** — English, German, Spanish, Polish, Portuguese (Brazil), Bulgarian
 
-### Basic Setup
+## 📋 Requirements
 
-After installation, configure the add-on with these essential options:
+- Home Assistant OS / Supervised **2024.12 or later**
+- Architecture: **amd64** or **aarch64** (tested on Raspberry Pi 5)
+- **RAM:** 8 GB+ recommended. The gateway runs with a 4 GB Node.js heap by default; on smaller systems reduce it via the add-on terminal (`--max-old-space-size` in `NODE_OPTIONS`).
+- Disk: plan for a multi-gigabyte image (~1.8 GB unique layers, ~7 GB total on disk including shared base layers)
 
-```yaml
-timezone: "Europe/Berlin"
-enable_terminal: true
-gateway_bind_mode: loopback
-gateway_port: 18789
-```
+## 🚀 Installation
 
-### Access Modes
+**One-click:**
 
-Choose the access mode that fits your needs:
+[![Add repository to Home Assistant](https://my.home-assistant.io/badges/supervisor_add_addon_repository.svg)](https://my.home-assistant.io/redirect/supervisor_add_addon_repository/?repository_url=https%3A%2F%2Fgithub.com%2Fchillkiller%2Fopenclaw-ha-addon)
 
-| Mode | Description | Use Case |
+**Or manually:**
+
+1. **Settings → Add-ons → Add-on Store** → ⋮ → **Repositories**
+2. Paste: `https://github.com/chillkiller/openclaw-ha-addon`
+3. Find **OpenClaw Assistant** → **Install**
+4. **Start** the add-on
+
+## ⚡ Quick Start
+
+1. Install and start the add-on — default settings work out of the box (`ingress_only` network mode)
+2. Open the add-on page → **Open Web UI**
+3. Complete the OpenClaw onboarding — then talk to it, build automations, add skills
+
+For everything beyond the defaults — network modes, tokens, Assist, MCP — read the [full documentation](DOCS.md).
+
+## 🌐 Network Modes
+
+| Mode | Description | Use case |
 |------|-------------|----------|
-| `local_only` | Loopback only, token auth | Maximum security, Ingress/terminal only |
-| `lan_https` | LAN with built-in HTTPS proxy | Phones/tablets on home network |
-| `lan_reverse_proxy` | LAN bind + trusted proxy | External reverse proxy (Nginx, Traefik) |
-| `tailnet_https` | Tailscale interface + token auth | Remote access via Tailscale |
-| `custom` | Manual configuration | Advanced users |
+| `ingress_only` *(default)* | Loopback only, token auth | Maximum security; HA Ingress + terminal |
+| `lan_http` | LAN, plain HTTP | LANs where TLS is handled elsewhere; not a secure context |
+| `lan_https` | LAN with built-in self-signed HTTPS | Phones/tablets on your home network |
+| `tailnet_serve` | Tailscale interface, token auth | Remote access via your tailnet |
+| `tailnet_funnel` | Tailscale funnel HTTPS | Public reachability with password auth |
+| `reverse_proxy` | Loopback + trusted-proxy auth | Nginx Proxy Manager, Traefik, Caddy in front |
 
-### Security Best Practices
+Set the mode under **Settings → Add-ons → OpenClaw Assistant → Configuration**. Details: [DOCS.md § Accessing the Gateway Web UI](DOCS.md#4-accessing-the-gateway-web-ui).
 
-1. **Use HTTPS for remote access**: Never expose the gateway port directly to the internet without TLS
-2. **Limit network exposure**: Use `loopback` mode unless you need network access
-3. **Protect your tokens**: Keep gateway and Home Assistant tokens secret
-4. **Review permissions**: Only expose devices you're comfortable with the AI controlling
-5. **Monitor logs**: Regularly check add-on logs for unexpected activity
+## 🔌 Home Assistant Integration
 
-### Advanced Configuration
+- **Assist pipeline** — enable `enable_openai_api` and use the OpenAI-compatible endpoint (`/v1/chat/completions`, gateway port `18789`) as a conversation agent. Step-by-step: [DOCS.md § Assist](DOCS.md#6c-assist-pipeline-integration-openai-api)
+- **Native integration** — the third-party [OpenClaw Home Assistant integration](https://github.com/techartdev/OpenClawHomeAssistantIntegration) adds auto-discovery, a chat card, and voice mode. It is a separate project; install it from its own repository.
+- **MCP** — with a long-lived HA token, set `auto_configure_mcp` to register Home Assistant as an MCP server, giving OpenClaw direct entity control
 
-For detailed configuration options, see [DOCS.md](openclaw_ha_addon/DOCS.md).
+## 🔐 Security
 
-## 🌐 Accessing OpenClaw
+This add-on runs a powerful AI agent with shell access on your home network. That is its purpose — and its risk. Read [SECURITY.md](SECURITY.md) before installing.
 
-### Via Home Assistant Ingress
+Key facts:
 
-1. Go to **Settings** → **Add-ons** → **OpenClaw Assistant**
-2. Click **Open Web UI**
+- Default mode (`ingress_only`) keeps the gateway on loopback; nothing is reachable without HA authentication
+- The add-on ships locked down since v0.7.12.1: the Ingress proxy accepts only loopback and Supervisor traffic
+- An agentic AI can be manipulated by prompt injection and can execute destructive commands; expose only what you are comfortable with
+- **Use at your own risk.** The authors are not liable for damage, data loss, or security breaches.
 
-### Via Web Terminal
+## 📚 Documentation & Support
 
-1. Enable `enable_terminal: true` in configuration
-2. Go to **Settings** → **Add-ons** → **OpenClaw Assistant**
-3. Click **Open Terminal**
+- [Full add-on documentation](DOCS.md) — configuration reference, use-case guides, troubleshooting
+- [Deployment notes](DEPLOYMENT.md) — version matrix, resource planning
+- [Issues](https://github.com/chillkiller/openclaw-ha-addon/issues) — bug reports
+- [Discussions](https://github.com/chillkiller/openclaw-ha-addon/discussions) — questions and ideas
+- [OpenClaw docs](https://docs.openclaw.ai) — upstream product documentation
+- Security issues: [private vulnerability reporting](https://github.com/chillkiller/openclaw-ha-addon/security/advisories/new)
 
-### Via Network
+## 🤝 Contributing & License
 
-If `gateway_bind_mode` is set to `lan` or `tailnet`:
-
-- **LAN**: `http://<home-assistant-ip>:18789`
-- **Tailscale**: `http://<tailscale-ip>:18789`
-- **HTTPS Proxy**: Use the URL configured in `gateway_public_url`
-
-## 🔌 Integration with Home Assistant
-
-### Assist Pipeline Integration
-
-1. Enable `enable_openai_api: true` in configuration
-2. Go to **Settings** → **Voice Assistants** → **Assist**
-3. Create a new pipeline or edit an existing one
-4. Add OpenClaw as a conversation agent
-5. Configure the API endpoint: `http://<addon-ip>:48099/v1/chat/completions`
-
-### MCP (Model Context Protocol)
-
-1. Set `homeassistant_token` to a long-lived access token
-2. Enable `auto_configure_mcp: true`
-3. Restart the add-on
-4. OpenClaw will automatically register Home Assistant as an MCP server
-
-## 📚 Documentation
-
-- [Full Documentation](openclaw_ha_addon/DOCS.md)
-- [Security Guidelines](SECURITY.md)
-- [Contributing](CONTRIBUTING.md)
-- [Code of Conduct](CODE_OF_CONDUCT.md)
-
-## 🤝 Contributing
-
-We welcome contributions! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## ⚠️ Security & Disclaimer
-
-**Important**: OpenClaw is an agentic AI assistant that can execute actions autonomously. By installing this add-on, you acknowledge and accept the security risks described in [SECURITY.md](SECURITY.md).
-
-**Key risks to understand**:
-- The AI can execute shell commands and control devices
-- Network exposure could allow unauthorized access
-- Third-party skills may have security vulnerabilities
-- Prompt injection could manipulate agent behavior
-
-**Use at your own risk**. The authors are not responsible for any damage, data loss, or security breaches.
-
-## 🐛 Troubleshooting
-
-### Add-on won't start
-
-- Check the add-on logs for error messages
-- Ensure you have sufficient disk space and RAM
-- Verify your configuration is valid
-- Try restarting Home Assistant
-
-### Can't access the web UI
-
-- Verify `gateway_bind_mode` is set correctly
-- Check if the port is already in use
-- Ensure your firewall allows the connection
-- Try accessing via Home Assistant Ingress instead
-
-### Performance issues
-
-- Increase available RAM if possible
-- Disable unused features (terminal, browser automation)
-- Check for resource-intensive skills
-- Monitor CPU and memory usage in Home Assistant
-
-## 📞 Support
-
-- **Issues**: [GitHub Issues](https://github.com/chillkiller/openclaw-ha-addon/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/chillkiller/openclaw-ha-addon/discussions)
-- **Security Issues**: Please report privately via GitHub Security Advisory
+Contributions welcome — see [CONTRIBUTING.md](CONTRIBUTING.md). MIT License: see [LICENSE](LICENSE).
 
 ## 🙏 Acknowledgments
 
-- [OpenClaw](https://github.com/openclaw/openclaw) - The core agentic AI platform
-- [Home Assistant](https://www.home-assistant.io/) - The amazing smart home platform
-- All contributors who help make this project better
+- [OpenClaw](https://github.com/openclaw/openclaw) — the agentic AI runtime
+- [Home Assistant](https://www.home-assistant.io/) — the smart home platform
+- [OpenClaw Home Assistant integration](https://github.com/techartdev/OpenClawHomeAssistantIntegration) by [@techartdev](https://github.com/techartdev)
 
 ---
 
-**Note**: This is the production version of the add-on.
-
-Made with ❤️ by the OpenClaw community
+**README languages:** [English](README.md) · [Deutsch](README.de.md)

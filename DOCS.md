@@ -31,12 +31,10 @@ The add-on container runs four services:
 | **OpenClaw Gateway** | 18789 (configurable) | The AI agent server — handles skills, chat, automations |
 | **nginx** (Ingress proxy) | 49200 (fixed) | Serves the landing page inside Home Assistant |
 | **ttyd** (Web terminal) | 7681 (configurable) | Browser-based terminal for setup and management |
-| **ttyd** (OpenClaw TUI) | 7682 (configurable) | Browser-based TUI for the selected OpenClaw session |
 
 When you open the add-on page in Home Assistant, nginx serves a landing page with tabs for:
 - **WebUI** — OpenClaw Control UI embedded inside HA Ingress
-- **Terminal** — bash shell inside the add-on container
-- **TUI** — OpenClaw TUI for the configured session (`tui_session`, default `agent:main:main`)
+- **Terminal** — bash shell inside the add-on container (default tab)
 - **Docs** — this documentation
 
 The Control UI is embedded via HA Ingress rather than opened in a separate tab.
@@ -310,11 +308,9 @@ All options are set via **Settings → Apps/Add-ons → OpenClaw Assistant → C
 | `network_mode` | `ingress_only` / `lan_http` / `lan_https` / `reverse_proxy` / `tailnet_serve` / `tailnet_funnel` | `ingress_only` | **Single source of truth** for gateway bind/auth/TLS presets. See [Accessing the Gateway Web UI](#4-accessing-the-gateway-web-ui) |
 | `gateway_public_url` | string | _(empty)_ | Public URL for the "Open Gateway Web UI" button. Auto-constructed in `lan_https` mode if empty. Example: `https://192.168.1.119:18789`. In newer versions this origin is also merged into `gateway.controlUi.allowedOrigins` to reduce reverse-proxy origin errors. |
 | `enable_openai_api` | bool | `false` | Enable the OpenAI-compatible `/v1/chat/completions` endpoint. Required for [Assist pipeline integration](#6c-assist-pipeline-integration-openai-api) |
-| `gateway_auth_mode` | `token` / `trusted-proxy` | `token` | Gateway auth mode. Use `trusted-proxy` when terminating HTTPS in a reverse proxy and forwarding trusted auth headers. |
-| `gateway_trusted_proxies` | string | _(empty)_ | Comma-separated trusted proxy IP/CIDR list used with `gateway_auth_mode: trusted-proxy`. |
+| `gateway_trusted_proxies` | string | _(empty)_ | Comma-separated trusted proxy IP/CIDR list used with `network_mode: reverse_proxy`. |
 | `gateway_additional_allowed_origins` | string | _(empty)_ | Comma-separated additional origins merged into `gateway.controlUi.allowedOrigins` in `lan_https` mode (example: `https://ha.example.com:8443,capacitor://localhost`). |
 | `controlui_disable_device_auth` | bool | `true` | Controls `gateway.controlUi.dangerouslyDisableDeviceAuth` in `lan_https` mode. **ON (recommended):** skip per-device pairing approval, avoid error 1008 on LAN HTTPS, token auth still required. **OFF:** enforce per-device pairing prompts (stricter, but more friction). |
-| `force_ipv4_dns` | bool | `true` | Force IPv4-first DNS ordering for Node network calls. **Recommended ON** — most HAOS VMs lack IPv6 egress, causing `web_fetch` and Telegram timeouts. Set to `false` only if your network has working IPv6. |
 | `gateway_env_vars` | list of `{name, value}` | `[]` | Environment variables exported to the gateway process at startup. UI format: list entries with `name` and `value` (example: `name=OPENAI_API_KEY`, `value=sk-...`). Limits: max 50 vars, key length 255, value length 10000. Reserved runtime keys are blocked (for example `PATH`, `HOME`, `NODE_OPTIONS`, `NODE_PATH`, `OPENCLAW_*`, proxy vars). Legacy string/object formats are still accepted for backward compatibility. |
 | `nginx_log_level` | `full` / `minimal` | `minimal` | Nginx access log verbosity. `minimal` suppresses repetitive Home Assistant health-check and polling requests (`GET /`, `GET /v1/models`). `full` logs everything. |
 
@@ -322,16 +318,12 @@ All options are set via **Settings → Apps/Add-ons → OpenClaw Assistant → C
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `enable_terminal` | bool | `true` | Show the web terminal on the add-on page |
+| `enable_terminal` | bool | `true` | Show the web terminal on the add-on page (the terminal is the default tab and starts before the gateway, so it stays reachable during slow startup) |
 | `terminal_port` | int | `7681` | Port for the terminal (ttyd). Change if 7681 conflicts. Range: 1024-65535 |
+| `enable_webui` | bool | `true` | Show the WebUI tab on the add-on landing page |
+| `enable_docs` | bool | `true` | Show the Docs tab on the add-on landing page |
 
-### OpenClaw TUI
-
-| Option | Type | Default | Description |
-|---|---|---|---|
-| `enable_tui` | bool | `true` | Show the OpenClaw TUI tab on the add-on page |
-| `tui_port` | int | `7682` | Port for the TUI (ttyd). Change if 7682 conflicts. Range: 1024-65535 |
-| `tui_session` | string | `agent:main:main` | OpenClaw session the TUI opens by default. After onboarding the default agent is `main`; change this if you want another session. |
+> The OpenClaw TUI tab was removed in v0.7.12.1. The bash terminal replaces it as the fallback surface.
 
 ### Security & Tokens
 
@@ -359,6 +351,27 @@ To provide the SSH key: place the private key file in the add-on config director
 | `clean_session_locks_on_start` | bool | `true` | Remove stale session lock files on startup (safe — only removes locks when gateway isn't running) |
 | `clean_session_locks_on_exit` | bool | `true` | Remove session lock files on clean shutdown |
 | `auto_configure_mcp` | bool | `false` | Auto-register Home Assistant as an MCP server on startup (requires `homeassistant_token`) |
+| `gateway_log_to_console` | bool | `false` | Mirror gateway stdout/stderr to the HA add-on log window (default: gateway logs go to `/config/clawd/logs/gateway_startup.log` only) |
+| `gateway_log_level` | `off` / `info` / `debug` | `info` | Gateway log verbosity |
+| `trace_log_to_console` | bool | `false` | Mirror trace output to the HA add-on log window (default: trace logs go to `/config/clawd/logs/trace_startup.log` only) |
+| `runtime_apt_packages` | string | _(empty)_ | Space-separated apt packages installed at container startup (reinstalled each restart; example: `ffmpeg postgresql-client`) |
+| `custom_init_script` | string | _(empty)_ | Path to an executable, idempotent init script that runs before OpenClaw starts (mounted via `/config/` or `/share/`; example: `/share/scripts/my-init.sh`) |
+
+### OpenClaw 2026.9.x controls
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `cron_skip_missed_jobs` | bool | `true` | Skip missed cron executions after a restart; avoids backfills of overdue recurring jobs on frequently restarted add-ons |
+| `blocked_hostnames` | string | _(empty)_ | Comma-separated hostnames blocked from outbound SSRP. Empty allows all (example: `router.lan,192.168.178.1`) |
+
+### Discovery & coding agents
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `mdns_mode` | `off` / `minimal` / `full` | `minimal` | mDNS/Bonjour advertisement: off, core TXT keys (default), or verbose TXT metadata |
+| `mdns_host_name` | string | `openclaw` | Hostname to advertise (without `.local`) |
+| `acpx_enabled` | bool | `true` | Install the managed ACPX npm project and wrapper launchers so OpenClaw can run coding agents (Claude Code, Codex, OpenCode) through the local ACPX backend. Existing user-configured agents are preserved |
+| `ollama_base_url` | string | `http://localhost:11434` | Ollama endpoint used by the ACPX wrappers when no real `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` is set (ignored per provider once real keys exist in `gateway_env_vars`) |
 ---
 
 ## 6. Use Case Guides
@@ -421,6 +434,8 @@ There are two ways to connect it to Home Assistant:
 
 The **native OpenClaw integration** provides auto-discovery, a Lovelace chat card, voice mode, tool invocation services, and status sensors — all in one package.
 
+> **Note:** The integration is a **third-party companion project** by [@techartdev](https://github.com/techartdev). It is not part of this add-on repository — install it from its own repository.
+
 **Step 1 — Enable the endpoint**
 
 In the add-on configuration, set `enable_openai_api`: **true**, then restart.
@@ -434,7 +449,7 @@ openclaw config set gateway.http.endpoints.chatCompletions.enabled true
 
 Via HACS:
 1. In HACS, add as a custom repository:
-   - Repository: `https://github.com/chillkiller/openclaw-ha-addon`
+   - Repository: `https://github.com/techartdev/OpenClawHomeAssistantIntegration`
    - Category: **Integration**
 
 **Step 3 — Add the integration**
@@ -465,7 +480,7 @@ type: custom:openclaw-chat-card
 
 The card includes message history, typing indicator, voice input, wake-word support, and TTS responses.
 
-> **Works with standalone OpenClaw too.** The integration doesn't require the HA addon — it connects to any reachable OpenClaw gateway over HTTP/HTTPS. See the [integration README](https://github.com/chillkiller/openclaw-ha-addon) for remote connection details.
+> **Works with standalone OpenClaw too.** The integration doesn't require the HA addon — it connects to any reachable OpenClaw gateway over HTTP/HTTPS. See the [integration repository](https://github.com/techartdev/OpenClawHomeAssistantIntegration) for remote connection details.
 
 ---
 
@@ -990,11 +1005,11 @@ Paste this token when the UI prompts for authentication, or append it to the URL
 
 **Symptom**: In add-on terminal, commands that open direct gateway WebSocket (for example some `openclaw status`/gateway probes) fail with unauthorized and logs mention `trusted_proxy_user_missing`.
 
-**Cause**: `gateway_auth_mode: trusted-proxy` expects identity headers from your reverse proxy. Direct local CLI connections are not proxied, so they may be rejected.
+**Cause**: With `network_mode: reverse_proxy`, the gateway expects identity headers from your reverse proxy. Direct local CLI connections are not proxied, so they may be rejected.
 
 **What to do**:
-- Keep `trusted-proxy` for browser traffic via your reverse proxy.
-- For local terminal workflows that require direct gateway auth, temporarily switch to `gateway_auth_mode: token` (or run via proxy path that injects trusted headers), then switch back if needed.
+- Keep `reverse_proxy` mode for browser traffic via your reverse proxy.
+- For local terminal workflows that require direct gateway auth, temporarily switch `network_mode` to `ingress_only` or `lan_https` (or run via proxy path that injects trusted headers), then switch back if needed.
 
 ### Terminal not visible
 
@@ -1008,7 +1023,7 @@ Paste this token when the UI prompts for authentication, or append it to the URL
 
 **Cause**: Node 22 uses `autoSelectFamily` which tries IPv6 first. Most HAOS VMs have IPv6 DNS resolution but no IPv6 egress, so connections time out before falling back to IPv4.
 
-**Fix**: Ensure `force_ipv4_dns` is **true** (default since v0.5.51). If you upgraded from an older version, the option may still be set to `false` — change it to `true` in **Settings → Add-ons → OpenClaw Assistant → Configuration** and restart.
+**Fix**: IPv4-first DNS ordering is enforced by default (`--dns-result-order=ipv4first` is applied at startup when the option is unset). If your installation predates the default and outbound fetches time out, verify that startup logs show `Enabled IPv4-first DNS ordering`, or restart the add-on to re-apply defaults.
 
 ### Telegram network errors (`TypeError: fetch failed` / `getUpdates` fails)
 
@@ -1019,7 +1034,7 @@ If Telegram is configured but polling fails with network fetch errors:
    curl -4 https://api.telegram.org/bot<token>/getMe
    curl -6 https://api.telegram.org/bot<token>/getMe
    ```
-2. If IPv4 works but default/IPv6 fails, ensure add-on option `force_ipv4_dns` is `true` (default) and restart.
+2. If IPv4 works but default/IPv6 fails, ensure IPv4-first DNS ordering is active (see above) and restart.
 3. Keep `channels.telegram.network.autoSelectFamily: false` (default on Node 22).
 4. If still failing, check host/VM IPv6 routing and DNS configuration.
 

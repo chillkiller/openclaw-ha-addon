@@ -3,7 +3,7 @@
 name: OpenClaw Assistant
 version: "0.7.12.1"
 slug: openclaw_ha_addon
-description: OpenClaw Home Assistant Addon (Bookworm Full-Stack)
+description: Agentic AI assistant for Home Assistant — full OpenClaw runtime with Ingress Web UI, web terminal, Assist pipeline and MCP integration
 url: https://github.com/chillkiller/openclaw-ha-addon
 arch:
   - amd64
