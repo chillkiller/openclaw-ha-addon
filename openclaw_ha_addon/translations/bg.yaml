@@ -62,34 +62,9 @@ configuration:
     name: Изключи device pairing за Control UI (lan_https)
     description: "Когато е ВКЛ. (препоръчително), задава gateway.controlUi.dangerouslyDisableDeviceAuth=true и пропуска одобрението по устройство, за да избегне error 1008 в LAN HTTPS режим. Остави ВКЛ. за домашна/доверена мрежа. Изключи само ако искаш стриктно pairing потвърждение за всеки нов браузър/устройство."
 
-  gateway_bind_mode:
-    name: Режим на свързване на Gateway
-    description: Режим на мрежово свързване - loopback (само 127.0.0.1, най-сигурен), lan (всички интерфейси) или tailnet (само Tailscale интерфейс). Пренебрегва се от предварителните режими на достъп.
-    options:
-      loopback: "Loopback (само 127.0.0.1, най-сигурен)"
-      lan: "LAN (всички интерфейси)"
-      tailnet: "Tailnet (само Tailscale)"
-
   gateway_port:
     name: Порт на Gateway
     description: Номер на порт, на който OpenClaw gateway да слуша (по подразбиране - 18789)
-
-  access_mode:
-    name: Режим на достъп
-    description: "Опростява настройката на сигурен достъп. Пренебрегва gateway_bind_mode и gateway_auth_mode, когато не е зададен на Потребителски."
-    options:
-      custom: "Потребителски (индивидуални настройки)"
-      local_only: "Само локален (loopback + token, само Ingress)"
-      lan_https: "LAN HTTPS (вграден HTTPS прокси — препоръчително за телефони)"
-      lan_reverse_proxy: "LAN Reverse Proxy (външен прокси с trusted-proxy удостоверяване)"
-      tailnet_https: "Tailscale HTTPS (Tailscale + token)"
-
-  gateway_auth_mode:
-    name: Режим на удостоверяване на Gateway
-    description: Режим на удостоверяване - token (по подразбиране) или trusted-proxy (за HTTPS reverse proxy). Пренебрегва се, когато access_mode не е Потребителски.
-    options:
-      token: "Token (по подразбиране)"
-      trusted-proxy: "Доверен прокси (за reverse proxy)"
 
   gateway_trusted_proxies:
     name: Доверени прокси на Gateway
@@ -123,14 +98,6 @@ configuration:
     name: mDNS име на хост
     description: Опционално име на хост за mDNS реклама (напр. homeassistant.local). По подразбиране е "openclaw-ha-addon". Ако е празно, автоматично се открива от контейнера.
 
-  mdns_service_port:
-    name: mDNS порт на услуга
-    description: Портът, рекламиран от mDNS за откриване. По подразбиране е портът на gateway (18789). Трябва да съответства на външния proxy порт в режим lan_https.
-
-  mdns_interface_name:
-    name: mDNS мрежов интерфейс
-    description: Опционално име на мрежов интерфейс за mDNS (напр. eth0, wlan0). Ако е празно, се открива автоматично.
-
   gateway_log_to_console:
     name: Показвай Gateway лог в HA лог
     description: Когато е ВКЛ., изходът от gateway (stdout/stderr) се огледалва в лог прозореца на Home Assistant добавката, освен в лог файла. Полезно за диагностика в реално време. При ИЗКЛ., логовете се записват само във файл.
@@ -162,3 +129,31 @@ configuration:
   custom_init_script:
     name: Потребителски init скрипт
     description: Опционално - Път до изпълним скрипт, който се стартира преди OpenClaw. Трябва да е идемпотентен. Монтирайте чрез /config/ или /share/. Пример - /share/scripts/my-init.sh
+
+  acpx_enabled:
+    name: "ACPX инфраструктура"
+    description: "Инсталиране на ACPX wrapper стартери (Claude Code, Codex, OpenCode), за да може OpenClaw да изпълнява кодинг агенти през локалния ACPX бекенд."
+
+  blocked_hostnames:
+    name: "Блокирани имена на хостове"
+    description: "Списък, разделен със запетаи, на блокирани имена на хостове за изходящ мрежов достъп. Оставете празно, за да разрешите всички. Пример - router.lan,192.168.178.1"
+
+  cron_skip_missed_jobs:
+    name: "Пропускане на пропуснати cron задачи"
+    description: "Пропускане на пропуснати cron изпълнения след рестарт вместо наваксване на просрочени повтарящи се задачи."
+
+  enable_docs:
+    name: "Активиране на Docs"
+    description: "Показване на раздела Docs в Ingress интерфейса (статична документация и статус на живо)."
+
+  enable_webui:
+    name: "Активиране на WebUI"
+    description: "Показване на раздела WebUI в Ingress интерфейса (Контролен панел на OpenClaw)."
+
+  network_mode:
+    name: "Режим на мрежата"
+    description: "Единен източник на истина за gateway.bind/auth/tls/tailscale. ingress_only - само HA Ingress и терминал; lan_http - HTTP в LAN без TLS; lan_https - HTTPS в LAN с автоматичен TLS; tailnet_serve/tailnet_funnel - HTTPS през Tailscale; reverse_proxy - външен ревърс прокси."
+
+  ollama_base_url:
+    name: "Базов URL на Ollama"
+    description: "Базов URL на отдалечената Ollama инстанция, използван от ACPX обвивките, когато няма конфигурирани API ключове. Пример - http://192.168.178.34:11434"

@@ -1,3 +1,24 @@
+## [0.7.12.1] - 2026-09-25
+
+### Security
+- **Ingress lockdown**: nginx `:49200` now only accepts loopback and the HA Supervisor network (`172.30.32.0/23`). Direct LAN access to the terminal (previously an unauthenticated root shell) and the token-bearing landing page is rejected with 403; Terminal/TUI surfaces are exclusively reachable through the authenticated HA Ingress session. (P0)
+- **nginx.conf permissions**: the rendered config embeds the gateway bearer token and is now written with `0600` instead of the umask default `0644`. (P1)
+
+### Changed
+- **Boot order inverted**: nginx and the web terminal now start BEFORE the OpenClaw gateway. The Ingress panel (Terminal as fallback surface) is reachable during slow gateway startup (SQLite session validation can take minutes); the gateway starts after the ingress proxy is serving.
+- **TUI removed**: the `openclaw tui` iframe tab, its ttyd instance, and the `enable_tui`/`tui_port`/`tui_session` options are gone — the bash Terminal is the only fallback surface. Terminal is the default active tab.
+
+### Fixed
+- **Schema drift**: `cron_skip_missed_jobs` is back in the `schema:` block (dropped in a06a272 while remaining in `options:`), fixing the recurring supervisor warning `Option 'cron_skip_missed_jobs' does not exist in the schema`.
+- **CRLF pollution**: `oc_config_helper.py` had CRLF line endings in the worktree (Git index LF); renormalized so image builds copy the exact committed bytes.
+- **Dead code removed**: the `docs/index.html` copy block in run.sh never executed (Dockerfile ships `docs/index.html.tpl`, rendered by render_nginx.py); TUI assets are no longer copied.
+
+### Added
+- **Translations**: schema parity for all 6 languages (en/de/es/bg/pl/pt-BR) — every schema option now has a name/description (`acpx_enabled`, `blocked_hostnames`, `cron_skip_missed_jobs`, `enable_docs`, `enable_webui`, `enable_openai_api`, `force_ipv4_dns`, `nginx_log_level`, `network_mode`, `ollama_base_url`); stale keys for options that no longer exist (`gateway_bind_mode`, `access_mode`, `gateway_auth_mode`, `mdns_service_port`, `mdns_interface_name`) removed from es/bg/pl/pt-BR.
+- **Audit hardening** (coding-review NO-GO findings, fixed pre-merge): a failed gateway start no longer exits the container — nginx and the terminal stay up and the supervisor loop retries (P1); duplicate `__SHOW_TERMINAL_JS__` replacement removed (P1); hardcoded `127.0.0.1:18790` in the `location = /webui` WebSocket bridge replaced with `__GATEWAY_INTERNAL_PORT__` so `gateway_port` changes no longer break the no-slash reconnect path (P2).
+
+> **Upgrade note**: stored add-on options from previous versions may still contain `enable_tui`, `tui_port` and `tui_session`. Until the next options save, the supervisor may log benign `Option ... does not exist in the schema` warnings for these keys. Open the add-on Configuration page once and save to prune them permanently.
+
 ## [0.7.12.0] - 2026-09-25
 
 ### Changed

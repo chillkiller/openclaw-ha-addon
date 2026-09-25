@@ -62,34 +62,9 @@ configuration:
     name: Desactivar emparejamiento por dispositivo en Control UI (lan_https)
     description: "Cuando está ACTIVADO (recomendado), establece gateway.controlUi.dangerouslyDisableDeviceAuth=true para omitir la aprobación por dispositivo y evitar el error 1008 en modo LAN HTTPS. Déjalo ACTIVADO en redes domésticas/de confianza. Desactívalo solo si quieres emparejamiento estricto para cada navegador/dispositivo nuevo."
 
-  gateway_bind_mode:
-    name: Modo de enlace del Gateway
-    description: "Modo de enlace de red: loopback (solo 127.0.0.1, más seguro), lan (todas las interfaces) o tailnet (solo interfaz Tailscale). Se anula con las preselecciones del modo de acceso."
-    options:
-      loopback: "Loopback (solo 127.0.0.1, más seguro)"
-      lan: "LAN (todas las interfaces)"
-      tailnet: "Tailnet (solo Tailscale)"
-
   gateway_port:
     name: Puerto del Gateway
     description: Número de puerto en el que el gateway de OpenClaw escuchará (predeterminado - 18789)
-
-  access_mode:
-    name: Modo de acceso
-    description: "Simplifica la configuración de acceso seguro. Anula gateway_bind_mode y gateway_auth_mode cuando no es Personalizado."
-    options:
-      custom: "Personalizado (configuración individual)"
-      local_only: "Solo local (loopback + token, solo Ingress)"
-      lan_https: "LAN HTTPS (proxy HTTPS integrado — recomendado para teléfonos)"
-      lan_reverse_proxy: "LAN Proxy inverso (proxy externo con auth trusted-proxy)"
-      tailnet_https: "Tailscale HTTPS (Tailscale + token)"
-
-  gateway_auth_mode:
-    name: Modo de autenticación del Gateway
-    description: Modo de autenticación - token (predeterminado) o trusted-proxy (para proxys inversos HTTPS). Se anula cuando access_mode no es Personalizado.
-    options:
-      token: "Token (predeterminado)"
-      trusted-proxy: "Proxy de confianza (para proxys inversos)"
 
   gateway_trusted_proxies:
     name: Proxys de confianza del Gateway
@@ -123,14 +98,6 @@ configuration:
     name: Nombre de host mDNS
     description: Nombre de host opcional para anuncio mDNS (ej. homeassistant.local). El valor predeterminado es "openclaw-ha-addon". Si está vacío, se detecta automáticamente desde el nombre de host del contenedor.
 
-  mdns_service_port:
-    name: Puerto de servicio mDNS
-    description: Puerto anunciado por mDNS para descubrimiento. Por defecto es el puerto del gateway (18789). Debe coincidir con el puerto del proxy externo en modo lan_https.
-
-  mdns_interface_name:
-    name: Interfaz de red mDNS
-    description: Nombre opcional de la interfaz de red para mDNS (ej. eth0, wlan0). Si está vacío, se detecta automáticamente.
-
   gateway_log_to_console:
     name: Mostrar log del Gateway en log de HA
     description: Cuando está ACTIVADO, la salida del gateway (stdout/stderr) se refleja en la ventana de log del complemento de Home Assistant además del archivo de log. Útil para diagnóstico en tiempo real. Cuando está DESACTIVADO, los logs se escriben solo en el archivo.
@@ -162,3 +129,31 @@ configuration:
   custom_init_script:
     name: Script de init personalizado
     description: Opcional - Ruta a un script ejecutable que se ejecuta antes de OpenClaw. Debe ser idempotente. Monte mediante /config/ o /share/. Ejemplo - /share/scripts/my-init.sh
+
+  acpx_enabled:
+    name: "Infraestructura ACPX"
+    description: "Instalar lanzadores wrapper ACPX (Claude Code, Codex, OpenCode) para que OpenClaw ejecute agentes de programación mediante el backend ACPX local."
+
+  blocked_hostnames:
+    name: "Nombres de host bloqueados"
+    description: "Lista separada por comas de nombres de host bloqueados para el acceso de red saliente. Dejar vacío para permitir todos. Ejemplo - router.lan,192.168.178.1"
+
+  cron_skip_missed_jobs:
+    name: "Omitir trabajos cron perdidos"
+    description: "Omitir ejecuciones cron perdidas tras un reinicio en lugar de reponer trabajos recurrentes atrasados."
+
+  enable_docs:
+    name: "Activar Docs"
+    description: "Mostrar la pestaña Docs en la interfaz Ingress (documentación estática y estado en vivo)."
+
+  enable_webui:
+    name: "Activar WebUI"
+    description: "Mostrar la pestaña WebUI en la interfaz Ingress (Panel de Control de OpenClaw)."
+
+  network_mode:
+    name: "Modo de red"
+    description: "Fuente única de verdad para gateway.bind/auth/tls/tailscale. ingress_only - solo HA Ingress y terminal; lan_http - HTTP en LAN sin TLS; lan_https - HTTPS en LAN con TLS automático; tailnet_serve/tailnet_funnel - HTTPS de Tailscale; reverse_proxy - proxy inverso externo."
+
+  ollama_base_url:
+    name: "URL base de Ollama"
+    description: "URL base de la instancia remota de Ollama usada por los wrappers ACPX cuando no hay claves API configuradas. Ejemplo - http://192.168.178.34:11434"

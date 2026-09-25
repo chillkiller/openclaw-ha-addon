@@ -128,3 +128,39 @@ configuration:
   custom_init_script:
     name: Custom Init Script
     description: Optional - Path to an executable script that runs before OpenClaw starts. Must be idempotent. Mount via /config/ or /share/. Example - /share/scripts/my-init.sh
+
+  acpx_enabled:
+    name: "ACPX Harness Infrastructure"
+    description: "Install ACPX wrapper launchers (Claude Code, Codex, OpenCode) so OpenClaw can run coding agents via the local ACPX backend."
+
+  blocked_hostnames:
+    name: "Blocked Hostnames"
+    description: "Comma-separated list of hostnames blocked from outbound network access. Leave empty to allow all hostnames. Example - router.lan,192.168.178.1"
+
+  cron_skip_missed_jobs:
+    name: "Skip Missed Cron Jobs"
+    description: "Skip missed cron executions after a restart instead of backfilling overdue recurring jobs."
+
+  enable_docs:
+    name: "Enable Docs"
+    description: "Show the Docs tab in the Ingress UI (static documentation and live status)."
+
+  enable_openai_api:
+    name: "Enable OpenAI-compatible API"
+    description: "Expose the OpenAI-compatible Chat Completions API endpoint (for the HA Assist pipeline)."
+
+  enable_webui:
+    name: "Enable WebUI"
+    description: "Show the WebUI tab in the Ingress UI (OpenClaw Control Dashboard)."
+
+  force_ipv4_dns:
+    name: "Force IPv4 DNS"
+    description: "Prefer IPv4 for DNS resolution (most HAOS systems lack IPv6 egress)."
+
+  nginx_log_level:
+    name: "Nginx Access Log Verbosity"
+    description: "full or minimal - minimal suppresses health-check polling noise."
+
+  ollama_base_url:
+    name: "Ollama Base URL"
+    description: "Base URL of the remote Ollama instance used by ACPX wrappers when no API keys are configured. Example - http://192.168.178.34:11434"

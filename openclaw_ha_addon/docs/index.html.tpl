@@ -42,7 +42,7 @@
     </div>
 
     <div class="tip" id="staticTip" style="display:none">
-      ℹ️ Diese Seite zeigt Live-Status vom Ingress-Proxy. Detaillierte Agent-/Modell-/Token-Daten stehen über den <b>TUI</b>- oder <b>Terminal</b>-Tab zur Verfügung.
+      ℹ️ Diese Seite zeigt Live-Status vom Ingress-Proxy. Detaillierte Agent-/Modell-/Token-Daten stehen über den <b>Terminal</b>-Tab zur Verfügung.
     </div>
 
     <h2>Ingress-Tabs</h2>
@@ -53,7 +53,6 @@
       <tbody>
         <tr><td>WebUI</td><td>OpenClaw Control Dashboard</td><td>Benötigt HTTPS/secure context. Bei HTTP: externer Link.</td></tr>
         <tr><td>Terminal</td><td>Web-basiertes Terminal (ttyd)</td><td>Lokale CLI im Browser.</td></tr>
-        <tr><td>TUI</td><td>OpenClaw Status-Übersicht</td><td>Health + Log-Tail.</td></tr>
         <tr><td>Docs</td><td>Diese Info-Seite</td><td>Statische Dokumentation + Live-Status.</td></tr>
       </tbody>
     </table>

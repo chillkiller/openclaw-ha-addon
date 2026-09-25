@@ -5,7 +5,7 @@ Render nginx.conf and landing page HTML from templates.
 Called by run.sh with the following env vars:
   INGRESS_PORT, CERTS_DIR, GW_PUBLIC_URL, GW_TOKEN, TERMINAL_PORT,
   ENABLE_HTTPS_PROXY, HTTPS_PROXY_PORT, GATEWAY_INTERNAL_PORT, ACCESS_MODE,
-  SHOW_WEBUI, SHOW_TERMINAL, SHOW_TUI, SHOW_DOCS, OPENCLAW_VERSION,
+  SHOW_WEBUI, SHOW_TERMINAL, SHOW_DOCS, OPENCLAW_VERSION,
   DISK_TOTAL, DISK_USED, DISK_AVAIL, DISK_PCT
 """
 
@@ -24,7 +24,6 @@ def main():
     certs_dir = os.environ.get('CERTS_DIR', '/config/certs')
     public_url = os.environ.get('GW_PUBLIC_URL', '')
     terminal_port = os.environ.get('TERMINAL_PORT', '7681')
-    tui_port = os.environ.get('TUI_PORT', '7682')
     enable_https = os.environ.get('ENABLE_HTTPS_PROXY', 'false') == 'true'
     https_port = os.environ.get('HTTPS_PROXY_PORT', '')
     internal_gw_port = os.environ.get('GATEWAY_INTERNAL_PORT', '')
@@ -35,7 +34,6 @@ def main():
     # Tab visibility flags (render to JS booleans)
     show_webui = os.environ.get('SHOW_WEBUI', 'true').lower() in ('1', 'true', 'yes')
     show_terminal = os.environ.get('SHOW_TERMINAL', 'true').lower() in ('1', 'true', 'yes')
-    show_tui = os.environ.get('SHOW_TUI', 'true').lower() in ('1', 'true', 'yes')
     show_docs = os.environ.get('SHOW_DOCS', 'true').lower() in ('1', 'true', 'yes')
 
     # Disk usage info (collected by run.sh)
@@ -77,7 +75,6 @@ def main():
         webui_auth_header = '      proxy_set_header Authorization "Bearer ' + token + '";'
 
     conf = conf.replace('__TERMINAL_PORT__', terminal_port)
-    conf = conf.replace('__TUI_PORT__', tui_port)
     conf = conf.replace('__GATEWAY_INTERNAL_PORT__', internal_gw_port)
     conf = conf.replace('__WEBUI_AUTH_HEADER__', webui_auth_header)
 
@@ -126,7 +123,15 @@ def main():
 """
 
     conf = conf.replace('__HTTPS_GATEWAY_BLOCK__', https_block)
-    Path('/etc/nginx/nginx.conf').write_text(conf)
+    conf_path = Path('/etc/nginx/nginx.conf')
+    conf_path.write_text(conf)
+    # SECURITY (v0.7.12.1): the rendered config embeds the gateway bearer
+    # token — root-only permissions instead of the default 0644.
+    try:
+        conf_path.chmod(0o600)
+    except OSError as e:
+        # Never silently continue with a world-readable token file.
+        print(f"WARNING: could not restrict nginx.conf permissions: {e}")
 
     # ── landing page ────────────────────────────────────────────
     # If lan_https and no explicit public URL, auto-construct one
@@ -143,7 +148,6 @@ def main():
     landing = landing_tpl.replace('__OPENCLAW_VERSION__', openclaw_version)
     landing = landing.replace('__SHOW_WEBUI_JS__', 'true' if show_webui else 'false')
     landing = landing.replace('__SHOW_TERMINAL_JS__', 'true' if show_terminal else 'false')
-    landing = landing.replace('__SHOW_TUI_JS__', 'true' if show_tui else 'false')
     landing = landing.replace('__SHOW_DOCS_JS__', 'true' if show_docs else 'false')
     landing = landing.replace('__GATEWAY_TOKEN__', html.escape(token))
     landing = landing.replace('__GATEWAY_PUBLIC_URL__', public_url)

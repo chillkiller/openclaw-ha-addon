@@ -93,6 +93,17 @@ http {
     listen __INGRESS_PORT__;
     server_name _;
 
+    # SECURITY (v0.7.12.1): the ingress port binds all interfaces (host
+    # network). Restrict it to the HA Supervisor ingress proxy (container
+    # network segment 172.30.32.0/23 — verified source 172.30.32.2) and to
+    # loopback (Docker health checks). LAN clients must go through the
+    # authenticated Home Assistant Ingress session; direct LAN access to the
+    # terminal and the token-bearing landing page is rejected with 403.
+    allow 127.0.0.1;
+    allow ::1;
+    allow 172.30.32.0/23;
+    deny all;
+
     # Landing page (shown inside HA Ingress)
     location = / {
       root /etc/nginx/html;
@@ -240,11 +251,11 @@ http {
     # Proxy the exact /webui path directly to the gateway instead; browser
     # loads always use /webui/ (panel URL), so only the WS bridge hits this.
     location = /webui {
-      proxy_pass http://127.0.0.1:18790/webui/;
+      proxy_pass http://127.0.0.1:__GATEWAY_INTERNAL_PORT__/webui/;
       proxy_http_version 1.1;
       proxy_set_header Upgrade $http_upgrade;
       proxy_set_header Connection $connection_upgrade;
-      proxy_set_header Host 127.0.0.1:18790;
+      proxy_set_header Host 127.0.0.1:__GATEWAY_INTERNAL_PORT__;
       proxy_set_header X-Real-IP "";
       proxy_set_header X-Forwarded-For "";
       proxy_set_header X-Forwarded-Host "";
@@ -335,21 +346,6 @@ http {
     location = /terminal { return 302 /terminal/; }
     location ^~ /terminal/ {
       proxy_pass http://127.0.0.1:__TERMINAL_PORT__/terminal/;
-      proxy_http_version 1.1;
-      proxy_set_header Upgrade $http_upgrade;
-      proxy_set_header Connection $connection_upgrade;
-      proxy_set_header Host $host;
-      proxy_set_header X-Real-IP $remote_addr;
-      proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-      proxy_set_header X-Forwarded-Proto $scheme;
-      proxy_read_timeout 3600s;
-      proxy_send_timeout 3600s;
-    }
-
-    # OpenClaw TUI (ttyd running `openclaw tui`)
-    location = /tui { return 302 /tui/; }
-    location ^~ /tui/ {
-      proxy_pass http://127.0.0.1:__TUI_PORT__;
       proxy_http_version 1.1;
       proxy_set_header Upgrade $http_upgrade;
       proxy_set_header Connection $connection_upgrade;

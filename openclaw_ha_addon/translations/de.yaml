@@ -128,3 +128,39 @@ configuration:
   custom_init_script:
     name: Benutzerdefiniertes Init-Skript
     description: Optional - Pfad zu einem ausführbaren Skript, das vor dem OpenClaw-Start ausgeführt wird. Muss idempotent sein. Über /config/ oder /share/ einbinden. Beispiel - /share/scripts/my-init.sh
+
+  acpx_enabled:
+    name: "ACPX-Harness-Infrastruktur"
+    description: "ACPX-Wrapper-Launcher (Claude Code, Codex, OpenCode) installieren, damit OpenClaw Coding-Agenten über das lokale ACPX-Backend ausführen kann."
+
+  blocked_hostnames:
+    name: "Blockierte Hostnamen"
+    description: "Kommagetrennte Liste von Hostnamen, die für ausgehende Netzwerkzugriffe blockiert sind. Leer lassen, um alle zu erlauben. Beispiel - router.lan,192.168.178.1"
+
+  cron_skip_missed_jobs:
+    name: "Verpasste Cron-Jobs überspringen"
+    description: "Verpasste Cron-Ausführungen nach einem Neustart überspringen, statt überfällige wiederkehrende Jobs nachzuholen."
+
+  enable_docs:
+    name: "Docs aktivieren"
+    description: "Docs-Tab in der Ingress-UI anzeigen (statische Dokumentation + Live-Status)."
+
+  enable_openai_api:
+    name: "OpenAI-kompatible API aktivieren"
+    description: "OpenAI-kompatiblen Chat-Completions-Endpunkt freigeben (für die HA-Assist-Pipeline)."
+
+  enable_webui:
+    name: "WebUI aktivieren"
+    description: "WebUI-Tab in der Ingress-UI anzeigen (OpenClaw Control Dashboard)."
+
+  force_ipv4_dns:
+    name: "IPv4-DNS erzwingen"
+    description: "IPv4 für DNS-Auflösung bevorzugen (die meisten HAOS-Systeme haben keinen IPv6-Egress)."
+
+  nginx_log_level:
+    name: "Nginx-Access-Log-Stufe"
+    description: "full oder minimal - minimal unterdrückt Health-Check-Polling-Rauschen."
+
+  ollama_base_url:
+    name: "Ollama-Basis-URL"
+    description: "Basis-URL der Remote-Ollama-Instanz für ACPX-Wrapper, wenn keine API-Keys konfiguriert sind. Beispiel - http://192.168.178.34:11434"

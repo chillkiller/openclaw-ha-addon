@@ -23,9 +23,6 @@ HA_TOKEN=$(jq -r '.homeassistant_token // empty' "$OPTIONS_FILE")
 ADDON_HTTP_PROXY=$(jq -r '.http_proxy // empty' "$OPTIONS_FILE")
 ENABLE_TERMINAL=$(jq -r '.enable_terminal // true' "$OPTIONS_FILE")
 TERMINAL_PORT_RAW=$(jq -r '.terminal_port // 7681' "$OPTIONS_FILE")
-ENABLE_TUI=$(jq -r '.enable_tui // true' "$OPTIONS_FILE")
-TUI_PORT_RAW=$(jq -r '.tui_port // 7682' "$OPTIONS_FILE")
-TUI_SESSION=$(jq -r '.tui_session // "agent:main:main"' "$OPTIONS_FILE")
 ENABLE_WEBUI=$(jq -r '.enable_webui // true' "$OPTIONS_FILE")
 ENABLE_DOCS=$(jq -r '.enable_docs // true' "$OPTIONS_FILE")
 
@@ -40,16 +37,6 @@ fi
 
 echo "DEBUG: enable_terminal config value: '$ENABLE_TERMINAL'"
 echo "DEBUG: terminal_port config value: '$TERMINAL_PORT' (validated)"
-
-# SECURITY: Validate TUI_PORT to prevent nginx config injection
-if [[ "$TUI_PORT_RAW" =~ ^[0-9]+$ ]] && [ "$TUI_PORT_RAW" -ge 1024 ] && [ "$TUI_PORT_RAW" -le 65535 ]; then
-  TUI_PORT="$TUI_PORT_RAW"
-else
-  echo "ERROR: Invalid tui_port '$TUI_PORT_RAW'. Must be numeric 1024-65535. Using default 7682."
-  TUI_PORT="7682"
-fi
-echo "DEBUG: enable_tui config value: '$ENABLE_TUI'"
-echo "DEBUG: tui_port config value: '$TUI_PORT' (validated)"
 
 # Generic router SSH settings
 ROUTER_HOST=$(jq -r '.router_ssh_host // empty' "$OPTIONS_FILE")
@@ -761,7 +748,6 @@ export INGRESS_PORT
 export CERTS_DIR="/config/certs"
 export SHOW_WEBUI="$ENABLE_WEBUI"
 export SHOW_TERMINAL="$ENABLE_TERMINAL"
-export SHOW_TUI="$ENABLE_TUI"
 export SHOW_DOCS="$ENABLE_DOCS"
 # OPENCLAW_VERSION is used by OpenClaw's plugin API compatibility check.
 # `openclaw --version` prints a human-readable label like:
@@ -772,16 +758,10 @@ export OPENCLAW_VERSION="$(openclaw --version 2>/dev/null | head -1 | awk '/^Ope
 echo "INFO: OpenClaw version detected: ${OPENCLAW_VERSION}"
 
 # -----------------------------------------------------------------------------
-# Copy static Ingress assets (TUI, Docs, icon) into nginx web root
+# Copy static Ingress assets (Docs, icon) into nginx web root
 # -----------------------------------------------------------------------------
-mkdir -p /etc/nginx/html/tui /etc/nginx/html/docs
-if [ -f /openclaw_ha_addon/tui/index.html ]; then
-  cp -v /openclaw_ha_addon/tui/index.html /etc/nginx/html/tui.html 2>/dev/null || true
-  cp -v /openclaw_ha_addon/tui/index.html /etc/nginx/html/tui/index.html 2>/dev/null || true
-fi
-if [ -f /openclaw_ha_addon/docs/index.html ]; then
-  cp -v /openclaw_ha_addon/docs/index.html /etc/nginx/html/docs/index.html 2>/dev/null || true
-fi
+# docs/index.html is rendered from docs/index.html.tpl by render_nginx.py (v0.7.12.1).
+mkdir -p /etc/nginx/html/docs
 if [ -f /openclaw_ha_addon/loading.html ]; then
   cp -v /openclaw_ha_addon/loading.html /etc/nginx/html/loading.html 2>/dev/null || true
 fi
@@ -1175,12 +1155,10 @@ if [ "$GATEWAY_LOG_TO_CONSOLE" = "true" ] || [ "$GATEWAY_LOG_TO_CONSOLE" = "1" ]
   # The LOG_LEVEL env var (set in start_openclaw_runtime) controls verbosity.
 fi
 
-if ! start_openclaw_runtime; then
-  exit 1
-fi
-
-start_gw_relay
-
+# v0.7.12.1: nginx and the web terminal start BEFORE the gateway so the HA
+# Ingress panel and the terminal (fallback surface) are reachable while the
+# gateway initializes. SQLite session validation can take minutes on slow
+# storage; the UI must not wait for it. The gateway starts after nginx below.
 # Start web terminal (optional)
 TTYD_PID_FILE="/var/run/openclaw-ttyd.pid"
 
@@ -1220,43 +1198,6 @@ if [ "$ENABLE_TERMINAL" = "true" ] || [ "$ENABLE_TERMINAL" = "1" ]; then
   echo "ttyd started with PID $TTYD_PID"
 else
   echo "Terminal disabled (enable_terminal=$ENABLE_TERMINAL)"
-fi
-
-# Start OpenClaw TUI terminal (optional)
-TTYD_TUI_PID_FILE="/var/run/openclaw-ttyd-tui.pid"
-if [ -f "$TTYD_TUI_PID_FILE" ]; then
-  OLD_PID=$(cat "$TTYD_TUI_PID_FILE" 2>/dev/null || echo "")
-  if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
-    echo "Stopping previous TUI ttyd process (PID $OLD_PID)..."
-    kill "$OLD_PID" 2>/dev/null || true
-    sleep 1
-    kill -9 "$OLD_PID" 2>/dev/null || true
-  fi
-  rm -f "$TTYD_TUI_PID_FILE"
-fi
-
-if [ "$ENABLE_TUI" = "true" ] || [ "$ENABLE_TUI" = "1" ]; then
-  if command -v ss >/dev/null 2>&1 && ss -tlnp 2>/dev/null | grep -q ":${TUI_PORT} "; then
-    echo ""
-    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-    echo "!!  WARNING: tui_port ${TUI_PORT} IS ALREADY IN USE          !!"
-    echo "!!                                                             !!"
-    echo "!!  The OpenClaw TUI (ttyd) may FAIL to start because port     !!"
-    echo "!!  ${TUI_PORT} appears to be in use by another process.       !!"
-    echo "!!                                                             !!"
-    echo "!!  ACTION REQUIRED: If the TUI does not work, go to           !!"
-    echo "!!  Add-on Configuration and change 'tui_port' to a free       !!"
-    echo "!!  port, then restart the add-on.                             !!"
-    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-    echo ""
-  fi
-  echo "Starting OpenClaw TUI (ttyd) on 127.0.0.1:${TUI_PORT} ..."
-  ttyd -W -i 127.0.0.1 -p "${TUI_PORT}" -b /tui openclaw tui --session "${TUI_SESSION}" &
-  TTYD_TUI_PID=$!
-  echo "$TTYD_TUI_PID" > "$TTYD_TUI_PID_FILE"
-  echo "TUI ttyd started with PID $TTYD_TUI_PID"
-else
-  echo "TUI disabled (enable_tui=$ENABLE_TUI)"
 fi
 
 # Start ingress reverse proxy (nginx). This provides the add-on UI inside HA.
@@ -1320,7 +1261,6 @@ print(json.load(open(p)).get('gateway',{}).get('auth',{}).get('token',''), end='
   fi
 
   GW_PUBLIC_URL="$GW_PUBLIC_URL" GW_TOKEN="$token" TERMINAL_PORT="$TERMINAL_PORT" \
-    TUI_PORT="$TUI_PORT" \
     ENABLE_HTTPS_PROXY="$ENABLE_HTTPS_PROXY" HTTPS_PROXY_PORT="$HTTPS_PROXY_PORT" \
     GATEWAY_INTERNAL_PORT="$GATEWAY_INTERNAL_PORT" ACCESS_MODE="$ACCESS_MODE" \
     DISK_TOTAL="$disk_total" DISK_USED="$disk_used" DISK_AVAIL="$disk_avail" DISK_PCT="$disk_pct" \
@@ -1373,6 +1313,20 @@ except Exception:
     fi
   done
 ) &
+
+# v0.7.12.1: start the OpenClaw runtime only after nginx and the terminal are
+# serving, so the Ingress UI is available during (slow) gateway startup.
+# v0.7.12.1 (audit P1): a failed runtime start must NOT exit the container —
+# nginx and the terminal stay up so the operator can repair the setup through
+# HA Ingress; the supervisor loop below retries the start. GW_IS_CHILD=false
+# plus an empty GW_PID makes the loop skip `wait` and enter the restart path.
+if ! start_openclaw_runtime; then
+  echo "WARN: OpenClaw runtime failed to start; ingress UI stays up, retrying in the supervisor loop."
+  GW_IS_CHILD=false
+  GW_PID=""
+fi
+
+start_gw_relay
 
 # Keep add-on alive even if gateway/node runtime restarts itself (e.g. during onboarding).
 # If runtime exits unexpectedly, restart it while nginx/ttyd stay up.

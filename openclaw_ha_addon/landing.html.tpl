@@ -60,10 +60,9 @@
   <h1>OpenClaw Assistant</h1>
   <span class="version">__OPENCLAW_VERSION__</span>
   <div class="buttons">
-    <button class="btn active" id="btnWebui" onclick="setMode('webui')">WebUI</button>
+    <button class="btn" id="btnWebui" onclick="setMode('webui')">WebUI</button>
     <a class="btn" id="btnWebuiExternal" href="__GATEWAY_PUBLIC_URL__" target="_blank" rel="noopener noreferrer">WebUI ↗</a>
-    <button class="btn" id="btnTerminal" onclick="setMode('terminal')">Terminal</button>
-    <button class="btn" id="btnTui" onclick="setMode('tui')">TUI</button>
+    <button class="btn active" id="btnTerminal" onclick="setMode('terminal')">Terminal</button>
     <button class="btn" id="btnDocs" onclick="setMode('docs')">Docs</button>
     <a class="btn green small" id="btnCert" href="./cert/ca.crt" download="openclaw-ca.crt">CA Cert</a>
   </div>
@@ -77,11 +76,10 @@
 <div class="main">
   <iframe id="frameWebui" class="iframe-pane" src="" title="OpenClaw WebUI"></iframe>
   <iframe id="frameTerminal" class="iframe-pane" src="" title="Terminal"></iframe>
-  <iframe id="frameTui" class="iframe-pane" src="" title="TUI"></iframe>
   <iframe id="frameDocs" class="iframe-pane" src="" title="Docs"></iframe>
   <div id="noServices" class="no-services">
     Keine Services aktiviert.<br>
-    Aktiviere WebUI, Terminal, TUI oder Docs in der Add-on-Konfiguration.
+    Aktiviere WebUI, Terminal oder Docs in der Add-on-Konfiguration.
   </div>
 </div>
 
@@ -90,20 +88,17 @@
   const buttons = {
     webui: document.getElementById('btnWebui'),
     terminal: document.getElementById('btnTerminal'),
-    tui: document.getElementById('btnTui'),
     docs: document.getElementById('btnDocs')
   };
   const frames = {
     webui: document.getElementById('frameWebui'),
     terminal: document.getElementById('frameTerminal'),
-    tui: document.getElementById('frameTui'),
     docs: document.getElementById('frameDocs')
   };
   const btnWebuiExternal = document.getElementById('btnWebuiExternal');
 
   const SHOW_WEBUI = __SHOW_WEBUI_JS__;
   const SHOW_TERMINAL = __SHOW_TERMINAL_JS__;
-  const SHOW_TUI = __SHOW_TUI_JS__;
   const SHOW_DOCS = __SHOW_DOCS_JS__;
   const ACCESS_MODE = '__ACCESS_MODE__';
   const GATEWAY_TOKEN = '__GATEWAY_TOKEN__';
@@ -113,14 +108,14 @@
   try { inIframe = window !== window.top; } catch (e) { inIframe = true; }
 
   let current = null;
-  const loaded = { webui: false, terminal: false, tui: false, docs: false };
+  const loaded = { webui: false, terminal: false, docs: false };
 
   function isEnabled(mode) {
-    return { webui: SHOW_WEBUI, terminal: SHOW_TERMINAL, tui: SHOW_TUI, docs: SHOW_DOCS }[mode];
+    return { webui: SHOW_WEBUI, terminal: SHOW_TERMINAL, docs: SHOW_DOCS }[mode];
   }
 
   function updateVisibility() {
-    const any = SHOW_WEBUI || SHOW_TERMINAL || SHOW_TUI || SHOW_DOCS;
+    const any = SHOW_WEBUI || SHOW_TERMINAL || SHOW_DOCS;
     document.getElementById('noServices').classList.toggle('visible', !any);
     if (!any) {
       for (const b of Object.values(buttons)) b.style.display = 'none';
@@ -135,11 +130,11 @@
       btnWebuiExternal.style.display = SHOW_WEBUI ? '' : 'none';
     }
     buttons.terminal.style.display = SHOW_TERMINAL ? '' : 'none';
-    buttons.tui.style.display = SHOW_TUI ? '' : 'none';
     buttons.docs.style.display = SHOW_DOCS ? '' : 'none';
 
     if (current === null || !isEnabled(current)) {
-      for (const k of ['webui','terminal','tui','docs']) {
+      // Terminal is the fallback surface: pick it first (v0.7.12.1).
+      for (const k of ['terminal','webui','docs']) {
         if (isEnabled(k)) { setMode(k); return; }
       }
     }
@@ -152,6 +147,9 @@
     if (current) {
       frames[current].classList.remove('active');
       buttons[current].classList.remove('active');
+    } else {
+      // Clear the initial HTML active class so no two tabs stay highlighted.
+      for (const b of Object.values(buttons)) b.classList.remove('active');
     }
 
     current = mode;
