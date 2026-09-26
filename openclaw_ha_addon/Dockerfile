@@ -1,4 +1,4 @@
-# OpenClaw HA-Addon v0.7.12.0 — Debian Bookworm Full-Stack
+# OpenClaw HA-App v0.7.12.0 — Debian Bookworm Full-Stack
 # OpenClaw 2026.9.6 + node-llama-cpp@3.20.0 + mcporter@0.12.3 + CUPS/Scanner + crawl4ai + Go-PATH-Fix + D-Bus/Avahi
 # Builder stage removed (dead code since v0.7.5.1 — never wired)
 # Build dependencies are kept in the final image so runtime native builds work
@@ -9,7 +9,7 @@ FROM ghcr.io/home-assistant/${BUILD_ARCH}-base-debian:bookworm
 
 # Labels required when not using the official GitHub builder action
 LABEL \
-  io.hass.version="0.7.12.1" \
+  io.hass.version="0.7.12.2" \
   io.hass.type="app" \
   io.hass.arch="aarch64|amd64"
 
@@ -310,7 +310,7 @@ RUN node /usr/lib/node_modules/node-llama-cpp/dist/cli/cli.js postinstall \
 RUN git config --global safe.directory /home/linuxbrew/.linuxbrew/Homebrew
 
 # =============================================================================
-# Copy add-on files
+# Copy app files
 # =============================================================================
 COPY run.sh /run.sh
 COPY oc_config_helper.py /oc_config_helper.py

@@ -8,7 +8,9 @@ events { worker_connections 1024; }
 http {
   gzip off;
 
-  # Disable proxy compression so sub_filter can rewrite HTML
+  # HTML responses must stay uncompressed so sub_filter can rewrite them.
+  # The static-asset locations override this with an Accept-Encoding
+  # passthrough so the gateway can serve brotli/gzip (3.4x smaller transfers).
   proxy_set_header Accept-Encoding "";
   include       /etc/nginx/mime.types;
   default_type  application/octet-stream;
@@ -120,7 +122,7 @@ http {
       add_header Cache-Control "no-cache";
     }
 
-    # Static add-on icon/logo
+    # Static app icon/logo
     location = /icon.png {
       alias /etc/nginx/html/icon.png;
       default_type image/png;
@@ -160,7 +162,7 @@ http {
       access_log off;
     }
 
-    # Add-on log tail (read-only)
+    # App log tail (read-only)
     location = /api/logs {
       alias /config/clawd/logs/gateway_startup.log;
       default_type text/plain;
@@ -174,7 +176,7 @@ http {
     # trusted-proxy auth. We run the gateway locally in token-auth mode, so we
     # keep the request as plain local-direct traffic.
 
-    # Static assets served under /webui/ must not require the add-on bearer
+    # Static assets served under /webui/ must not require the app bearer
     # token because HA Supervisor proxies them without injecting that header.
     # HA Ingress already authenticates the user before forwarding the request.
     location ^~ /webui/assets/ {
@@ -186,7 +188,7 @@ http {
       proxy_set_header X-Forwarded-Host "";
       proxy_set_header X-Forwarded-Proto "";
       proxy_set_header Forwarded "";
-      proxy_set_header Accept-Encoding identity;
+      proxy_set_header Accept-Encoding $http_accept_encoding;
       proxy_buffering off;
     }
 
@@ -199,7 +201,7 @@ http {
       proxy_set_header X-Forwarded-Host "";
       proxy_set_header X-Forwarded-Proto "";
       proxy_set_header Forwarded "";
-      proxy_set_header Accept-Encoding identity;
+      proxy_set_header Accept-Encoding $http_accept_encoding;
       proxy_buffering off;
     }
 
@@ -212,7 +214,7 @@ http {
       proxy_set_header X-Forwarded-Host "";
       proxy_set_header X-Forwarded-Proto "";
       proxy_set_header Forwarded "";
-      proxy_set_header Accept-Encoding identity;
+      proxy_set_header Accept-Encoding $http_accept_encoding;
       proxy_buffering off;
     }
 
@@ -225,7 +227,7 @@ http {
       proxy_set_header X-Forwarded-Host "";
       proxy_set_header X-Forwarded-Proto "";
       proxy_set_header Forwarded "";
-      proxy_set_header Accept-Encoding identity;
+      proxy_set_header Accept-Encoding $http_accept_encoding;
       proxy_buffering off;
     }
 
@@ -238,7 +240,7 @@ http {
       proxy_set_header X-Forwarded-Host "";
       proxy_set_header X-Forwarded-Proto "";
       proxy_set_header Forwarded "";
-      proxy_set_header Accept-Encoding identity;
+      proxy_set_header Accept-Encoding $http_accept_encoding;
       proxy_buffering off;
     }
 
@@ -301,7 +303,7 @@ http {
       # permits same-origin framing. If OpenClaw adds new CSP tokens in a future
       # release they will be lost by this override; revisit once OpenClaw offers a
       # configurable frame-ancestors list (see github.com/openclaw/openclaw/issues/78577).
-      add_header Content-Security-Policy "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob:; media-src 'self' data: blob:; font-src 'self' https://fonts.gstatic.com; worker-src 'self'; connect-src 'self' ws: wss: https://api.openai.com https://tweakcn.com" always;
+      add_header Content-Security-Policy "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https:; media-src 'self' data: blob:; font-src 'self' https://fonts.gstatic.com; worker-src 'self'; connect-src 'self' ws: wss: data: https://api.openai.com https://tweakcn.com; frame-src 'self' http: https:" always;
 
       # OpenClaw 2026.8.2+ reads the base path from a data attribute on <html>.
       # When HA Supervisor sends X-Ingress-Path, set the attribute server-side.

@@ -1,7 +1,7 @@
-# OpenClaw Home Assistant Addon v0.7.12.1 Configuration
+# OpenClaw Home Assistant App v0.7.12.1 Configuration
 # OpenClaw 2026.9.6 — restart recovery, startup detection, storage compaction
 name: OpenClaw Assistant
-version: "0.7.12.1"
+version: "0.7.12.2"
 slug: openclaw_ha_addon
 description: Agentic AI assistant for Home Assistant — full OpenClaw runtime with Ingress Web UI, web terminal, Assist pipeline and MCP integration
 url: https://github.com/chillkiller/openclaw-ha-addon
@@ -19,7 +19,7 @@ audio: true
 video: true
 apparmor: false
 
-# Home Assistant Ingress (UI inside the add-on page)
+# Home Assistant Ingress (UI inside the app page)
 ingress: true
 ingress_port: 49200
 panel_title: OpenClaw Assistant
@@ -100,7 +100,7 @@ options:
   # Hostname to advertise (without .local; default: openclaw)
   mdns_host_name: "openclaw"
 
-  # Gateway log output: mirror gateway stdout/stderr to HA add-on log window
+  # Gateway log output: mirror gateway stdout/stderr to HA app log window
   # When false (default), gateway logs go to /config/clawd/logs/gateway_startup.log only
   # When true, gateway output also visible on HA console (useful for debugging)
   gateway_log_to_console: false
@@ -108,7 +108,7 @@ options:
   # Gateway log level: off (error only), info (default), debug (verbose)
   gateway_log_level: "info"
 
-  # Trace log output: mirror trace stdout/stderr to HA add-on log window
+  # Trace log output: mirror trace stdout/stderr to HA app log window
   # When false (default), trace logs go to /config/clawd/logs/trace_startup.log only
   # When true, trace output also visible on HA console (useful for debugging)
   trace_log_to_console: false
@@ -128,10 +128,10 @@ options:
   auto_configure_mcp: false
 
   # ACPX harness infrastructure (Claude Code, Codex, OpenCode).
-  # When enabled, the add-on installs wrapper launchers and the managed
+  # When enabled, the app installs wrapper launchers and the managed
   # npm project with @openclaw/acpx so OpenClaw can run coding agents via
   # the local ACPX backend. Existing user-configured coding agents are
-  # preserved as-is; the add-on does not modify agents.list.
+  # preserved as-is; the app does not modify agents.list.
   acpx_enabled: true
 
   # When no ANTHROPIC_API_KEY / OPENAI_API_KEY is configured, the wrappers
@@ -153,7 +153,7 @@ options:
   custom_init_script: ""
 
   # Skip missed cron executions after a restart. OpenClaw 2026.9.1 introduces
-  # cron.skipMissedJobs; for an HA add-on that restarts frequently, true avoids
+  # cron.skipMissedJobs; for an HA app that restarts frequently, true avoids
   # accidental backfills of overdue recurring jobs.
   cron_skip_missed_jobs: true
 

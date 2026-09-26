@@ -1,10 +1,11 @@
-# OpenClaw HA Addon Deployment
+# OpenClaw HA App Deployment
 
 ## Version Matrix
 
-| Addon Version | OpenClaw Version | Release Date |
+| App Version | OpenClaw Version | Release Date |
 |--------------|------------------|---------------|
 | 0.7.12.1 | 2026.9.6 | 2026-09-25 |
+| 0.7.12.2 | 2026.9.6 | 2026-09-26 |
 | 0.7.12.0 | 2026.9.6 | 2026-09-25 |
 | 0.7.11.15.3 | 2026.9.5 | 2026-09-25 |
 | 0.7.11.15.2 | 2026.9.5 | 2026-09-24 |
@@ -22,7 +23,7 @@
 The gateway runs with a fixed 4 GB Node.js heap (`--max-old-space-size=4096`, hardcoded default in `run.sh`).
 
 - **8 GB+ system RAM**: works with defaults
-- **Less than 8 GB**: reduce the heap for a stable system — e.g. `docker exec` into the container or use the add-on terminal to set `NODE_OPTIONS=--max-old-space-size=2048` for testing, and for persistence use the `gateway_env_vars` mechanism with care (Node options are reserved keys; the supported path is editing `run.sh` for custom builds)
+- **Less than 8 GB**: reduce the heap for a stable system — e.g. `docker exec` into the container or use the app terminal to set `NODE_OPTIONS=--max-old-space-size=2048` for testing, and for persistence use the `gateway_env_vars` mechanism with care (Node options are reserved keys; the supported path is editing `run.sh` for custom builds)
 
 ## Port Safety
 
@@ -35,7 +36,7 @@ The gateway runs with a fixed 4 GB Node.js heap (`--max-old-space-size=4096`, ha
 Measured on the released aarch64 build (v0.7.12.1):
 
 - **Unique image size: ~1.8 GB** (layers not shared with the HA base image)
-- **Total size on disk: ~7.3 GB** (uncompressed, including layers shared with the Home Assistant base image and other add-ons)
+- **Total size on disk: ~7.3 GB** (uncompressed, including layers shared with the Home Assistant base image and other apps)
 
 Main contributors: OpenClaw runtime + npm packages, Playwright Chromium, Python tooling (`node-llama-cpp`, crawl4ai basis), Homebrew (installed under `/config`, persisted outside the image), CUPS/scanner stack.
 

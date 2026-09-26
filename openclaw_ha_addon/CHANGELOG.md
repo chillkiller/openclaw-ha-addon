@@ -1,3 +1,11 @@
+## [0.7.12.2] - 2026-09-26
+
+### Performance
+- **Ingress asset compression restored**: the static ControlUI locations (`/webui/assets/`, `/themes/`, `/favicon`, `/apple-touch-icon`, `/manifest.webmanifest`) now pass the client's `Accept-Encoding` through to the gateway instead of forcing `identity`. The gateway serves brotli/gzip natively (measured: 468 KB → 138 KB for the largest bundle, 3.4× less transfer per cold load; ~1 MB total). The `/webui/` HTML locations keep `identity` because `sub_filter` requires uncompressed responses; the `= /webui` WebSocket bridge is untouched.
+
+### Fixed
+- **CSP synced with upstream 2026.9.6** (`buildControlUiCspHeader`, dist-verified): added `frame-src 'self' http: https:` (link-preview iframes were blocked), `img-src https:` (remote agent avatars were blocked), `connect-src data:`; replaced the over-broad `script-src 'unsafe-eval'` with `'wasm-unsafe-eval'` (bundle-verified: zero `eval`/`new Function` across all 8 ControlUI bundles, one WebAssembly consumer). `frame-ancestors 'self'` intentionally kept for the HA Ingress iframe; `'unsafe-inline'` for scripts kept because the sub_filter base-path injection cannot be hash-covered.
+
 ## [0.7.12.1] - 2026-09-25
 
 ### Security
