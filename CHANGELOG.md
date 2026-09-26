@@ -2,10 +2,12 @@
 
 Release-facing summary. Detailed per-release engineering notes: [openclaw_ha_addon/CHANGELOG.md](openclaw_ha_addon/CHANGELOG.md).
 
+## 0.7.12.3
+- **Terminology: Add-ons → Apps** — all user-facing texts follow the official "Apps" naming Home Assistant introduced with 2026.2 (README, DOCS, SECURITY, CONTRIBUTING, DEPLOYMENT, UI translations, landing page, runtime log messages). Technical identifiers stay untouched (slug `openclaw_ha_addon`, `addon_config` mount, Supervisor API, repo URL) — matching the upstream supervisor design. Also fixes the mDNS default in the es/bg/pl/pt-BR translations (claimed "openclaw-ha-addon", actual default "openclaw").
+
 ## 0.7.12.2
 - **Ingress asset compression restored** (3.4× less transfer on ControlUI cold loads): static-asset locations pass `Accept-Encoding` through to the gateway (native brotli/gzip); HTML locations keep `identity` for `sub_filter`.
 - **CSP synced with upstream 2026.9.6**: `frame-src` added (link previews were blocked), `img-src https:` added (remote avatars were blocked), `connect-src data:` added, `'unsafe-eval'` → `'wasm-unsafe-eval'` (bundle-verified, zero eval consumers).
-- **Terminology: Add-ons → Apps** — all user-facing texts follow the official "Apps" naming Home Assistant introduced with 2026.2 (README, DOCS, SECURITY, CONTRIBUTING, DEPLOYMENT, UI translations, landing page, runtime log messages). Technical identifiers stay untouched (slug `openclaw_ha_addon`, `addon_config` mount, Supervisor API, repo URL) — matching the upstream supervisor design. Also fixes the mDNS default in the es/bg/pl/pt-BR translations (claimed "openclaw-ha-addon", actual default "openclaw").
 
 ## 0.7.12.1
 - **Security — Ingress lockdown**: nginx `:49200` accepts only loopback + Supervisor network (`172.30.32.0/23`); the unauthenticated LAN root-shell (ttyd terminal/TUI) and the token-bearing landing page are now exclusively reachable through the authenticated HA Ingress session.

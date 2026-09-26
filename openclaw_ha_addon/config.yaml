@@ -1,7 +1,7 @@
-# OpenClaw Home Assistant App v0.7.12.2 Configuration
+# OpenClaw Home Assistant App v0.7.12.3 Configuration
 # OpenClaw 2026.9.6 — restart recovery, startup detection, storage compaction
 name: OpenClaw Assistant
-version: "0.7.12.2"
+version: "0.7.12.3"
 slug: openclaw_ha_addon
 description: Agentic AI assistant for Home Assistant — full OpenClaw runtime with Ingress Web UI, web terminal, Assist pipeline and MCP integration
 url: https://github.com/chillkiller/openclaw-ha-addon
