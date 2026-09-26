@@ -1,7 +1,7 @@
 "use strict";
 
 /**
- * OOM-Shim for OpenClaw HA-Addon v4.22
+ * OOM-Shim for OpenClaw HA-App v4.22
  * Prevents the Linux OOM-Killer from arbitrarily terminating the gateway process.
  * Sets oom_score_adj to 0 (neutral) so the kernel doesn't prefer this process for killing.
  */

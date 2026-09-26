@@ -1,5 +1,5 @@
 // Shared helper for ACPX harness wrappers. Resolves the provider environment
-// (Anthropic, OpenAI, Ollama) based on the add-on option ollama_base_url.
+// (Anthropic, OpenAI, Ollama) based on the app option ollama_base_url.
 //
 // Rules:
 //   - If a real API key (ANTHROPIC_API_KEY / OPENAI_API_KEY) is set in the

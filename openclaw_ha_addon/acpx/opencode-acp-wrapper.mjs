@@ -1,7 +1,7 @@
 #!/usr/bin/env node
-// OpenClaw HA Add-on — ACPX wrapper for OpenCode (Agent Client Protocol)
+// OpenClaw HA App — ACPX wrapper for OpenCode (Agent Client Protocol)
 // This launcher is copied to /config/.openclaw/acpx/ by run.sh on startup.
-// It expects the `opencode` CLI to be available (installed by the add-on init).
+// It expects the `opencode` CLI to be available (installed by the app init).
 
 import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -172,11 +172,11 @@ try {
 const configuredArgs = stripOpenClawWrapperArgs(rawConfiguredArgs);
 
 function resolveOpencodeCommand() {
-  // Prefer the add-on managed npm project bin
+  // Prefer the app managed npm project bin
   const managedBin = "/config/.openclaw/acpx/.node_project/node_modules/.bin/opencode";
   if (existsSync(managedBin)) return managedBin;
 
-  // Prefer the add-on's persistent npm global bin
+  // Prefer the app's persistent npm global bin
   const persistentBin = "/config/.node_global/bin/opencode";
   if (existsSync(persistentBin)) return persistentBin;
 

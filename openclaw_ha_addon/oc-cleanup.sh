@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # ──────────────────────────────────────────────────────────────
 # oc-cleanup — Disk space monitor & cleanup helper for OpenClaw
-# Run from the add-on terminal:  oc-cleanup
+# Run from the app terminal:  oc-cleanup
 # ──────────────────────────────────────────────────────────────
 set -euo pipefail
 
@@ -34,7 +34,7 @@ if df -h "$DATA_MOUNT" >/dev/null 2>&1; then
 
   if [ "$DISK_PCT_NUM" -ge 90 ]; then
     echo -e "${RED}${BOLD}⚠  CRITICAL: Disk is ${DISK_PCT} full!${RESET}"
-    echo -e "${RED}   Add-on updates and Docker builds may fail.${RESET}"
+    echo -e "${RED}   App updates and Docker builds may fail.${RESET}"
     echo ""
   elif [ "$DISK_PCT_NUM" -ge 75 ]; then
     echo -e "${YELLOW}${BOLD}⚠  WARNING: Disk is ${DISK_PCT} full.${RESET}"
@@ -46,8 +46,8 @@ if df -h "$DATA_MOUNT" >/dev/null 2>&1; then
   fi
 fi
 
-# ── Add-on cache sizes ──────────────────────────────────────
-echo -e "${BOLD}Add-on cache sizes:${RESET}"
+# ── App cache sizes ──────────────────────────────────────────
+echo -e "${BOLD}App cache sizes:${RESET}"
 
 show_size() {
   local label="$1" path="$2"
@@ -69,7 +69,7 @@ show_size "Temp files (/tmp)" "/tmp"
 echo ""
 
 # ── Cleanup menu ────────────────────────────────────────────
-echo -e "${BOLD}What can be cleaned from inside the add-on:${RESET}"
+echo -e "${BOLD}What can be cleaned from inside the app:${RESET}"
 echo "  1) npm cache              (safe — rebuilds on demand)"
 echo "  2) pnpm store cache       (safe — rebuilds on demand)"
 echo "  3) Python __pycache__     (safe — regenerated automatically)"
@@ -107,9 +107,9 @@ cleanup_tmp() {
 
 show_docker_commands() {
   echo ""
-  echo -e "${BOLD}${YELLOW}Run these from a HOST root shell (not this add-on terminal):${RESET}"
+  echo -e "${BOLD}${YELLOW}Run these from a HOST root shell (not this app terminal):${RESET}"
   echo ""
-  echo -e "  ${BOLD}Option A — Advanced SSH & Web Terminal add-on:${RESET}"
+  echo -e "  ${BOLD}Option A — Advanced SSH & Web Terminal app:${RESET}"
   echo "    Install it, disable Protection Mode, then open its terminal."
   echo ""
   echo -e "  ${BOLD}Option B — HAOS console (VirtualBox / keyboard):${RESET}"

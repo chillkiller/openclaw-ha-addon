@@ -1,4 +1,4 @@
-# OpenClaw Assistant — Home Assistant Add-on
+# OpenClaw Assistant — Home Assistant App
 
 [![Letztes Release](https://img.shields.io/github/v/release/chillkiller/openclaw-ha-addon.svg?style=flat-square)](https://github.com/chillkiller/openclaw-ha-addon/releases)
 [![Lizenz: MIT](https://img.shields.io/badge/Lizenz-MIT-yellow.svg?style=flat-square)](LICENSE)
@@ -8,28 +8,28 @@
 
 > **Sprache:** Deutsch · [English](README.md)
 
-OpenClaw Assistant bringt [OpenClaw](https://github.com/openclaw/openclaw) — eine agentische KI-Laufzeitumgebung — als eigenständiges Add-on in deine Home-Assistant-Installation. Er plant, denkt voraus und führt aus: steuere dein Smart Home per Konversation, automatisiere Routineaufgaben und gib deinem Assistenten echte Werkzeuge — Web-Terminal, Browser-Automatisierung, geplante Jobs und ein wachsendes Skill-Ökosystem.
+OpenClaw Assistant bringt [OpenClaw](https://github.com/openclaw/openclaw) — eine agentische KI-Laufzeitumgebung — als eigenständige App in deine Home-Assistant-Installation. Er plant, denkt voraus und führt aus: steuere dein Smart Home per Konversation, automatisiere Routineaufgaben und gib deinem Assistenten echte Werkzeuge — Web-Terminal, Browser-Automatisierung, geplante Jobs und ein wachsendes Skill-Ökosystem.
 
-Alles läuft lokal auf deinem HAOS-Gerät. Kein externes Docker-Setup, keine Cloud-Abhängigkeit — das Add-on liefert die komplette OpenClaw-Runtime mit.
+Alles läuft lokal auf deinem HAOS-Gerät. Kein externes Docker-Setup, keine Cloud-Abhängigkeit — die App liefert die komplette OpenClaw-Runtime mit.
 
 ## 🤖 Wie dieses Projekt entsteht
 
-Dieses Projekt ist ein **Vibe-Coding-Produkt**: der weitaus größte Teil von Code und Dokumentation wurde durch KI-gestützte Entwicklung generiert und iteriert (OpenClaw-Agenten — inklusive des Maintainer-Teams dieses Add-ons). Der Eigentümer prüft, testet auf echter Hardware und entscheidet, was ausgeliefert wird.
+Dieses Projekt ist ein **Vibe-Coding-Produkt**: der weitaus größte Teil von Code und Dokumentation wurde durch KI-gestützte Entwicklung generiert und iteriert (OpenClaw-Agenten — inklusive des Maintainer-Teams dieser App). Der Eigentümer prüft, testet auf echter Hardware und entscheidet, was ausgeliefert wird.
 
 Wir sagen das offen aus zwei Gründen:
 
 - **Ehrlichkeit** — du solltest wissen, was du installierst und wie es entstanden ist.
-- **Beweis** — dieses Add-on ist die Referenz-Deployment seiner eigenen Werkzeugkette: der Code, der es betreibt, hat es geschrieben.
+- **Beweis** — diese App ist die Referenz-Deployment ihrer eigenen Werkzeugkette: der Code, der sie betreibt, hat sie geschrieben.
 
 Jedes Release wird vor dem Tagging auf einer echten Home-Assistant-OS-Installation (aarch64) verifiziert.
 
 ## ✨ Funktionen
 
-- **Ingress-Web-UI** — die komplette OpenClaw Control UI direkt in Home Assistant eingebettet, mit Web-Terminal und Offline-Dokumentation auf der Add-on-Landingpage
+- **Ingress-Web-UI** — die komplette OpenClaw Control UI direkt in Home Assistant eingebettet, mit Web-Terminal und Offline-Dokumentation auf der App-Landingpage
 - **Sechs Netzwerkmodi** — vom abgeschotteten Ingress-only bis LAN-HTTPS (eingebautes selbstsigniertes TLS), Tailscale serve/funnel und Reverse-Proxy-Voreinstellungen
 - **Tiefe Home-Assistant-Integration** — Assist-Pipeline als Konversationsagent über einen OpenAI-kompatiblen Endpoint, automatische MCP-Server-Registrierung und direkte Geräte-/Entitätssteuerung
 - **Companion-Integration** — funktioniert mit der [OpenClaw-Integration für Home Assistant](https://github.com/techartdev/OpenClawHomeAssistantIntegration) für Auto-Discovery, Lovelace-Chat-Karte und Sprachmodus
-- **ACPX-Coding-Agent-Harness** — optionale verwaltete Wrapper für Claude Code, Codex und OpenCode im Add-on
+- **ACPX-Coding-Agent-Harness** — optionale verwaltete Wrapper für Claude Code, Codex und OpenCode in der App
 - **Lokale KI** — mitgeliefertes `node-llama-cpp` für Embeddings auf dem Gerät; Ollama-ready für lokale Modelle
 - **Browser-Automatisierung** — headless Chromium enthalten
 - **Persistente Skills & Konfiguration** — alles übersteht Updates durch das HA-Backup-System
@@ -39,7 +39,7 @@ Jedes Release wird vor dem Tagging auf einer echten Home-Assistant-OS-Installati
 
 - Home Assistant OS / Supervised **2024.12 oder neuer**
 - Architektur: **amd64** oder **aarch64** (getestet auf Raspberry Pi 5)
-- **RAM:** 8 GB+ empfohlen. Der Gateway läuft standardmäßig mit 4 GB Node.js-Heap; auf kleineren Systemen über das Add-on-Terminal reduzieren (`--max-old-space-size` in `NODE_OPTIONS`).
+- **RAM:** 8 GB+ empfohlen. Der Gateway läuft standardmäßig mit 4 GB Node.js-Heap; auf kleineren Systemen über das App-Terminal reduzieren (`--max-old-space-size` in `NODE_OPTIONS`).
 - Speicher: rechne mit einem Image im Multi-Gigabyte-Bereich (~1,8 GB eigene Layer, ~7 GB gesamt inkl. geteilter Basis-Layer)
 
 ## 🚀 Installation
@@ -50,15 +50,17 @@ Jedes Release wird vor dem Tagging auf einer echten Home-Assistant-OS-Installati
 
 **Oder manuell:**
 
-1. **Einstellungen → Add-ons → Add-on Store** → ⋮ → **Repositorys**
+1. **Einstellungen → Apps** → **App installieren** → ⋮ → **Repositories**
 2. Einfügen: `https://github.com/chillkiller/openclaw-ha-addon`
 3. **OpenClaw Assistant** suchen → **Installieren**
-4. Add-on **Starten**
+4. App **starten**
+
+> **Hinweis:** Home Assistant hat „Add-ons“ mit Version 2026.2 in „Apps“ umbenannt. Auf älteren Versionen heißt der Menüeintrag noch „Add-ons“.
 
 ## ⚡ Schnellstart
 
-1. Add-on installieren und starten — die Standardeinstellungen funktionieren sofort (Netzwerkmodus `ingress_only`)
-2. Add-on-Seite öffnen → **Web-UI öffnen**
+1. App installieren und starten — die Standardeinstellungen funktionieren sofort (Netzwerkmodus `ingress_only`)
+2. App-Seite öffnen → **Web-UI öffnen**
 3. OpenClaw-Onboarding abschließen — dann sprich damit, baue Automatisierungen, füge Skills hinzu
 
 Alles jenseits der Defaults — Netzwerkmodi, Tokens, Assist, MCP — steht in der [vollständigen Dokumentation (Englisch)](DOCS.md).
@@ -74,7 +76,7 @@ Alles jenseits der Defaults — Netzwerkmodi, Tokens, Assist, MCP — steht in d
 | `tailnet_funnel` | Tailscale-Funnel-HTTPS | Öffentliche Erreichbarkeit mit Passwort-Auth |
 | `reverse_proxy` | Loopback + Trusted-Proxy-Auth | Nginx Proxy Manager, Traefik, Caddy davor |
 
-Modus einstellen unter **Einstellungen → Add-ons → OpenClaw Assistant → Konfiguration**. Details: [DOCS.md (Englisch)](DOCS.md#4-accessing-the-gateway-web-ui).
+Modus einstellen unter **Einstellungen → Apps → OpenClaw Assistant → Konfiguration**. Details: [DOCS.md (Englisch)](DOCS.md#4-accessing-the-gateway-web-ui).
 
 ## 🔌 Home-Assistant-Integration
 
@@ -84,7 +86,7 @@ Modus einstellen unter **Einstellungen → Add-ons → OpenClaw Assistant → Ko
 
 ## 🔐 Sicherheit
 
-Dieses Add-on betreibt eine mächtige KI mit Shell-Zugriff in deinem Heimnetz. Das ist sein Zweck — und sein Risiko. Lies [SECURITY.md](SECURITY.md) vor der Installation.
+Diese App betreibt eine mächtige KI mit Shell-Zugriff in deinem Heimnetz. Das ist sein Zweck — und sein Risiko. Lies [SECURITY.md](SECURITY.md) vor der Installation.
 
 Wichtige Fakten:
 
@@ -95,7 +97,7 @@ Wichtige Fakten:
 
 ## 📚 Dokumentation & Support
 
-- [Vollständige Add-on-Dokumentation (Englisch)](DOCS.md) — Konfigurationsreferenz, Anleitungen, Fehlerbehebung
+- [Vollständige App-Dokumentation (Englisch)](DOCS.md) — Konfigurationsreferenz, Anleitungen, Fehlerbehebung
 - [Deployment-Hinweise (Englisch)](DEPLOYMENT.md) — Versionsmatrix, Ressourcenplanung
 - [Issues](https://github.com/chillkiller/openclaw-ha-addon/issues) — Fehlerberichte
 - [Discussions](https://github.com/chillkiller/openclaw-ha-addon/discussions) — Fragen und Ideen

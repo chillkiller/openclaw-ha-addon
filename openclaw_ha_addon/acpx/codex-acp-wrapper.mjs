@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// OpenClaw HA Add-on — ACPX wrapper for Codex (Agent Client Protocol)
+// OpenClaw HA App — ACPX wrapper for Codex (Agent Client Protocol)
 // This launcher is copied to /config/.openclaw/acpx/ by run.sh on startup.
 // It resolves the installed codex-acp binary at runtime so updates survive.
 
@@ -220,7 +220,7 @@ function resolveNpmCliPath() {
 }
 
 function findInstalledCodexAcpBin() {
-  // Prefer the add-on managed project.
+  // Prefer the app managed project.
   const addonManaged = "/config/.openclaw/acpx/.node_project/node_modules";
   const managedBin = path.join(
     addonManaged,

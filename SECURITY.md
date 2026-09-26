@@ -1,16 +1,16 @@
 # Security Risks & Disclaimer
 
-This document outlines the security risks associated with running the OpenClaw Assistant Home Assistant add-on and provides best practices for safe usage.
+This document outlines the security risks associated with running the OpenClaw Assistant Home Assistant app and provides best practices for safe usage.
 
-**By installing and using this add-on, you acknowledge and accept the risks described below.**
+**By installing and using this app, you acknowledge and accept the risks described below.**
 
 ---
 
 ## Disclaimer
 
-This add-on is provided **"AS IS"**, without warranty of any kind, under the [MIT License](LICENSE).
+This app is provided **"AS IS"**, without warranty of any kind, under the [MIT License](LICENSE).
 
-The authors and contributors of this add-on are **not responsible** for any damage, data loss, security breach, unauthorized access, financial loss, or any other harm that may occur as a result of installing, configuring, or using this add-on. This includes but is not limited to:
+The authors and contributors of this app are **not responsible** for any damage, data loss, security breach, unauthorized access, financial loss, or any other harm that may occur as a result of installing, configuring, or using this app. This includes but is not limited to:
 
 - Unintended actions performed by the AI agent
 - Exposure of sensitive data (tokens, credentials, personal information)
@@ -18,7 +18,7 @@ The authors and contributors of this add-on are **not responsible** for any dama
 - Damage to smart home devices or connected systems
 - Actions taken by third-party skills or integrations
 
-**You use this add-on entirely at your own risk.**
+**You use this app entirely at your own risk.**
 
 ---
 
@@ -28,7 +28,7 @@ The authors and contributors of this add-on are **not responsible** for any dama
 
 OpenClaw is an **agentic AI assistant** — it can plan, reason, and execute actions autonomously. Unlike a simple chatbot, it can:
 
-- Execute shell commands on the add-on container
+- Execute shell commands on the app container
 - Control smart home devices (if integrated with Assist pipeline or HA long-lived access token)
 - Read and write files
 - Make HTTP requests to external services
@@ -76,7 +76,7 @@ The `homeassistant_token` option stores a **long-lived access token** that grant
 
 **Risks**:
 - If the container is compromised, the attacker gains full HA access
-- Skills or scripts running inside the add-on have access to this token
+- Skills or scripts running inside the app have access to this token
 - The token does not expire unless manually revoked
 
 **Mitigations**:
@@ -87,7 +87,7 @@ The `homeassistant_token` option stores a **long-lived access token** that grant
 
 ### 5. Third-Party Skills & Supply Chain
 
-OpenClaw supports installing skills from the community (ClawHub) and via npm. These are **third-party code** running inside the add-on container.
+OpenClaw supports installing skills from the community (ClawHub) and via npm. These are **third-party code** running inside the app container.
 
 **Risks**:
 - Malicious skills could exfiltrate data, install backdoors, or perform harmful actions
@@ -98,15 +98,15 @@ OpenClaw supports installing skills from the community (ClawHub) and via npm. Th
 **Mitigations**:
 - Only install skills from trusted sources
 - Review skill code before installing when possible
-- Monitor the add-on logs for unexpected activity
-- Keep the add-on updated to get security patches
+- Monitor the app logs for unexpected activity
+- Keep the app updated to get security patches
 
 ### 6. Router SSH Access
 
-The `router_ssh_*` options allow the add-on to SSH into your router or network devices. This grants **direct access to your network infrastructure**.
+The `router_ssh_*` options allow the app to SSH into your router or network devices. This grants **direct access to your network infrastructure**.
 
 **Risks**:
-- A compromised add-on could reconfigure your router
+- A compromised app could reconfigure your router
 - Firewall rules could be modified
 - Network traffic could be intercepted or redirected
 
@@ -154,9 +154,9 @@ AI agents that process external content (web pages, documents, emails) are vulne
 | Prefer `gateway_bind_mode: tailnet` over `lan` for remote/private access | High |
 | Only install skills from trusted sources | High |
 | Review exposed entities in Assist pipeline | High |
-| Keep the add-on updated | High |
+| Keep the app updated | High |
 | Use a dedicated HA user for the `homeassistant_token` | Medium |
-| Monitor add-on logs regularly | Medium |
+| Monitor app logs regularly | Medium |
 | Rotate gateway tokens periodically | Medium |
 | Restrict router SSH user permissions | Medium |
 | Back up your configuration regularly | Low |
@@ -165,7 +165,7 @@ AI agents that process external content (web pages, documents, emails) are vulne
 
 ## Reporting Security Issues
 
-If you discover a security vulnerability in this add-on, please report it responsibly by opening a private security advisory on GitHub rather than a public issue.
+If you discover a security vulnerability in this app, please report it responsibly by opening a private security advisory on GitHub rather than a public issue.
 
 ---
 

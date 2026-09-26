@@ -79,7 +79,7 @@
   <iframe id="frameDocs" class="iframe-pane" src="" title="Docs"></iframe>
   <div id="noServices" class="no-services">
     Keine Services aktiviert.<br>
-    Aktiviere WebUI, Terminal oder Docs in der Add-on-Konfiguration.
+    Aktiviere WebUI, Terminal oder Docs in der App-Konfiguration.
   </div>
 </div>
 

@@ -1,4 +1,4 @@
-# OpenClaw Home Assistant App v0.7.12.1 Configuration
+# OpenClaw Home Assistant App v0.7.12.2 Configuration
 # OpenClaw 2026.9.6 — restart recovery, startup detection, storage compaction
 name: OpenClaw Assistant
 version: "0.7.12.2"

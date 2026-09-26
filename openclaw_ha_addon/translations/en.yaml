@@ -1,7 +1,7 @@
 configuration:
   timezone:
     name: Timezone
-    description: Timezone for the add-on (e.g., Europe/Berlin, America/New_York)
+    description: Timezone for the app (e.g., Europe/Berlin, America/New_York)
   
   enable_terminal:
     name: Enable Web Terminal
@@ -37,11 +37,11 @@ configuration:
   
   clean_session_locks_on_start:
     name: Clean Session Locks on Start
-    description: Cleanup stale session lock files left after crashes/restarts when add-on starts
+    description: Cleanup stale session lock files left after crashes/restarts when app starts
   
   clean_session_locks_on_exit:
     name: Clean Session Locks on Exit
-    description: Cleanup session lock files when add-on stops gracefully
+    description: Cleanup session lock files when app stops gracefully
   
   gateway_mode:
     name: Gateway Mode
@@ -99,7 +99,7 @@ configuration:
 
   gateway_log_to_console:
     name: Show Gateway Log in HA Log
-    description: When ON, gateway output (stdout/stderr) is mirrored to the Home Assistant add-on log window in addition to the log file. Useful for real-time diagnostics. When OFF, logs are written to file only.
+    description: When ON, gateway output (stdout/stderr) is mirrored to the Home Assistant app log window in addition to the log file. Useful for real-time diagnostics. When OFF, logs are written to file only.
 
   gateway_log_level:
     name: Gateway Log Level
@@ -111,7 +111,7 @@ configuration:
 
   trace_log_to_console:
     name: Show Boot Trace in HA Log
-    description: When ON, the detailed boot sequence trace (set -x output) is mirrored to the Home Assistant add-on log window in addition to the log file. Very verbose — enable only for debugging.
+    description: When ON, the detailed boot sequence trace (set -x output) is mirrored to the Home Assistant app log window in addition to the log file. Very verbose — enable only for debugging.
 
   gateway_env_vars:
     name: Gateway Environment Variables

@@ -96,7 +96,7 @@ configuration:
 
   mdns_host_name:
     name: Nazwa hosta mDNS
-    description: Opcjonalna nazwa hosta dla reklamy mDNS (np. homeassistant.local). Wartość domyślna to "openclaw-ha-addon". Jeśli puste, wykrywana automatycznie z nazwy hosta kontenera.
+    description: Opcjonalna nazwa hosta dla reklamy mDNS (np. homeassistant.local). Wartość domyślna to "openclaw". Jeśli puste, wykrywana automatycznie z nazwy hosta kontenera.
 
   gateway_log_to_console:
     name: Pokazuj log Gateway w logu HA

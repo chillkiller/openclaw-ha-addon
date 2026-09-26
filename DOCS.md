@@ -1,6 +1,6 @@
-# OpenClaw Assistant — Home Assistant Add-on Documentation
+# OpenClaw Assistant — Home Assistant App Documentation
 
-This add-on runs [OpenClaw](https://github.com/openclaw/openclaw) inside Home Assistant OS (HAOS). It provides a fully self-contained environment with a web terminal, gateway server, and all the tools OpenClaw needs — no manual Docker setup required.
+This app runs [OpenClaw](https://github.com/openclaw/openclaw) inside Home Assistant OS (HAOS). It provides a fully self-contained environment with a web terminal, gateway server, and all the tools OpenClaw needs — no manual Docker setup required.
 
 **Table of Contents**
 
@@ -16,15 +16,15 @@ This add-on runs [OpenClaw](https://github.com/openclaw/openclaw) inside Home As
 10. [Troubleshooting](#10-troubleshooting)
 11. [FAQ](#11-faq)
 
-> **Important**: Before using this add-on, please read the [Security Risks & Disclaimer](SECURITY.md).
+> **Important**: Before using this app, please read the [Security Risks & Disclaimer](SECURITY.md).
 
 ---
 
 ## 1. Architecture Overview
 
-### What runs inside the add-on
+### What runs inside the app
 
-The add-on container runs four services:
+The app container runs four services:
 
 | Service | Port | Purpose |
 |---|---|---|
@@ -32,9 +32,9 @@ The add-on container runs four services:
 | **nginx** (Ingress proxy) | 49200 (fixed) | Serves the landing page inside Home Assistant |
 | **ttyd** (Web terminal) | 7681 (configurable) | Browser-based terminal for setup and management |
 
-When you open the add-on page in Home Assistant, nginx serves a landing page with tabs for:
+When you open the app page in Home Assistant, nginx serves a landing page with tabs for:
 - **WebUI** — OpenClaw Control UI embedded inside HA Ingress
-- **Terminal** — bash shell inside the add-on container (default tab)
+- **Terminal** — bash shell inside the app container (default tab)
 - **Docs** — this documentation
 
 The Control UI is embedded via HA Ingress rather than opened in a separate tab.
@@ -45,7 +45,7 @@ so you do not need to enter it manually.
 
 | Path | Persistent? | Contents |
 |---|---|---|
-| `/config/` | Yes | All user data — survives add-on updates and rebuilds |
+| `/config/` | Yes | All user data — survives app updates and rebuilds |
 | `/config/.openclaw/` | Yes | OpenClaw configuration (`openclaw.json`), skills, agent data |
 | `/config/clawd/` | Yes | Agent workspace (ClawHub-installed skills, files) |
 | `/config/.node_global/` | Yes | User-installed npm packages (skills installed via dashboard) |
@@ -55,19 +55,21 @@ so you do not need to enter it manually.
 | `/config/gogcli/` | Yes | gog OAuth credentials for Google APIs |
 | `/usr/lib/node_modules/openclaw/` | No | OpenClaw installation (rebuilt with each image update) |
 
-> **Important**: Everything under `/config/` persists across add-on updates. The container filesystem (`/usr/`, `/opt/`, etc.) is rebuilt each time the image changes.
+> **Important**: Everything under `/config/` persists across app updates. The container filesystem (`/usr/`, `/opt/`, etc.) is rebuilt each time the image changes.
 
 ---
 
 ## 2. Installation
 
-1. In Home Assistant, go to **Settings → Add-ons → Add-on store**
+1. In Home Assistant, go to **Settings → Apps** and select **Install app**
 2. Click ⋮ (top-right) → **Repositories** → paste:
    ```
    https://github.com/chillkiller/openclaw-ha-addon
    ```
 3. Find and install **OpenClaw Assistant**
 4. Click **Start**
+
+> **Note:** Home Assistant renamed "add-ons" to "apps" as of 2026.2. On older releases, the menu entry is still called "Add-ons".
 
 **Supported architectures**: amd64, aarch64 (Raspberry Pi 4/5)
 
@@ -77,7 +79,7 @@ so you do not need to enter it manually.
 
 ### What happens on first boot
 
-When the add-on starts for the first time, it automatically:
+When the app starts for the first time, it automatically:
 1. Creates persistent directories under `/config/`
 2. Generates a minimal `openclaw.json` with a random gateway auth token
 3. Syncs built-in skills to persistent storage
@@ -85,7 +87,7 @@ When the add-on starts for the first time, it automatically:
 
 ### Step 1 — Run onboarding
 
-Open the add-on page in Home Assistant. You'll see a landing page with an embedded terminal.
+Open the app page in Home Assistant. You'll see a landing page with an embedded terminal.
 
 In the terminal, run:
 
@@ -95,7 +97,7 @@ openclaw onboard
 
 This interactive wizard walks you through connecting your AI providers (OpenAI, Google, Anthropic, etc.) and basic configuration.
 
-> **Note (v0.5.54+)**: If onboarding triggers a gateway runtime restart, the add-on now keeps nginx/terminal alive and auto-recovers the runtime instead of restarting the whole container.
+> **Note (v0.5.54+)**: If onboarding triggers a gateway runtime restart, the app now keeps nginx/terminal alive and auto-recovers the runtime instead of restarting the whole container.
 
 Alternatively, for more granular control:
 
@@ -128,41 +130,41 @@ Save this token — you'll need it to access the Gateway Web UI and for API inte
 
 ## 4. Accessing the Gateway Web UI
 
-The Gateway Web UI (Control UI) is OpenClaw's main web interface. It is embedded directly inside Home Assistant via the add-on's Ingress landing page, or can be opened in a separate browser tab via the **Open Gateway Web UI** button.
+The Gateway Web UI (Control UI) is OpenClaw's main web interface. It is embedded directly inside Home Assistant via the app's Ingress landing page, or can be opened in a separate browser tab via the **Open Gateway Web UI** button.
 
-> **Important (v2026.2.21+):** OpenClaw now requires a **secure context** (HTTPS or localhost) for the Control UI. Plain HTTP over LAN is no longer accepted. The add-on's `network_mode` option makes this easy — see below.
+> **Important (v2026.2.21+):** OpenClaw now requires a **secure context** (HTTPS or localhost) for the Control UI. Plain HTTP over LAN is no longer accepted. The app's `network_mode` option makes this easy — see below.
 >
 > **v2026.2.22 note:** The gateway now emits a startup security warning when `dangerouslyDisableDeviceAuth` is active (used by `lan_https` mode). This warning is **expected and safe to ignore** — token authentication is still enforced.
 
 ### Choosing an access mode
 
-Set `network_mode` in **Settings → Add-ons → OpenClaw Assistant → Configuration**:
+Set `network_mode` in **Settings → Apps → OpenClaw Assistant → Configuration**:
 
 | Mode | Best for | What it does |
 |---|---|---|
 | **`lan_http`** | LAN browsers / local network | Gateway binds to LAN on `gateway_port` (default 18789) with token auth. |
-| **`lan_https`** | Phones, tablets, LAN browsers | Adds a built-in HTTPS proxy inside the add-on. No external setup needed. |
+| **`lan_https`** | Phones, tablets, LAN browsers | Adds a built-in HTTPS proxy inside the app. No external setup needed. |
 | **`tailnet_serve`** | Tailscale users | Publishes the Control UI via Tailscale serve with auto-generated HTTPS certs. |
 | **`tailnet_funnel`** | Remote public access via Tailscale | Publishes publicly via Tailscale funnel with password auth. |
-| **`ingress_only`** | Terminal/Ingress only (default) | Loopback — gateway only reachable through HA Ingress or the add-on terminal. |
+| **`ingress_only`** | Terminal/Ingress only (default) | Loopback — gateway only reachable through HA Ingress or the app terminal. |
 | **`reverse_proxy`** | Users with NPM / Caddy / Traefik | Gateway stays on loopback; your reverse proxy terminates TLS and forwards traffic. Set `gateway_trusted_proxies`. |
 
 ### Method A — Built-in HTTPS proxy (`lan_https` — recommended)
 
 This is the simplest way to get secure LAN access, especially for phones and tablets.
 
-1. Go to **Settings → Add-ons → OpenClaw Assistant → Configuration**
+1. Go to **Settings → Apps → OpenClaw Assistant → Configuration**
 2. Set `network_mode`: **lan_https**
-3. Restart the add-on
+3. Restart the app
 
 **What happens automatically:**
-- The add-on generates a local CA certificate and a TLS server certificate
+- The app generates a local CA certificate and a TLS server certificate
 - nginx listens on the gateway port (default 18789) with HTTPS on all interfaces
 - The gateway process itself binds to loopback on an internal port (gateway_port + 1)
 - The landing page shows a **Download CA Certificate** button
 
 **Phone/tablet setup (one-time):**
-1. Open the add-on page in HA and click **Download CA Certificate**
+1. Open the app page in HA and click **Download CA Certificate**
 2. Install the certificate on your device:
    - **Android**: Settings → Security → Install certificate → CA certificate → select file
    - **iOS**: Open the `.crt` file → Install Profile → Settings → General → About → Certificate Trust Settings → enable the OpenClaw CA
@@ -174,13 +176,13 @@ This is the simplest way to get secure LAN access, especially for phones and tab
 
 Use this when you already run Nginx Proxy Manager (or Caddy/Traefik).
 
-**OpenClaw add-on settings**
+**OpenClaw app settings**
 1. Set `network_mode`: **reverse_proxy**
 2. Set `gateway_trusted_proxies` to your proxy source CIDR/IP.
-   - Example for NPM add-on network: `172.30.0.0/16`
+   - Example for NPM app network: `172.30.0.0/16`
    - Or strict single IP: `172.30.x.y/32`
 3. Set `gateway_public_url` to your final HTTPS URL (example: `https://openclaw.example.com`)
-4. Restart OpenClaw add-on
+4. Restart OpenClaw app
 
 **NPM host config (known-good pattern)**
 1. Create Proxy Host: `openclaw.example.com`
@@ -192,7 +194,7 @@ Use this when you already run Nginx Proxy Manager (or Caddy/Traefik).
 
 Then open `https://openclaw.example.com`.
 
-> **Important**: Nabu Casa remote access only proxies port 8123. It does not expose custom add-on ports directly.
+> **Important**: Nabu Casa remote access only proxies port 8123. It does not expose custom app ports directly.
 
 ### Method C — SSH port forwarding (secure, no config changes)
 
@@ -206,13 +208,13 @@ Then open `http://localhost:18789` in your browser. `localhost` counts as a secu
 
 > **Limitation**: SSH forwarding doesn't work on phones/tablets. Use `lan_https` for mobile access.
 
-### Method D — Tailnet flow (tested with HA Tailscale add-on + NPM)
+### Method D — Tailnet flow (tested with HA Tailscale app + NPM)
 
 This is the practical flow users report as stable in HAOS.
 
-1. In **Tailscale add-on**:
-   - Disable `userspace_networking` (must be `false` so other add-ons can reach tailnet interface)
-2. In **OpenClaw add-on**:
+1. In **Tailscale app**:
+   - Disable `userspace_networking` (must be `false` so other apps can reach tailnet interface)
+2. In **OpenClaw app**:
    - Preferred: set `network_mode` to **tailnet_serve**
    - Alternative (equivalent): `network_mode: tailnet_serve`, token auth
 3. In **NPM**:
@@ -221,18 +223,18 @@ This is the practical flow users report as stable in HAOS.
    - Configure TLS cert on the public host
 4. Set `gateway_public_url` to the final HTTPS URL and restart OpenClaw
 
-> **Why this flow**: `tailnet_serve` in this add-on is a bind/auth preset. It does not automatically run `tailscale serve` inside OpenClaw.
+> **Why this flow**: `tailnet_serve` in this app is a bind/auth preset. It does not automatically run `tailscale serve` inside OpenClaw.
 
 ### Setting up the "Open Gateway Web UI" button
 
-Set `gateway_public_url` in the add-on configuration to the URL where the gateway is reachable from your browser.
+Set `gateway_public_url` in the app configuration to the URL where the gateway is reachable from your browser.
 
 **Examples**:
 - LAN HTTPS (built-in): `https://192.168.1.119:18789`
 - External HTTPS: `https://openclaw.example.com`
 - Tailscale: `https://ha-machine.ts.net:18789`
 
-> **Tip**: In `lan_https` mode, if you leave `gateway_public_url` empty, the add-on auto-constructs it from the detected LAN IP.
+> **Tip**: In `lan_https` mode, if you leave `gateway_public_url` empty, the app auto-constructs it from the detected LAN IP.
 
 ### Browser security: "requires HTTPS or localhost"
 
@@ -248,20 +250,20 @@ This means the browser is connecting over plain HTTP. **Solutions**:
 
 ### Home Assistant Ingress and secure context
 
-The OpenClaw ControlUI uses browser APIs that require a **secure context** (HTTPS or `localhost`). Home Assistant Ingress serves the add-on over plain HTTP when your Home Assistant instance is **not configured for HTTPS**.
+The OpenClaw ControlUI uses browser APIs that require a **secure context** (HTTPS or `localhost`). Home Assistant Ingress serves the app over plain HTTP when your Home Assistant instance is **not configured for HTTPS**.
 
 When you open the ControlUI through Ingress in that case, you may see errors such as:
 
 > Attachment storage not available. Use HTTPS or localhost...
 
-This is expected browser behavior, not an add-on bug.
+This is expected browser behavior, not an app bug.
 
 To get full ControlUI functionality, use one of these methods:
 - **Enable HTTPS on Home Assistant** (e.g. Nginx Proxy Manager, Tailscale Serve, Let's Encrypt, Nabu Casa). Ingress then becomes a secure context automatically.
 - Use `network_mode: lan_https` and open `https://<ha-ip>:18789` directly.
 - Use SSH port forwarding to `http://localhost:18789` (desktop only).
 
-The embedded **Terminal** on the add-on landing page still works over plain HTTP.
+The embedded **Terminal** on the app landing page still works over plain HTTP.
 
 ### Unauthorized error
 
@@ -277,32 +279,32 @@ jq -r '.gateway.auth.token' /config/.openclaw/openclaw.json
 
 ### Health checks
 
-The add-on exposes two health endpoints through nginx:
+The app exposes two health endpoints through nginx:
 
 | Path | What it checks |
 |------|----------------|
 | `/api/health` | nginx ingress proxy is up (used by the landing page badge) |
 | `/webui/healthz` | OpenClaw gateway `/healthz` proxied for the landing page JS |
 
-Additionally, the Dockerfile `HEALTHCHECK` verifies both `/api/health` and the OpenClaw gateway `/startupz` endpoint so Home Assistant Supervisor waits until the gateway is actually ready before marking the add-on as started.
+Additionally, the Dockerfile `HEALTHCHECK` verifies both `/api/health` and the OpenClaw gateway `/startupz` endpoint so Home Assistant Supervisor waits until the gateway is actually ready before marking the app as started.
 
 ---
 
 ## 5. Configuration Reference
 
-All options are set via **Settings → Apps/Add-ons → OpenClaw Assistant → Configuration** in Home Assistant. They are applied automatically on each add-on restart.
+All options are set via **Settings → Apps → OpenClaw Assistant → Configuration** in Home Assistant. They are applied automatically on each app restart.
 
 ### General
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `timezone` | string | `Europe/Berlin` | Timezone for the add-on (e.g., `America/New_York`, `Europe/London`) |
+| `timezone` | string | `Europe/Berlin` | Timezone for the app (e.g., `America/New_York`, `Europe/London`) |
 
 ### Gateway / Network
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `gateway_mode` | `local` / `remote` | `local` | **local**: run gateway in this add-on. **remote**: connect to an external gateway |
+| `gateway_mode` | `local` / `remote` | `local` | **local**: run gateway in this app. **remote**: connect to an external gateway |
 | `gateway_remote_url` | string | _(empty)_ | Remote gateway WebSocket URL used when `gateway_mode: remote` (example: `ws://192.168.1.20:18789` or `wss://gateway.example.com:443`) |
 | `gateway_port` | int | `18789` | Port for the gateway. Only applies when `gateway_mode` is `local` |
 | `network_mode` | `ingress_only` / `lan_http` / `lan_https` / `reverse_proxy` / `tailnet_serve` / `tailnet_funnel` | `ingress_only` | **Single source of truth** for gateway bind/auth/TLS presets. See [Accessing the Gateway Web UI](#4-accessing-the-gateway-web-ui) |
@@ -318,10 +320,10 @@ All options are set via **Settings → Apps/Add-ons → OpenClaw Assistant → C
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `enable_terminal` | bool | `true` | Show the web terminal on the add-on page (the terminal is the default tab and starts before the gateway, so it stays reachable during slow startup) |
+| `enable_terminal` | bool | `true` | Show the web terminal on the app page (the terminal is the default tab and starts before the gateway, so it stays reachable during slow startup) |
 | `terminal_port` | int | `7681` | Port for the terminal (ttyd). Change if 7681 conflicts. Range: 1024-65535 |
-| `enable_webui` | bool | `true` | Show the WebUI tab on the add-on landing page |
-| `enable_docs` | bool | `true` | Show the Docs tab on the add-on landing page |
+| `enable_webui` | bool | `true` | Show the WebUI tab on the app landing page |
+| `enable_docs` | bool | `true` | Show the Docs tab on the app landing page |
 
 > The OpenClaw TUI tab was removed in v0.7.12.1. The bash terminal replaces it as the fallback surface.
 
@@ -342,7 +344,7 @@ For skills or scripts that need SSH access to a router, firewall, or other netwo
 | `router_ssh_user` | string | _(empty)_ | SSH username |
 | `router_ssh_key_path` | string | `/data/keys/router_ssh` | Path to the private key inside the container |
 
-To provide the SSH key: place the private key file in the add-on config directory so it appears at the configured path inside the container. Set permissions: `chmod 600`. (use at own risk, can be very unsecure but very powerful)
+To provide the SSH key: place the private key file in the app config directory so it appears at the configured path inside the container. Set permissions: `chmod 600`. (use at own risk, can be very unsecure but very powerful)
 
 ### Maintenance
 
@@ -351,9 +353,9 @@ To provide the SSH key: place the private key file in the add-on config director
 | `clean_session_locks_on_start` | bool | `true` | Remove stale session lock files on startup (safe — only removes locks when gateway isn't running) |
 | `clean_session_locks_on_exit` | bool | `true` | Remove session lock files on clean shutdown |
 | `auto_configure_mcp` | bool | `false` | Auto-register Home Assistant as an MCP server on startup (requires `homeassistant_token`) |
-| `gateway_log_to_console` | bool | `false` | Mirror gateway stdout/stderr to the HA add-on log window (default: gateway logs go to `/config/clawd/logs/gateway_startup.log` only) |
+| `gateway_log_to_console` | bool | `false` | Mirror gateway stdout/stderr to the HA app log window (default: gateway logs go to `/config/clawd/logs/gateway_startup.log` only) |
 | `gateway_log_level` | `off` / `info` / `debug` | `info` | Gateway log verbosity |
-| `trace_log_to_console` | bool | `false` | Mirror trace output to the HA add-on log window (default: trace logs go to `/config/clawd/logs/trace_startup.log` only) |
+| `trace_log_to_console` | bool | `false` | Mirror trace output to the HA app log window (default: trace logs go to `/config/clawd/logs/trace_startup.log` only) |
 | `runtime_apt_packages` | string | _(empty)_ | Space-separated apt packages installed at container startup (reinstalled each restart; example: `ffmpeg postgresql-client`) |
 | `custom_init_script` | string | _(empty)_ | Path to an executable, idempotent init script that runs before OpenClaw starts (mounted via `/config/` or `/share/`; example: `/share/scripts/my-init.sh`) |
 
@@ -361,7 +363,7 @@ To provide the SSH key: place the private key file in the add-on config director
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `cron_skip_missed_jobs` | bool | `true` | Skip missed cron executions after a restart; avoids backfills of overdue recurring jobs on frequently restarted add-ons |
+| `cron_skip_missed_jobs` | bool | `true` | Skip missed cron executions after a restart; avoids backfills of overdue recurring jobs on frequently restarted apps |
 | `blocked_hostnames` | string | _(empty)_ | Comma-separated hostnames blocked from outbound SSRP. Empty allows all (example: `router.lan,192.168.178.1`) |
 
 ### Discovery & coding agents
@@ -384,16 +386,16 @@ This is the most common setup — accessing the Gateway Web UI from a browser on
 
 #### Option 1 — Built-in HTTPS proxy (recommended)
 
-1. Go to **Settings → Add-ons → OpenClaw Assistant → Configuration**
+1. Go to **Settings → Apps → OpenClaw Assistant → Configuration**
 2. Set `network_mode`: **lan_https**
-3. Restart the add-on
+3. Restart the app
 4. Click the **Open Gateway Web UI** button — it uses HTTPS automatically
 
 **Phone/tablet (one-time):** Click **Download CA Certificate** on the landing page, then install it on your device for trusted access without browser warnings.
 
 #### Option 2 — External reverse proxy
 
-1. Go to **Settings → Add-ons → OpenClaw Assistant → Configuration**
+1. Go to **Settings → Apps → OpenClaw Assistant → Configuration**
 2. Set these options:
 
 | Option | Value |
@@ -403,21 +405,21 @@ This is the most common setup — accessing the Gateway Web UI from a browser on
 | `gateway_public_url` | `https://<your-domain>` |
 
 3. Configure your reverse proxy to forward HTTPS to `<HA-IP>:18789`
-4. Restart the add-on
+4. Restart the app
 
 **Security note**: Always use HTTPS for Control UI access. The `lan_https` mode handles this automatically; for reverse proxy setups, ensure your proxy terminates TLS.
 
 ### 6b. Remote Gateway Mode
 
-If you have an OpenClaw gateway running on a different machine (e.g., a more powerful server), you can configure this add-on to connect to it instead of running its own.
+If you have an OpenClaw gateway running on a different machine (e.g., a more powerful server), you can configure this app to connect to it instead of running its own.
 
 1. Set `gateway_mode`: **remote**
-2. Set `gateway_remote_url` in add-on configuration (example: `wss://gateway.example.com:443`)
-3. Restart the add-on
+2. Set `gateway_remote_url` in app configuration (example: `wss://gateway.example.com:443`)
+3. Restart the app
 
 When `gateway_mode` is `remote`:
-- The add-on does **not** start a local gateway process
-- The add-on writes `gateway.remote.url` from `gateway_remote_url` on startup
+- The app does **not** start a local gateway process
+- The app writes `gateway.remote.url` from `gateway_remote_url` on startup
 - `gateway_port` is ignored
 - The terminal and landing page still work normally
 - You still need the remote gateway's auth token
@@ -434,11 +436,11 @@ There are two ways to connect it to Home Assistant:
 
 The **native OpenClaw integration** provides auto-discovery, a Lovelace chat card, voice mode, tool invocation services, and status sensors — all in one package.
 
-> **Note:** The integration is a **third-party companion project** by [@techartdev](https://github.com/techartdev). It is not part of this add-on repository — install it from its own repository.
+> **Note:** The integration is a **third-party companion project** by [@techartdev](https://github.com/techartdev). It is not part of this app repository — install it from its own repository.
 
 **Step 1 — Enable the endpoint**
 
-In the add-on configuration, set `enable_openai_api`: **true**, then restart.
+In the app configuration, set `enable_openai_api`: **true**, then restart.
 
 Or via terminal:
 ```sh
@@ -456,10 +458,10 @@ Via HACS:
 
 1. Go to **Settings → Devices & Services → Add Integration**
 2. Search for **OpenClaw**
-3. If the addon is running locally, it will be **auto-discovered** — just click Submit
+3. If the app is running locally, it will be **auto-discovered** — just click Submit
 4. If connecting to a remote instance, fill in host, port, token, and SSL settings manually
 
-> **`lan_https` mode**: The integration auto-detects this and connects to the internal gateway port on loopback — no certificate setup needed for local addons.
+> **`lan_https` mode**: The integration auto-detects this and connects to the internal gateway port on loopback — no certificate setup needed for local apps.
 
 **Step 4 — Set as conversation agent**
 
@@ -480,7 +482,7 @@ type: custom:openclaw-chat-card
 
 The card includes message history, typing indicator, voice input, wake-word support, and TTS responses.
 
-> **Works with standalone OpenClaw too.** The integration doesn't require the HA addon — it connects to any reachable OpenClaw gateway over HTTP/HTTPS. See the [integration repository](https://github.com/techartdev/OpenClawHomeAssistantIntegration) for remote connection details.
+> **Works with standalone OpenClaw too.** The integration doesn't require the HA app — it connects to any reachable OpenClaw gateway over HTTP/HTTPS. See the [integration repository](https://github.com/techartdev/OpenClawHomeAssistantIntegration) for remote connection details.
 
 ---
 
@@ -493,7 +495,7 @@ If you prefer to use the [Extended OpenAI Conversation](https://github.com/jekal
 
 **Step 1 — Enable the endpoint**
 
-In the add-on configuration, set `enable_openai_api`: **true**, then restart.
+In the app configuration, set `enable_openai_api`: **true**, then restart.
 
 Or via terminal:
 ```sh
@@ -534,7 +536,7 @@ You can now use Assist (voice or text) and OpenClaw will handle conversations, c
 
 ### 6d. Browser Automation (Chromium)
 
-The add-on includes **Chromium** for browser-based automation tasks. OpenClaw can use it for web scraping, form filling, website testing, and other browser automation skills.
+The app includes **Chromium** for browser-based automation tasks. OpenClaw can use it for web scraping, form filling, website testing, and other browser automation skills.
 
 ### 6d-mcp. MCP Integration (Home Assistant Control)
 
@@ -546,11 +548,11 @@ The **Model Context Protocol (MCP)** lets OpenClaw communicate directly with Hom
    - Go to your HA profile page (click your user avatar at the bottom of the sidebar)
    - Scroll to **Long-Lived Access Tokens** → **Create Token**
    - Give it a name (e.g. "OpenClaw") and copy the token
-2. Paste the token into the add-on option **Home Assistant Token** (`homeassistant_token`) in **Settings → Add-ons → OpenClaw Assistant → Configuration**
+2. Paste the token into the app option **Home Assistant Token** (`homeassistant_token`) in **Settings → Apps → OpenClaw Assistant → Configuration**
 3. Set **Auto-Configure MCP for Home Assistant** (`auto_configure_mcp`) to **ON**
-4. Restart the add-on
+4. Restart the app
 
-The add-on will automatically register Home Assistant as an MCP server named `HA` using `mcporter`. It auto-detects the HA API URL (supervisor proxy when available, otherwise `localhost:8123`). Check the logs for:
+The app will automatically register Home Assistant as an MCP server named `HA` using `mcporter`. It auto-detects the HA API URL (supervisor proxy when available, otherwise `localhost:8123`). Check the logs for:
 ```
 INFO: MCP server 'HA' registered — OpenClaw can now control Home Assistant
 ```
@@ -559,7 +561,7 @@ On subsequent restarts, the configuration is skipped if the token hasn’t chang
 
 #### Manual setup
 
-If you prefer to configure MCP manually (or `auto_configure_mcp` is off), run this in the add-on terminal:
+If you prefer to configure MCP manually (or `auto_configure_mcp` is off), run this in the app terminal:
 
 ```sh
 mcporter config add HA "http://localhost:8123/api/mcp" \
@@ -596,7 +598,7 @@ MCP setup requires an AI model that understands tool/skill invocation. Budget mo
 
 | Symptom | Fix |
 |---|---|
-| `mcporter: command not found` | Run `openclaw onboard` first, then restart the add-on |
+| `mcporter: command not found` | Run `openclaw onboard` first, then restart the app |
 | MCP add fails with auth error | Verify your long-lived token is valid and not expired |
 | OpenClaw doesn’t see HA entities | Run `mcporter call home-assistant.GetLiveContext` to refresh |
 | Model says “what’s MCP?” | Switch to a more capable model for the initial session (see above) |
@@ -628,7 +630,7 @@ If you have skills or scripts that need SSH access to a router, firewall, or oth
    cat /config/keys/router_ssh.pub
    ```
    Add it to the router's authorized keys.
-3. Configure the add-on options:
+3. Configure the app options:
    - `router_ssh_host`: your router's IP (e.g., `192.168.1.1`)
    - `router_ssh_user`: SSH username (e.g., `admin`)
    - `router_ssh_key_path`: `/config/keys/router_ssh` (or wherever you saved it)
@@ -641,17 +643,17 @@ The connection details are also saved to `/config/CONNECTION_NOTES.txt` for refe
 
 ### 6f. Google Sheets / Google APIs (gog OAuth)
 
-Some OpenClaw skills use [gog](https://github.com/deftdawg/gog) to interact with Google APIs (Sheets, Drive, etc.). Because the add-on runs inside a container, the standard browser-based OAuth flow won't work — the localhost redirect can't reach your PC. Use the **manual** flow instead.
+Some OpenClaw skills use [gog](https://github.com/deftdawg/gog) to interact with Google APIs (Sheets, Drive, etc.). Because the app runs inside a container, the standard browser-based OAuth flow won't work — the localhost redirect can't reach your PC. Use the **manual** flow instead.
 
 #### Step 1 — Prepare OAuth credentials
 
 1. Go to [Google Cloud Console](https://console.cloud.google.com/) → **APIs & Services → Credentials**
 2. Create an **OAuth 2.0 Client ID** (type: **Web application**) or use an existing one
 3. In the client's **Authorized redirect URIs**, add: `http://localhost:1`
-4. Download the client JSON file and copy it into the add-on:
+4. Download the client JSON file and copy it into the app:
    ```sh
    # From your PC, copy the file to the HA config directory
-   # Then in the add-on terminal:
+   # Then in the app terminal:
    mkdir -p /config/secrets
    # Place the downloaded JSON as:
    /config/secrets/gmail_oauth_client.json
@@ -677,7 +679,7 @@ The `--manual` flag avoids the localhost redirect problem. gog will:
 2. Sign in with your Google account and grant access
 3. You'll be redirected to a URL starting with `http://localhost:1?...` — the page will fail to load, **that's expected**
 4. **Copy the full URL** from your browser's address bar
-5. Paste it back into the add-on terminal when prompted
+5. Paste it back into the app terminal when prompted
 6. If prompted for a **passphrase**, enter one to encrypt the stored token (remember it — you'll need it if gog asks again)
 
 #### Step 4 — Verify
@@ -688,7 +690,7 @@ gog auth list
 
 You should see your account listed with the `sheets` service.
 
-> **Why `--manual`?** The default OAuth flow starts a temporary HTTP server on localhost to receive the callback. Since the add-on runs on your HA device (not your PC), the browser redirect to `localhost` can't reach the add-on's server. The `--manual` flag skips the local server and lets you paste the redirect URL directly.
+> **Why `--manual`?** The default OAuth flow starts a temporary HTTP server on localhost to receive the callback. Since the app runs on your HA device (not your PC), the browser redirect to `localhost` can't reach the app's server. The `--manual` flag skips the local server and lets you paste the redirect URL directly.
 
 
 
@@ -697,7 +699,7 @@ You should see your account listed with the `sheets` service.
 The "Memory Search" feature allows OpenClaw to perform semantic searches over its knowledge base. This requires an **Embedding Provider** to convert text into vectors.
 
 #### 1. Local Embeddings (Recommended for HAOS)
-The Home Assistant Add-on comes pre-bundled with `node-llama-cpp`. This allows the assistant to generate embeddings locally on your hardware without any external API calls.
+The Home Assistant App comes pre-bundled with `node-llama-cpp`. This allows the assistant to generate embeddings locally on your hardware without any external API calls.
 
 - **Requirement:** No additional installation needed (included in the image).
 - **Configuration:** In your `openclaw.json`, set the provider to:
@@ -746,7 +748,7 @@ For users who prefer not to host their own models, commercial APIs (like OpenAI)
 
 ## 7. Data Persistence & Skills
 
-### What persists across add-on updates
+### What persists across app updates
 
 | Data | Location | Persists? |
 |---|---|---|
@@ -764,7 +766,7 @@ For users who prefer not to host their own models, commercial APIs (like OpenAI)
 
 ### How built-in skills work
 
-OpenClaw ships with premade skills (e.g., web search, file management). On each startup, the add-on:
+OpenClaw ships with premade skills (e.g., web search, file management). On each startup, the app:
 
 1. Copies built-in skills from the image to `/config/.openclaw/skills/`
 2. Creates a symlink from the image path back to persistent storage
@@ -774,13 +776,13 @@ This means built-in skills survive image rebuilds, and any customizations you ma
 
 ### How user-installed skills work
 
-When you install a skill via the OpenClaw dashboard or `npm install -g`, the add-on redirects global npm installs to `/config/.node_global/`. This directory persists across updates.
+When you install a skill via the OpenClaw dashboard or `npm install -g`, the app redirects global npm installs to `/config/.node_global/`. This directory persists across updates.
 
-The add-on also configures `pnpm` global directory to persistent storage at `/config/.node_global/pnpm/`.
+The app also configures `pnpm` global directory to persistent storage at `/config/.node_global/pnpm/`.
 
 ### Homebrew-installed tools
 
-Homebrew (Linuxbrew) and all brew-installed CLI tools (e.g., `gemini`, `aider`, `gh`, `bw`) are now **persisted** across add-on updates. On each startup, the add-on:
+Homebrew (Linuxbrew) and all brew-installed CLI tools (e.g., `gemini`, `aider`, `gh`, `bw`) are now **persisted** across app updates. On each startup, the app:
 
 1. Syncs the image's Homebrew install to `/config/.linuxbrew/`
 2. Creates a symlink from `/home/linuxbrew/.linuxbrew/` to the persistent copy
@@ -792,7 +794,7 @@ This means `brew install` packages survive image rebuilds.
 
 ## 8. Bundled Tools
 
-The add-on image includes these tools, available in the terminal:
+The app image includes these tools, available in the terminal:
 
 | Tool | Command | Notes |
 |---|---|---|
@@ -818,7 +820,7 @@ The add-on image includes these tools, available in the terminal:
 
 ### oc-cleanup
 
-Run `oc-cleanup` from the add-on terminal to see an overview of disk usage and
+Run `oc-cleanup` from the app terminal to see an overview of disk usage and
 selectively clear caches that accumulate over time:
 
 ```
@@ -831,7 +833,7 @@ The tool displays:
 - **Cache sizes** — npm global cache, pnpm content store, OpenClaw data, Homebrew cellar, workspace, Python `__pycache__`, and `/tmp`.
 - **Cleanup menu** — choose which caches to purge (npm, pnpm, pycache, tmp, all at once).
 
-> **Note:** The add-on cannot prune Docker images directly. If disk space is
+> **Note:** The app cannot prune Docker images directly. If disk space is
 > critically low due to old Docker layers, SSH into the host and run
 > `docker image prune -a` or `docker system prune`.
 
@@ -839,13 +841,13 @@ The tool displays:
 
 ## 9. Updating & Backup
 
-### Updating the add-on
+### Updating the app
 
-Home Assistant checks for add-on updates automatically. When an update is available:
+Home Assistant checks for app updates automatically. When an update is available:
 
-1. Go to **Settings → Add-ons → OpenClaw Assistant**
+1. Go to **Settings → Apps → OpenClaw Assistant**
 2. Click **Update**
-3. The add-on will rebuild with the new image
+3. The app will rebuild with the new image
 
 **What happens during an update**:
 - The container is destroyed and recreated from the new image
@@ -855,7 +857,7 @@ Home Assistant checks for add-on updates automatically. When an update is availa
 
 ### Checking your version
 
-The add-on version is shown on the add-on page in Home Assistant. To check the OpenClaw version:
+The app version is shown on the app page in Home Assistant. To check the OpenClaw version:
 
 ```sh
 openclaw --version
@@ -863,7 +865,7 @@ openclaw --version
 
 ### Backup
 
-Home Assistant's built-in backup system automatically includes add-on configuration data (`/config/`). This covers all persistent data: OpenClaw config, skills, workspace, keys, and tokens.
+Home Assistant's built-in backup system automatically includes app configuration data (`/config/`). This covers all persistent data: OpenClaw config, skills, workspace, keys, and tokens.
 
 **To create a backup**: Go to **Settings → System → Backups → Create Backup**
 
@@ -879,13 +881,13 @@ Home Assistant's built-in backup system automatically includes add-on configurat
 
 ### Factory reset
 
-To reset the add-on to a clean state, remove the persistent data:
+To reset the app to a clean state, remove the persistent data:
 
 ```sh
 rm -rf /config/.openclaw /config/clawd /config/.node_global
 ```
 
-Then restart the add-on. It will re-bootstrap a fresh configuration.
+Then restart the app. It will re-bootstrap a fresh configuration.
 
 > **Warning**: This deletes all your OpenClaw configuration, skills, and workspace data. Back up first if needed.
 
@@ -893,23 +895,23 @@ Then restart the add-on. It will re-bootstrap a fresh configuration.
 
 ## 10. Troubleshooting
 
-### How to read add-on logs
+### How to read app logs
 
-Go to **Settings → Add-ons → OpenClaw Assistant → Log** tab. Logs show startup messages, errors, and service status.
+Go to **Settings → Apps → OpenClaw Assistant → Log** tab. Logs show startup messages, errors, and service status.
 
-### Port 49200 conflict (add-on page won't load)
+### Port 49200 conflict (app page won't load)
 
 **Symptom**: `bind() to 0.0.0.0:49200 failed (98: Address already in use)` in logs.
 
 **Cause**: A stale nginx process from a previous run is still holding the port. This can happen after a crash or unclean restart.
 
-**Fix**: Restart the add-on. The startup script automatically cleans up stale processes. If the problem persists, stop the add-on, wait 10 seconds, then start it again.
+**Fix**: Restart the app. The startup script automatically cleans up stale processes. If the problem persists, stop the app, wait 10 seconds, then start it again.
 
 ### Port 7681 conflict (terminal won't load)
 
 **Symptom**: `lws_socket_bind: ERROR on binding fd to port 7681` in logs.
 
-**Fix**: Either restart the add-on (stale process cleanup), or change `terminal_port` to a different value (e.g., `7682`).
+**Fix**: Either restart the app (stale process cleanup), or change `terminal_port` to a different value (e.g., `7682`).
 
 ### ERR_CONNECTION_REFUSED
 
@@ -928,13 +930,13 @@ Go to **Settings → Add-ons → OpenClaw Assistant → Log** tab. Logs show sta
 **Cause**: OpenClaw v2026.2.21+ requires HTTPS or localhost. Plain HTTP over LAN is blocked. (v2026.2.22 further hardens this by defaulting remote onboarding to `wss://` and rejecting insecure non-loopback targets.)
 
 **Fix** (pick one):
-1. **Easiest**: Set `network_mode` to **lan_https** in add-on Configuration → restart. This adds a built-in HTTPS proxy with zero external setup.
+1. **Easiest**: Set `network_mode` to **lan_https** in app Configuration → restart. This adds a built-in HTTPS proxy with zero external setup.
 2. **External proxy**: Set `network_mode` to **reverse_proxy** and configure NPM/Caddy/Traefik with TLS.
 3. **SSH tunnel** (desktop only): `ssh -L 18789:127.0.0.1:18789 user@ha-ip` then open `http://localhost:18789`.
 
 ### "attachment storage not available" inside Home Assistant Ingress
 
-**Symptom**: When opening the ControlUI via the add-on's **Open Web UI** button inside Home Assistant, the browser shows an error like "attachment storage not available" or "Use HTTPS or localhost".
+**Symptom**: When opening the ControlUI via the app's **Open Web UI** button inside Home Assistant, the browser shows an error like "attachment storage not available" or "Use HTTPS or localhost".
 
 **Cause**: The ControlUI uses browser APIs (IndexedDB, CacheStorage, Clipboard, etc.) that require a **secure context** (HTTPS or `localhost`). Home Assistant Ingress is served over plain HTTP whenever Home Assistant itself is not configured for HTTPS. The browser therefore blocks those APIs inside the Ingress iframe.
 
@@ -942,7 +944,7 @@ Go to **Settings → Add-ons → OpenClaw Assistant → Log** tab. Logs show sta
 - Use `network_mode: lan_https` and open `https://<ha-ip>:18789` directly.
 - Use SSH port forwarding to `http://localhost:18789` (desktop only).
 
-The embedded **Terminal** on the add-on landing page still works over plain HTTP.
+The embedded **Terminal** on the app landing page still works over plain HTTP.
 
 ### "disconnected (1008): origin not allowed"
 
@@ -950,15 +952,15 @@ The embedded **Terminal** on the add-on landing page still works over plain HTTP
 
 **Cause**: OpenClaw v2026.2.21+ checks the browser's `Origin` header against an allow-list. When using the built-in HTTPS proxy (`lan_https`), the origin (`https://<ip>:<port>`) must be registered in `gateway.controlUi.allowedOrigins`.
 
-**Fix**: In **v0.5.50+** defaults are configured automatically on startup. In **v0.5.54+**, the add-on now merges defaults with existing values and user extras.
-1. Restart the add-on (the startup script detects LAN IP and updates origins).
-2. If needed, set `gateway_additional_allowed_origins` in add-on configuration (comma-separated), then restart.
+**Fix**: In **v0.5.50+** defaults are configured automatically on startup. In **v0.5.54+**, the app now merges defaults with existing values and user extras.
+1. Restart the app (the startup script detects LAN IP and updates origins).
+2. If needed, set `gateway_additional_allowed_origins` in app configuration (comma-separated), then restart.
 3. If the IP has changed since you last started, restart again — the cert and defaults are refreshed.
-4. **Manual override** (advanced, from the add-on terminal):
+4. **Manual override** (advanced, from the app terminal):
    ```sh
    openclaw config set gateway.controlUi.allowedOrigins '["https://192.168.1.10:18789"]'
    ```
-   Then restart the add-on to re-merge defaults + extras.
+   Then restart the app to re-merge defaults + extras.
 
 ### "disconnected (1008): pairing required"
 
@@ -966,11 +968,11 @@ The embedded **Terminal** on the add-on landing page still works over plain HTTP
 
 **Cause**: OpenClaw v2026.2.21+ requires new devices to complete a pairing handshake before the Control UI WebSocket is accepted. Loopback connections are auto-approved (v2026.2.22 further improves this with loopback scope-upgrade auto-approval), but LAN connections (including those through the HTTPS proxy) require explicit approval.
 
-**Fix**: In **v0.5.50+** the add-on configures `gateway.controlUi.dangerouslyDisableDeviceAuth` in `lan_https` mode. By default it is enabled (`controlui_disable_device_auth: true`) to bypass per-device pairing while still enforcing token auth. If you prefer stricter behavior, set `controlui_disable_device_auth: false` and approve new devices manually.
+**Fix**: In **v0.5.50+** the app configures `gateway.controlUi.dangerouslyDisableDeviceAuth` in `lan_https` mode. By default it is enabled (`controlui_disable_device_auth: true`) to bypass per-device pairing while still enforcing token auth. If you prefer stricter behavior, set `controlui_disable_device_auth: false` and approve new devices manually.
 
 > **v2026.2.22 note:** The gateway now logs a security warning on startup when this flag is active. The warning is expected and harmless — run `openclaw security audit` for details.
 
-1. **Restart the add-on** — the startup script writes the config before launching the gateway.
+1. **Restart the app** — the startup script writes the config before launching the gateway.
 2. If the error persists, set it manually:
    ```sh
    nano /config/.openclaw/openclaw.json
@@ -1003,7 +1005,7 @@ Paste this token when the UI prompts for authentication, or append it to the URL
 
 ### CLI shows unauthorized with `trusted_proxy_user_missing`
 
-**Symptom**: In add-on terminal, commands that open direct gateway WebSocket (for example some `openclaw status`/gateway probes) fail with unauthorized and logs mention `trusted_proxy_user_missing`.
+**Symptom**: In app terminal, commands that open direct gateway WebSocket (for example some `openclaw status`/gateway probes) fail with unauthorized and logs mention `trusted_proxy_user_missing`.
 
 **Cause**: With `network_mode: reverse_proxy`, the gateway expects identity headers from your reverse proxy. Direct local CLI connections are not proxied, so they may be rejected.
 
@@ -1013,7 +1015,7 @@ Paste this token when the UI prompts for authentication, or append it to the URL
 
 ### Terminal not visible
 
-1. Check that `enable_terminal` is **true** in the add-on configuration
+1. Check that `enable_terminal` is **true** in the app configuration
 2. Check logs for `Starting web terminal (ttyd)` — if missing, the terminal is disabled
 3. If you see a port conflict error, change `terminal_port` to a different value
 
@@ -1023,13 +1025,13 @@ Paste this token when the UI prompts for authentication, or append it to the URL
 
 **Cause**: Node 22 uses `autoSelectFamily` which tries IPv6 first. Most HAOS VMs have IPv6 DNS resolution but no IPv6 egress, so connections time out before falling back to IPv4.
 
-**Fix**: IPv4-first DNS ordering is enforced by default (`--dns-result-order=ipv4first` is applied at startup when the option is unset). If your installation predates the default and outbound fetches time out, verify that startup logs show `Enabled IPv4-first DNS ordering`, or restart the add-on to re-apply defaults.
+**Fix**: IPv4-first DNS ordering is enforced by default (`--dns-result-order=ipv4first` is applied at startup when the option is unset). If your installation predates the default and outbound fetches time out, verify that startup logs show `Enabled IPv4-first DNS ordering`, or restart the app to re-apply defaults.
 
 ### Telegram network errors (`TypeError: fetch failed` / `getUpdates` fails)
 
 If Telegram is configured but polling fails with network fetch errors:
 
-1. In add-on terminal, test IPv4 vs IPv6 explicitly:
+1. In app terminal, test IPv4 vs IPv6 explicitly:
    ```sh
    curl -4 https://api.telegram.org/bot<token>/getMe
    curl -6 https://api.telegram.org/bot<token>/getMe
@@ -1043,19 +1045,19 @@ If Telegram is configured but polling fails with network fetch errors:
 **Symptom**: External API/network calls still fail in restricted networks even after setting proxy.
 
 **Checks**:
-1. Set add-on option `http_proxy` with full URL format: `http://host:port` (example: `http://192.168.2.1:3128`).
-2. Restart the add-on after changing configuration.
-3. Check logs for `INFO: Outbound HTTP/HTTPS proxy enabled from add-on configuration.`
+1. Set app option `http_proxy` with full URL format: `http://host:port` (example: `http://192.168.2.1:3128`).
+2. Restart the app after changing configuration.
+3. Check logs for `INFO: Outbound HTTP/HTTPS proxy enabled from app configuration.`
 4. If you see `WARN: Invalid http_proxy value`, fix the URL format and restart.
 
-When proxy is enabled, add-on startup also applies default bypass ranges via `NO_PROXY`/`no_proxy` for localhost and private network ranges.
+When proxy is enabled, app startup also applies default bypass ranges via `NO_PROXY`/`no_proxy` for localhost and private network ranges.
 
 ### Skills disappearing after update
 
 Built-in skills are synced to persistent storage on each startup. If skills are missing:
 
 1. Check logs for `INFO: Synced built-in skills to persistent storage` — this confirms the sync ran
-2. If you see `WARN: Built-in skills directory not found`, the OpenClaw installation may be corrupted. Try reinstalling the add-on.
+2. If you see `WARN: Built-in skills directory not found`, the OpenClaw installation may be corrupted. Try reinstalling the app.
 3. User-installed skills (via dashboard) are stored in `/config/.node_global/` and should survive updates
 
 ### Homebrew errors / CPU compatibility
@@ -1075,9 +1077,9 @@ Built-in skills are synced to persistent storage on each startup. If skills are 
 
 The OpenClaw binary should be installed at `/usr/lib/node_modules/openclaw/`. If this error appears:
 
-1. Check the add-on logs for npm installation errors during build
-2. Try restarting the add-on
-3. If the problem persists, uninstall and reinstall the add-on
+1. Check the app logs for npm installation errors during build
+2. Try restarting the app
+3. If the problem persists, uninstall and reinstall the app
 
 ### Gateway won't start / config errors
 
@@ -1089,22 +1091,22 @@ The OpenClaw binary should be installed at `/usr/lib/node_modules/openclaw/`. If
 rm /config/.openclaw/openclaw.json
 ```
 
-Restart the add-on — it will generate a fresh config. You'll need to run `openclaw onboard` again.
+Restart the app — it will generate a fresh config. You'll need to run `openclaw onboard` again.
 
 ### Disk space running low / "no space left on device"
 
 **Symptom**: Build or startup fails, or the landing page shows a red disk-usage indicator.
 
-**Cause**: Old Docker images and container layers accumulate on the host. Each add-on rebuild (~1–2 GB) keeps the previous image until pruned.
+**Cause**: Old Docker images and container layers accumulate on the host. Each app rebuild (~1–2 GB) keeps the previous image until pruned.
 
-**Fix (from inside the add-on)**:
+**Fix (from inside the app)**:
 1. Open the terminal and run `oc-cleanup` to clear npm/pnpm caches, pycache, and temp files.
 
 **Fix (from the host)** — you need a **root shell on the HAOS host**, not the `ha` CLI
 (the `ha docker` command does **not** support `prune`):
 
-*Option A — Advanced SSH & Web Terminal add-on (easiest):*
-1. Install the **Advanced SSH & Web Terminal** add-on from the HA store.
+*Option A — Advanced SSH & Web Terminal app (easiest):*
+1. Install the **Advanced SSH & Web Terminal** app from the HA store.
 2. In its Configuration, **disable Protection Mode** (required for host-level access).
 3. Open the terminal and run:
    ```sh
@@ -1130,13 +1132,13 @@ VBoxManage modifymedium disk haos.vdi --resize 64000
 ## 11. FAQ
 
 **Does this work on Raspberry Pi?**
-Yes. The add-on supports aarch64 (Raspberry Pi 4/5). Note that Homebrew may not work on all ARM devices, but core functionality is unaffected.
+Yes. The app supports aarch64 (Raspberry Pi 4/5). Note that Homebrew may not work on all ARM devices, but core functionality is unaffected.
 
 **Can I run multiple agents?**
 OpenClaw supports multiple agent profiles. Configure them via `openclaw configure` or by editing `/config/.openclaw/openclaw.json`. The gateway serves all configured agents.
 
 **Can I use a remote gateway?**
-Yes. Set `gateway_mode` to `remote` and set `gateway_remote_url` in add-on configuration. The add-on syncs it into OpenClaw config automatically. See [Remote Gateway Mode](#6b-remote-gateway-mode).
+Yes. Set `gateway_mode` to `remote` and set `gateway_remote_url` in app configuration. The app syncs it into OpenClaw config automatically. See [Remote Gateway Mode](#6b-remote-gateway-mode).
 
 **How do I change the AI model or provider?**
 Run `openclaw configure` in the terminal to reconfigure your AI providers, or edit `/config/.openclaw/openclaw.json` directly. You can use OpenAI, Google (Gemini), Anthropic (Claude), local models, and more.
@@ -1145,6 +1147,6 @@ Run `openclaw configure` in the terminal to reconfigure your AI providers, or ed
 Yes. Set `network_mode` to **lan_https** (recommended) or **reverse_proxy**. Any device on your network can connect to `https://<ha-ip>:18789`. Use the gateway token for authentication. This also enables the [Assist pipeline integration](#6c-assist-pipeline-integration-openai-api) from other HA instances or standalone OpenClaw integrations.
 
 **Where is my data stored on the host?**
-The add-on's `/config/` directory maps to `/addon_configs/<slug>/` on the Home Assistant host. This is included in HA backups automatically.
+The app's `/config/` directory maps to `/addon_configs/<slug>/` on the Home Assistant host. This is included in HA backups automatically.
 
-The add-on also mounts Home Assistant `/share` and `/media` as writable paths inside the container (`/share`, `/media`) for file access workflows. These are separate from OpenClaw's default persistent workspace under `/config`.
+The app also mounts Home Assistant `/share` and `/media` as writable paths inside the container (`/share`, `/media`) for file access workflows. These are separate from OpenClaw's default persistent workspace under `/config`.

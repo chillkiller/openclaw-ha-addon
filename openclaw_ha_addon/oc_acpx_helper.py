@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-OpenClaw HA Add-on — ACPX harness initializer.
+OpenClaw HA App — ACPX harness initializer.
 
-This helper runs during add-on startup (called from run.sh) and ensures that
+This helper runs during app startup (called from run.sh) and ensures that
 Claude Code, Codex and OpenCode ACP harnesses are ready to use:
 
   1. Copies wrapper launchers into /config/.openclaw/acpx/
@@ -12,7 +12,7 @@ Claude Code, Codex and OpenCode ACP harnesses are ready to use:
      coding-main (Forge) and coding-review (Audit) agents with their harnesses
   4. Makes wrapper files executable
 
-All operations are idempotent and safe to run on every add-on restart.
+All operations are idempotent and safe to run on every app restart.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ ACPX_DIR = CONFIG_DIR / "acpx"
 WRAPPER_SRC_DIR = Path("/openclaw_ha_addon/acpx")
 PROJECT_DIR = ACPX_DIR / ".node_project"
 
-# npm package versions (bump when the add-on image is rebuilt)
+# npm package versions (bump when the app image is rebuilt)
 OPENCLAW_ACPX_VERSION = os.environ.get("OPENCLAW_ACPX_VERSION", "2026.7.1")
 OPENCLAW_CODEX_VERSION = os.environ.get("OPENCLAW_CODEX_VERSION", "2026.7.1-1")
 OPENCODE_VERSION = os.environ.get("OPENCODE_VERSION", "latest")

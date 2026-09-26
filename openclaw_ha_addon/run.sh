@@ -5,16 +5,16 @@ set -euo pipefail
 # This is needed for OpenClaw skills that depend on CLI tools (gemini, aider, etc.)
 export PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}"
 
-# Home Assistant add-on options are usually rendered to /data/options.json
+# Home Assistant app options are usually rendered to /data/options.json
 OPTIONS_FILE="/data/options.json"
 
 if [ ! -f "$OPTIONS_FILE" ]; then
-  echo "Missing $OPTIONS_FILE (add-on options)."
+  echo "Missing $OPTIONS_FILE (app options)."
   exit 1
 fi
 
 # ------------------------------------------------------------------------------
-# Read add-on options (only add-on-specific knobs; OpenClaw is configured via onboarding)
+# Read app options (only app-specific knobs; OpenClaw is configured via onboarding)
 # ------------------------------------------------------------------------------
 
 TZNAME=$(jq -r '.timezone // "Europe/Sofia"' "$OPTIONS_FILE")
@@ -93,7 +93,7 @@ ACPX_ENABLED=$(jq -r '.acpx_enabled // true' "$OPTIONS_FILE")
 export TZ="$TZNAME"
 
 # -----------------------------------------------------------------------------
-# Network mode presets — map add-on UI to OpenClaw-native config
+# Network mode presets — map app UI to OpenClaw-native config
 # -----------------------------------------------------------------------------
 GATEWAY_BIND="loopback"
 GATEWAY_AUTH_MODE="token"
@@ -194,7 +194,7 @@ fi
 # Reduce risk of secrets ending up in logs
 set +x
 
-# Optional outbound proxy from add-on settings.
+# Optional outbound proxy from app settings.
 # If set, apply it to both HTTP and HTTPS for Node/undici/OpenClaw tooling.
 if [ -n "$ADDON_HTTP_PROXY" ]; then
   if [[ "$ADDON_HTTP_PROXY" =~ ^https?://[^[:space:]]+$ ]]; then
@@ -207,10 +207,10 @@ if [ -n "$ADDON_HTTP_PROXY" ]; then
     export https_proxy="$ADDON_HTTP_PROXY"
     export NO_PROXY="${NO_PROXY:+${NO_PROXY},}${DEFAULT_NO_PROXY}"
     export no_proxy="${no_proxy:+${no_proxy},}${DEFAULT_NO_PROXY}"
-    echo "INFO: Outbound HTTP/HTTPS proxy enabled from add-on configuration."
+    echo "INFO: Outbound HTTP/HTTPS proxy enabled from app configuration."
     echo "INFO: Applied NO_PROXY defaults for localhost/private network ranges."
   else
-    echo "WARN: Invalid http_proxy value in add-on options; expected URL like http://host:port"
+    echo "WARN: Invalid http_proxy value in app options; expected URL like http://host:port"
   fi
 fi
 
@@ -239,10 +239,10 @@ if [ "$FORCE_IPV4_DNS" = "true" ] || [ "$FORCE_IPV4_DNS" = "1" ]; then
   echo "INFO: Enabled IPv4-first DNS ordering (NODE_OPTIONS=--dns-result-order=ipv4first)"
 fi
 
-# HA add-ons mount persistent storage at /config (maps to /addon_configs/<slug> on the host).
+# HA apps mount persistent storage at /config (maps to /addon_configs/<slug> on the host).
 export HOME=/config
 
-# Explicitly set OpenClaw directories to ensure they persist across add-on updates
+# Explicitly set OpenClaw directories to ensure they persist across app updates
 # This prevents loss of installed skills, configuration, and workspace state
 export OPENCLAW_CONFIG_DIR=/config/.openclaw
 export OPENCLAW_WORKSPACE_DIR=/config/clawd
@@ -308,11 +308,11 @@ is_reserved_gateway_env_var() {
     LD_*|DYLD_*|BASH_ENV|ENV|BASH_FUNC_*)
       return 0
       ;;
-    # Proxy vars managed by add-on options.
+    # Proxy vars managed by app options.
     HTTP_PROXY|HTTPS_PROXY|NO_PROXY|http_proxy|https_proxy|no_proxy)
       return 0
       ;;
-    # Add-on internal control vars.
+    # App internal control vars.
     OPENCLAW_*)
       return 0
       ;;
@@ -365,7 +365,7 @@ try_export_gateway_env_var() {
   echo "INFO: Exported gateway env var: $key"
 }
 
-# Export gateway environment variables from add-on config
+# Export gateway environment variables from app config
 # These are user-defined variables that should be available to the gateway process.
 # Primary format: array of {name, value} objects.
 if [ "$GW_ENV_VARS_TYPE" = "array" ] || [ "$GW_ENV_VARS_TYPE" = "object" ] || { [ "$GW_ENV_VARS_TYPE" = "string" ] && [ -n "$GW_ENV_VARS_RAW" ]; }; then
@@ -428,14 +428,14 @@ if [ "$GW_ENV_VARS_TYPE" = "array" ] || [ "$GW_ENV_VARS_TYPE" = "object" ] || { 
     echo "INFO: Successfully exported $env_count gateway environment variable(s)"
   fi
 elif [ "$GW_ENV_VARS_TYPE" != "null" ]; then
-  echo "WARN: Invalid gateway_env_vars format in add-on options (expected list, string or object), skipping"
+  echo "WARN: Invalid gateway_env_vars format in app options (expected list, string or object), skipping"
 fi
 
 # ------------------------------------------------------------------------------
 # Persist Linuxbrew/Homebrew across Docker image rebuilds
 # Homebrew installs to /home/linuxbrew/.linuxbrew/ which is ephemeral.
 # We sync it to /config/.linuxbrew and symlink back so brew-installed CLI
-# tools (gog, gh, bw, etc.) survive add-on updates.
+# tools (gog, gh, bw, etc.) survive app updates.
 # ------------------------------------------------------------------------------
 IMAGE_BREW_DIR="/home/linuxbrew/.linuxbrew"
 PERSISTENT_BREW_DIR="/config/.linuxbrew"
@@ -552,7 +552,7 @@ fi
 
 # ------------------------------------------------------------------------------
 # OpenClaw config is managed by OpenClaw itself (onboarding / configure).
-# This add-on intentionally does NOT create/patch /config/.openclaw/openclaw.json.
+# This app intentionally does NOT create/patch /config/.openclaw/openclaw.json.
 # ------------------------------------------------------------------------------
 
 # Convenience info for later (router SSH access path & HA token file)
@@ -675,7 +675,7 @@ fi
 # ------------------------------------------------------------------------------
 export OPENCLAW_CONFIG_PATH="/config/.openclaw/openclaw.json"
 
-# Find the helper script (copied to root in Dockerfile, or fallback to add-on dir)
+# Find the helper script (copied to root in Dockerfile, or fallback to app dir)
 HELPER_PATH="/oc_config_helper.py"
 if [ ! -f "$HELPER_PATH" ] && [ -f "$(dirname "$0")/oc_config_helper.py" ]; then
   HELPER_PATH="$(dirname "$0")/oc_config_helper.py"
@@ -706,11 +706,11 @@ if [ -f "$OPENCLAW_CONFIG_PATH" ]; then
     python3 "$HELPER_PATH" apply-blocked-hostnames "$BLOCKED_HOSTNAMES" || true
   else
     echo "WARN: oc_config_helper.py not found, cannot apply network settings"
-    echo "INFO: Ensure the add-on image includes oc_config_helper.py and restart"
+    echo "INFO: Ensure the app image includes oc_config_helper.py and restart"
   fi
 else
   echo "WARN: OpenClaw config not found at $OPENCLAW_CONFIG_PATH, cannot apply network settings"
-  echo "INFO: Run 'openclaw onboard' first, then restart the add-on"
+  echo "INFO: Run 'openclaw onboard' first, then restart the app"
 fi
 
 if [ "$NETWORK_MODE" = "reverse_proxy" ]; then
@@ -875,13 +875,13 @@ fi
 # ------------------------------------------------------------------------------
 # Auto-configure MCP (Model Context Protocol) for Home Assistant
 # Registers HA as an MCP server so OpenClaw can control HA entities/services.
-# Requires: homeassistant_token set in add-on options + mcporter CLI available.
+# Requires: homeassistant_token set in app options + mcporter CLI available.
 # Runs once; re-runs when the token changes.
 # Auto-detects HA API URL: supervisor proxy if available, else localhost:8123.
 # ------------------------------------------------------------------------------
 if [ "$AUTO_CONFIGURE_MCP" = "true" ] && [ -n "$HA_TOKEN" ]; then
   if command -v mcporter >/dev/null 2>&1; then
-    # Detect HA API URL: prefer supervisor proxy (works in all add-on network modes),
+    # Detect HA API URL: prefer supervisor proxy (works in all app network modes),
     # fall back to localhost:8123 (works with host_network: true).
     if [ -n "${SUPERVISOR_TOKEN:-}" ]; then
       MCP_HA_URL="http://supervisor/core/api/mcp"
@@ -913,7 +913,7 @@ if [ "$AUTO_CONFIGURE_MCP" = "true" ] && [ -n "$HA_TOKEN" ]; then
   fi
 elif [ "$AUTO_CONFIGURE_MCP" = "true" ] && [ -z "$HA_TOKEN" ]; then
   echo "INFO: MCP auto-configure enabled but homeassistant_token not set — skipping"
-  echo "INFO: To auto-configure, set homeassistant_token in add-on Configuration, then restart"
+  echo "INFO: To auto-configure, set homeassistant_token in app Configuration, then restart"
 fi
 
 # ------------------------------------------------------------------------------
@@ -952,12 +952,12 @@ start_openclaw_runtime() {
   if [ "$GATEWAY_MODE" = "remote" ]; then
     # Remote mode: do NOT start a local gateway service.
     # Start a node/client host that connects to the configured remote gateway URL.
-    # Use $GATEWAY_REMOTE_URL directly from add-on options — do NOT read back via
+    # Use $GATEWAY_REMOTE_URL directly from app options — do NOT read back via
     # 'openclaw config get' which can time out at startup or return redacted values.
     REMOTE_URL="$GATEWAY_REMOTE_URL"
     if [ -z "$REMOTE_URL" ]; then
-      echo "ERROR: gateway_mode=remote but gateway_remote_url is not set in add-on options"
-      echo "ERROR: Set gateway_remote_url in add-on Configuration (e.g. ws://192.168.1.10:18789), then restart"
+      echo "ERROR: gateway_mode=remote but gateway_remote_url is not set in app options"
+      echo "ERROR: Set gateway_remote_url in app Configuration (e.g. ws://192.168.1.10:18789), then restart"
       return 1
     fi
 
@@ -1148,7 +1148,7 @@ fi
 
 # Gateway log to console (Audit R4) — if enabled, tee gateway output to HA console
 # The gateway writes to log files by default; this mirrors stdout/stderr to the
-# add-on log window for real-time diagnostics.
+# app log window for real-time diagnostics.
 if [ "$GATEWAY_LOG_TO_CONSOLE" = "true" ] || [ "$GATEWAY_LOG_TO_CONSOLE" = "1" ]; then
   echo "INFO: Gateway log mirroring to console enabled (gateway_log_to_console=true)"
   # Gateway output is already captured by the supervisor loop via wait/poll.
@@ -1186,8 +1186,8 @@ if [ "$ENABLE_TERMINAL" = "true" ] || [ "$ENABLE_TERMINAL" = "1" ]; then
     echo "!!  ${TERMINAL_PORT} appears to be in use by another process.  !!"
     echo "!!                                                             !!"
     echo "!!  ACTION REQUIRED: If the terminal does not work, go to      !!"
-    echo "!!  Add-on Configuration and change 'terminal_port' to a free  !!"
-    echo "!!  port, then restart the add-on.                             !!"
+    echo "!!  App Configuration and change 'terminal_port' to a free     !!"
+    echo "!!  port, then restart the app.                                !!"
     echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     echo ""
   fi
@@ -1200,7 +1200,7 @@ else
   echo "Terminal disabled (enable_terminal=$ENABLE_TERMINAL)"
 fi
 
-# Start ingress reverse proxy (nginx). This provides the add-on UI inside HA.
+# Start ingress reverse proxy (nginx). This provides the app UI inside HA.
 # Token is injected server-side; never put it in the browser URL.
 NGINX_PID_FILE="/var/run/openclaw-nginx.pid"
 
@@ -1253,7 +1253,7 @@ print(json.load(open(p)).get('gateway',{}).get('auth',{}).get('token',''), end='
       echo "INFO: Disk usage: ${disk_used}/${disk_total} (${disk_pct} used, ${disk_avail} free)"
       local pct_num=${disk_pct//%/}
       if [ "$pct_num" -ge 90 ] 2>/dev/null; then
-        echo "WARNING: Disk is ${disk_pct} full! Add-on updates may fail. Run 'oc-cleanup' in the terminal."
+        echo "WARNING: Disk is ${disk_pct} full! App updates may fail. Run 'oc-cleanup' in the terminal."
       elif [ "$pct_num" -ge 75 ] 2>/dev/null; then
         echo "NOTICE: Disk is ${disk_pct} full. Consider running 'oc-cleanup' in the terminal."
       fi
@@ -1328,7 +1328,7 @@ fi
 
 start_gw_relay
 
-# Keep add-on alive even if gateway/node runtime restarts itself (e.g. during onboarding).
+# Keep app alive even if gateway/node runtime restarts itself (e.g. during onboarding).
 # If runtime exits unexpectedly, restart it while nginx/ttyd stay up.
 #
 # Design notes (issue #95):

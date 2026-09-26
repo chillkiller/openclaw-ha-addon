@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// OpenClaw HA Add-on — ACPX wrapper for Claude Code (Agent Client Protocol)
+// OpenClaw HA App — ACPX wrapper for Claude Code (Agent Client Protocol)
 // This launcher is copied to /config/.openclaw/acpx/ by run.sh on startup.
 // It resolves the installed claude-agent-acp binary at runtime so updates survive.
 
@@ -181,7 +181,7 @@ function resolveNpmCliPath() {
 }
 
 function findInstalledClaudeAcpBin() {
-  // Prefer the add-on managed project.
+  // Prefer the app managed project.
   const addonManaged = "/config/.openclaw/acpx/.node_project/node_modules";
   const managedBin = path.join(
     addonManaged,

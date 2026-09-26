@@ -88,7 +88,7 @@ tail -f /config/clawd/logs/gateway_startup.log</pre>
     <ul>
       <li><a href="https://docs.openclaw.ai" target="_blank" rel="noopener noreferrer">OpenClaw Docs</a></li>
       <li><a href="https://github.com/openclaw/openclaw" target="_blank" rel="noopener noreferrer">OpenClaw GitHub</a></li>
-      <li><a href="https://github.com/chillkiller/openclaw-ha-addon" target="_blank" rel="noopener noreferrer">OpenClaw HA Add-on Repo</a></li>
+      <li><a href="https://github.com/chillkiller/openclaw-ha-addon" target="_blank" rel="noopener noreferrer">OpenClaw HA App Repo</a></li>
     </ul>
   </div>
 

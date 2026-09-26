@@ -1,6 +1,6 @@
-# Contributing to OpenClaw Home Assistant Addon
+# Contributing to OpenClaw Home Assistant App
 
-Thank you for your interest in contributing to the OpenClaw Home Assistant Addon! This document provides guidelines and instructions for contributing.
+Thank you for your interest in contributing to the OpenClaw Home Assistant App! This document provides guidelines and instructions for contributing.
 
 ## Code of Conduct
 
@@ -18,7 +18,7 @@ Before creating bug reports, please check the existing issues as you might find 
 - Actual behavior
 - Screenshots or logs if applicable
 - Your Home Assistant version
-- Add-on version
+- App version
 - Any relevant configuration
 
 ### Suggesting Enhancements
@@ -63,19 +63,19 @@ Enhancement suggestions are tracked as [GitHub Issues](https://github.com/chillk
    cd openclaw-ha-addon
    ```
 
-2. Build the add-on locally:
+2. Build the app locally:
    ```bash
    docker build -t openclaw-ha-addon .
    ```
 
-3. Test the add-on in your Home Assistant instance.
+3. Test the app in your Home Assistant instance.
 
 ### Testing
 
 Before submitting a PR, ensure:
 
-- The add-on builds successfully
-- The add-on starts without errors
+- The app builds successfully
+- The app starts without errors
 - New features work as expected
 - Existing features are not broken
 - Configuration options are properly validated

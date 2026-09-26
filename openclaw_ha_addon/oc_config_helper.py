@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-OpenClaw config helper for Home Assistant add-on (v0.7.0).
+OpenClaw config helper for Home Assistant app (v0.7.0).
 
 Safely reads/writes openclaw.json without corrupting it.
 Implements 3-layer merge: Custom JSON -> Persisted config -> HA options.
@@ -197,7 +197,7 @@ def apply_network_settings(
             del auth["trustedProxy"]
             changes.append("removed auth.trustedProxy")
 
-    # Remove legacy/deprecated keys from earlier add-on versions.
+    # Remove legacy/deprecated keys from earlier app versions.
     for stale in ("access_mode", "gateway_bind_mode", "gateway_auth_mode"):
         if stale in gateway:
             del gateway[stale]
@@ -270,7 +270,7 @@ def set_control_ui_origins(
         control_ui["dangerouslyDisableDeviceAuth"] = desired_flag
         changes.append(f"dangerouslyDisableDeviceAuth -> {desired_flag}")
 
-    # Remove stale keys from earlier add-on versions
+    # Remove stale keys from earlier app versions
     for stale in ("pairingMode",):
         if stale in control_ui:
             del control_ui[stale]
@@ -430,7 +430,7 @@ def ensure_browser_config():
     """Browser configuration is left to the user.
 
     OpenClaw validates the browser section strictly and defaults
-    vary by release. The add-on provides Playwright Chromium at
+    vary by release. The app provides Playwright Chromium at
     /usr/bin/chromium; configure it manually in openclaw.json when needed.
     """
     print("INFO: browser configuration left to user (no automatic injection)")

@@ -1,7 +1,7 @@
 configuration:
   timezone:
     name: Fuso Horário
-    description: Fuso horário do add-on (ex., America/Sao_Paulo, Europe/Berlin)
+    description: Fuso horário do app (ex., America/Sao_Paulo, Europe/Berlin)
   
   enable_terminal:
     name: Habilitar Terminal Web
@@ -37,11 +37,11 @@ configuration:
   
   clean_session_locks_on_start:
     name: Limpar Bloqueios de Sessão ao Iniciar
-    description: Limpar arquivos de bloqueio de sessão obsoletos deixados após falhas/reinicializações quando o add-on iniciar
+    description: Limpar arquivos de bloqueio de sessão obsoletos deixados após falhas/reinicializações quando o app iniciar
   
   clean_session_locks_on_exit:
     name: Limpar Bloqueios de Sessão ao Sair
-    description: Limpar arquivos de bloqueio de sessão quando o add-on parar normalmente
+    description: Limpar arquivos de bloqueio de sessão quando o app parar normalmente
   
   gateway_mode:
     name: Modo do Gateway
@@ -96,11 +96,11 @@ configuration:
 
   mdns_host_name:
     name: Nome do host mDNS
-    description: Nome de host opcional para anúncio mDNS (ex., homeassistant.local). O padrão é "openclaw-ha-addon". Se vazio, detectado automaticamente a partir do nome do host do contêiner.
+    description: Nome de host opcional para anúncio mDNS (ex., homeassistant.local). O padrão é "openclaw". Se vazio, detectado automaticamente a partir do nome do host do contêiner.
 
   gateway_log_to_console:
     name: Mostrar log do Gateway no log do HA
-    description: Quando LIGADO, a saída do gateway (stdout/stderr) é espelhada na janela de log do add-on do Home Assistant além do arquivo de log. Útil para diagnóstico em tempo real. Quando DESLIGADO, os logs são gravados apenas no arquivo.
+    description: Quando LIGADO, a saída do gateway (stdout/stderr) é espelhada na janela de log do app do Home Assistant além do arquivo de log. Útil para diagnóstico em tempo real. Quando DESLIGADO, os logs são gravados apenas no arquivo.
 
   gateway_log_level:
     name: Nível de log do Gateway
@@ -112,7 +112,7 @@ configuration:
 
   trace_log_to_console:
     name: Mostrar rastreamento de inicialização no log do HA
-    description: Quando LIGADO, o rastreamento detalhado da sequência de inicialização (saída set -x) é espelhado na janela de log do add-on do Home Assistant. Muito detalhado — ative apenas para depuração.
+    description: Quando LIGADO, o rastreamento detalhado da sequência de inicialização (saída set -x) é espelhado na janela de log do app do Home Assistant. Muito detalhado — ative apenas para depuração.
 
   gateway_env_vars:
     name: Variáveis de Ambiente do Gateway
