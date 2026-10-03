@@ -1,7 +1,7 @@
-# OpenClaw Home Assistant App v0.7.12.3 Configuration
-# OpenClaw 2026.9.6 — restart recovery, startup detection, storage compaction
+# OpenClaw Home Assistant App v0.7.12.4 Configuration
+# OpenClaw 2026.9.8 — GPT-6.1 Sol, delegated-result attribution, container update hardening
 name: OpenClaw Assistant
-version: "0.7.12.3"
+version: "0.7.12.4"
 slug: openclaw_ha_addon
 description: Agentic AI assistant for Home Assistant — full OpenClaw runtime with Ingress Web UI, web terminal, Assist pipeline and MCP integration
 url: https://github.com/chillkiller/openclaw-ha-addon
@@ -24,6 +24,24 @@ ingress: true
 ingress_port: 49200
 panel_title: OpenClaw Assistant
 panel_icon: mdi:robot
+
+# Supervisor watchdog: restart the app when the Ingress front door stops
+# answering. The probe originates from the Supervisor network (172.30.32.0/23),
+# which the Ingress lockdown allowlist explicitly permits (since 0.7.12.1).
+watchdog: tcp://[HOST]:49200
+
+# Exclude regenerable caches and toolchains from Home Assistant backups:
+# Homebrew, npm cache, node compile cache, __pycache__ and stale lock files
+# are rebuilt on demand. User state (openclaw.json, agent databases, skills,
+# sessions, clawd workspace, keys, certs) is always backed up.
+backup_exclude:
+  - .linuxbrew
+  - .node_global
+  - .npm
+  - .cache
+  - .node-compile-cache
+  - __pycache__
+  - "*.jsonl.lock"
 
 map:
   - addon_config:rw
@@ -51,13 +69,8 @@ options:
   http_proxy: ""
 
   # Optional: Router SSH defaults (leave empty if you don't need router automation)
-  router_ssh_host: ""
-  router_ssh_user: ""
-  router_ssh_key_path: "/data/keys/router_ssh"
 
   # Cleanup stale session lock files left after crashes/restarts
-  clean_session_locks_on_start: true
-  clean_session_locks_on_exit: true
 
   # Gateway mode: local (run locally) or remote (connect to external gateway)
   gateway_mode: local
@@ -152,10 +165,6 @@ options:
   # Example: "/share/scripts/my-init.sh"
   custom_init_script: ""
 
-  # Skip missed cron executions after a restart. OpenClaw 2026.9.1 introduces
-  # cron.skipMissedJobs; for an HA app that restarts frequently, true avoids
-  # accidental backfills of overdue recurring jobs.
-  cron_skip_missed_jobs: true
 
   # Comma-separated list of hostnames blocked from outbound SSRP (OpenClaw 2026.9.1).
   # Leave empty to allow all hostnames. Example: "router.lan,192.168.178.1"
@@ -170,11 +179,6 @@ schema:
   gateway_public_url: str?
   homeassistant_token: str?
   http_proxy: str?
-  router_ssh_host: str?
-  router_ssh_user: str?
-  router_ssh_key_path: str?
-  clean_session_locks_on_start: bool?
-  clean_session_locks_on_exit: bool?
   gateway_mode: list(local|remote)?
   gateway_remote_url: str?
   network_mode: list(ingress_only|lan_http|lan_https|tailnet_serve|tailnet_funnel|reverse_proxy)?
@@ -199,9 +203,5 @@ schema:
   runtime_apt_packages: str?
   custom_init_script: str?
   blocked_hostnames: str?
-  # Present in options: since 0.7.11.x but dropped from schema: in a06a272,
-  # causing supervisor warnings "Option 'cron_skip_missed_jobs' does not exist
-  # in the schema". Restored in 0.7.12.1.
-  cron_skip_missed_jobs: bool?
 
 

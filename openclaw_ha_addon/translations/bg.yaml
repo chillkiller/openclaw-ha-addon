@@ -23,26 +23,6 @@ configuration:
     name: Изходящ HTTP прокси
     description: Опционално - URL на прокси за изходящи HTTP/HTTPS заявки (пример - http://192.168.2.1:3128)
   
-  router_ssh_host:
-    name: SSH хост на рутер
-    description: Опционално - SSH име на хост или IP адрес на рутер/защитна стена
-  
-  router_ssh_user:
-    name: SSH потребител на рутер
-    description: Опционално - SSH потребителско име за рутер/защитна стена
-  
-  router_ssh_key_path:
-    name: Път до SSH ключ на рутер
-    description: Път до SSH частен ключ за достъп до рутер (по подразбиране - /data/keys/router_ssh)
-  
-  clean_session_locks_on_start:
-    name: Изчистване на заключвания при стартиране
-    description: Изчистване на остарели заключващи файлове на сесии след срив/рестарт при стартиране на добавката
-  
-  clean_session_locks_on_exit:
-    name: Изчистване на заключвания при изход
-    description: Изчистване на заключващи файлове на сесии при нормално спиране на добавката
-  
   gateway_mode:
     name: Режим на Gateway
     description: Режим на работа на Gateway - local (локално изпълнение, препоръчително) или remote (свързване към отдалечен gateway)
@@ -137,10 +117,6 @@ configuration:
   blocked_hostnames:
     name: "Блокирани имена на хостове"
     description: "Списък, разделен със запетаи, на блокирани имена на хостове за изходящ мрежов достъп. Оставете празно, за да разрешите всички. Пример - router.lan,192.168.178.1"
-
-  cron_skip_missed_jobs:
-    name: "Пропускане на пропуснати cron задачи"
-    description: "Пропускане на пропуснати cron изпълнения след рестарт вместо наваксване на просрочени повтарящи се задачи."
 
   enable_docs:
     name: "Активиране на Docs"

@@ -2,6 +2,13 @@
 
 Release-facing summary. Detailed per-release engineering notes: [openclaw_ha_addon/CHANGELOG.md](openclaw_ha_addon/CHANGELOG.md).
 
+## 0.7.12.4
+- **Performance — RAM-adaptive heap budget**: the static 4 GB Node heap kept OpenClaw's memory-pressure threshold below the gateway's normal working set on this host, stalling `sessions.list` for 5+ seconds; the heap now sizes from host RAM (≥12 GB → 6144 MB here).
+- **P0 — server TLS certificate generation restored** (lost in the v0.7.10.0 refactor; fresh lan_https installs had no server cert) and hardened with X.509v3 extensions (basicConstraints/keyUsage/EKU) so strict clients accept it.
+- **Fixed — boolean option trap**: explicit `false` options were silently reverted to defaults by jq's `//` operator on every start (6 reads fixed).
+- **Fixed — 502 during startup** now shows the loading page (terminal hint included) instead of a raw error.
+- **OpenClaw 2026.9.8** (no schema migrations, low-risk bump; agentId fix native, tarball-verified). **Added**: `openssh-client` (sandbox SSH), supervisor watchdog, `backup_exclude` (~12 GB smaller HA backups). **Removed**: dead `router_ssh_*` options; hardcoded `cron_skip_missed_jobs` and session-lock cleanup (always-on).
+
 ## 0.7.12.3
 - **Terminology: Add-ons → Apps** — all user-facing texts follow the official "Apps" naming Home Assistant introduced with 2026.2 (README, DOCS, SECURITY, CONTRIBUTING, DEPLOYMENT, UI translations, landing page, runtime log messages). Technical identifiers stay untouched (slug `openclaw_ha_addon`, `addon_config` mount, Supervisor API, repo URL) — matching the upstream supervisor design. Also fixes the mDNS default in the es/bg/pl/pt-BR translations (claimed "openclaw-ha-addon", actual default "openclaw").
 

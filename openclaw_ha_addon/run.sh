@@ -21,10 +21,10 @@ TZNAME=$(jq -r '.timezone // "Europe/Sofia"' "$OPTIONS_FILE")
 GW_PUBLIC_URL=$(jq -r '.gateway_public_url // empty' "$OPTIONS_FILE")
 HA_TOKEN=$(jq -r '.homeassistant_token // empty' "$OPTIONS_FILE")
 ADDON_HTTP_PROXY=$(jq -r '.http_proxy // empty' "$OPTIONS_FILE")
-ENABLE_TERMINAL=$(jq -r '.enable_terminal // true' "$OPTIONS_FILE")
+ENABLE_TERMINAL=$(jq -r 'if has("enable_terminal") then (.enable_terminal|tostring) else "true" end' "$OPTIONS_FILE")
 TERMINAL_PORT_RAW=$(jq -r '.terminal_port // 7681' "$OPTIONS_FILE")
-ENABLE_WEBUI=$(jq -r '.enable_webui // true' "$OPTIONS_FILE")
-ENABLE_DOCS=$(jq -r '.enable_docs // true' "$OPTIONS_FILE")
+ENABLE_WEBUI=$(jq -r 'if has("enable_webui") then (.enable_webui|tostring) else "true" end' "$OPTIONS_FILE")
+ENABLE_DOCS=$(jq -r 'if has("enable_docs") then (.enable_docs|tostring) else "true" end' "$OPTIONS_FILE")
 
 # SECURITY: Validate TERMINAL_PORT to prevent nginx config injection
 # Only allow numeric values in valid port range (1024-65535)
@@ -39,13 +39,8 @@ echo "DEBUG: enable_terminal config value: '$ENABLE_TERMINAL'"
 echo "DEBUG: terminal_port config value: '$TERMINAL_PORT' (validated)"
 
 # Generic router SSH settings
-ROUTER_HOST=$(jq -r '.router_ssh_host // empty' "$OPTIONS_FILE")
-ROUTER_USER=$(jq -r '.router_ssh_user // empty' "$OPTIONS_FILE")
-ROUTER_KEY=$(jq -r '.router_ssh_key_path // "/data/keys/router_ssh"' "$OPTIONS_FILE")
 
 # Optional: allow disabling lock cleanup if you ever need to debug
-CLEAN_LOCKS_ON_START=$(jq -r '.clean_session_locks_on_start // true' "$OPTIONS_FILE")
-CLEAN_LOCKS_ON_EXIT=$(jq -r '.clean_session_locks_on_exit // true' "$OPTIONS_FILE")
 
 # Gateway configuration
 GATEWAY_MODE=$(jq -r '.gateway_mode // "local"' "$OPTIONS_FILE")
@@ -55,8 +50,8 @@ GATEWAY_PORT=$(jq -r '.gateway_port // 18789' "$OPTIONS_FILE")
 ENABLE_OPENAI_API=$(jq -r '.enable_openai_api // false' "$OPTIONS_FILE")
 GATEWAY_TRUSTED_PROXIES=$(jq -r '.gateway_trusted_proxies // empty' "$OPTIONS_FILE")
 GATEWAY_ADDITIONAL_ALLOWED_ORIGINS=$(jq -r '.gateway_additional_allowed_origins // empty' "$OPTIONS_FILE")
-CONTROLUI_DISABLE_DEVICE_AUTH=$(jq -r '.controlui_disable_device_auth // true' "$OPTIONS_FILE")
-FORCE_IPV4_DNS=$(jq -r '.force_ipv4_dns // true' "$OPTIONS_FILE")
+CONTROLUI_DISABLE_DEVICE_AUTH=$(jq -r 'if has("controlui_disable_device_auth") then (.controlui_disable_device_auth|tostring) else "true" end' "$OPTIONS_FILE")
+FORCE_IPV4_DNS=$(jq -r 'if has("force_ipv4_dns") then (.force_ipv4_dns|tostring) else "true" end' "$OPTIONS_FILE")
 NGINX_LOG_LEVEL=$(jq -r '.nginx_log_level // "minimal"' "$OPTIONS_FILE")
 AUTO_CONFIGURE_MCP=$(jq -r '.auto_configure_mcp // false' "$OPTIONS_FILE")
 GW_ENV_VARS_TYPE=$(jq -r 'if .gateway_env_vars == null then "null" else (.gateway_env_vars | type) end' "$OPTIONS_FILE")
@@ -84,11 +79,10 @@ RUNTIME_APT_PACKAGES=$(jq -r '.runtime_apt_packages // empty' "$OPTIONS_FILE")
 CUSTOM_INIT_SCRIPT=$(jq -r '.custom_init_script // empty' "$OPTIONS_FILE")
 
 # OpenClaw 2026.9.1 configuration controls
-CRON_SKIP_MISSED_JOBS=$(jq -r '.cron_skip_missed_jobs // true' "$OPTIONS_FILE")
 BLOCKED_HOSTNAMES=$(jq -r '.blocked_hostnames // empty' "$OPTIONS_FILE")
 
 # ACPX harnesses (Claude Code, Codex, OpenCode)
-ACPX_ENABLED=$(jq -r '.acpx_enabled // true' "$OPTIONS_FILE")
+ACPX_ENABLED=$(jq -r 'if has("acpx_enabled") then (.acpx_enabled|tostring) else "true" end' "$OPTIONS_FILE")
 
 export TZ="$TZNAME"
 
@@ -215,20 +209,33 @@ if [ -n "$ADDON_HTTP_PROXY" ]; then
 fi
 
 # ------------------------------------------------------------------------------
-# Node.js memory limit — critical for containerized environments
-# Without this, Node.js tries to use all available RAM and hits HA's cgroup limits.
-# 4096MB (4GB) for robust operation on systems with 8GB+ RAM.
-# If you have less than 8GB system RAM, reduce to 2048 (2GB).
+# Node.js heap budget — RAM-adaptive (0.7.12.4). OpenClaw derives its internal
+# memory-pressure warning threshold from the heap limit (dist-verified:
+# rssWarningBytes = max(1536 MB, heapLimit * 0.5)). A static 4096 on a host with
+# 12+ GB RAM put the Gateway's normal working set (~2.2-2.4 GiB with 13-14
+# workers) permanently above that threshold, causing cooperative yields that
+# stalled sessions.list for seconds. Sizing the heap by host RAM keeps the
+# threshold above the working set.
 # ------------------------------------------------------------------------------
+TOTAL_MEM_MB=$(awk '/MemTotal/ {print int($2/1024)}' /proc/meminfo)
+if [ "$TOTAL_MEM_MB" -ge 24576 ]; then
+  NODE_HEAP_MB=8192
+elif [ "$TOTAL_MEM_MB" -ge 12288 ]; then
+  NODE_HEAP_MB=6144
+elif [ "$TOTAL_MEM_MB" -ge 8192 ]; then
+  NODE_HEAP_MB=4096
+else
+  NODE_HEAP_MB=2048
+fi
 if [ -z "${NODE_OPTIONS:-}" ]; then
-  export NODE_OPTIONS="--max-old-space-size=4096"
+  export NODE_OPTIONS="--max-old-space-size=${NODE_HEAP_MB}"
 else
   # Preserve existing NODE_OPTIONS but ensure memory limit is set
   if [[ ! "$NODE_OPTIONS" =~ --max-old-space-size ]]; then
-    export NODE_OPTIONS="--max-old-space-size=4096 ${NODE_OPTIONS}"
+    export NODE_OPTIONS="--max-old-space-size=${NODE_HEAP_MB} ${NODE_OPTIONS}"
   fi
 fi
-echo "INFO: Node.js memory limit set to 4GB"
+echo "INFO: Node.js memory limit set to ${NODE_HEAP_MB}MB (host RAM: ${TOTAL_MEM_MB}MB)"
 
 # Optional network hardening/workaround: force IPv4-first DNS ordering for Node.js.
 # Helps in environments where IPv6 resolves but has no working egress.
@@ -534,11 +541,7 @@ cleanup_session_locks() {
   done
 }
 
-if [ "$CLEAN_LOCKS_ON_START" = "true" ]; then
-  cleanup_session_locks
-else
-  echo "INFO: clean_session_locks_on_start=false; skipping session lock cleanup."
-fi
+cleanup_session_locks # 0.7.12.4: always on — stale locks must never survive restarts
 
 # ------------------------------------------------------------------------------
 # Store tokens / export env vars (optional)
@@ -558,10 +561,6 @@ fi
 # Convenience info for later (router SSH access path & HA token file)
 cat > /config/CONNECTION_NOTES.txt <<EOF
 Home Assistant token (if set): /config/secrets/homeassistant.token
-Router SSH (generic):
-  host=${ROUTER_HOST}
-  user=${ROUTER_USER}
-  key=${ROUTER_KEY}
 EOF
 
 
@@ -622,9 +621,7 @@ shutdown() {
     fi
   done
 
-  if [ "$CLEAN_LOCKS_ON_EXIT" = "true" ]; then
-    cleanup_session_locks || true
-  fi
+  cleanup_session_locks || true # 0.7.12.4: always on
 }
 
 trap shutdown INT TERM
@@ -702,7 +699,7 @@ if [ -f "$OPENCLAW_CONFIG_PATH" ]; then
       exit "${rc}"
     fi
     # Apply OpenClaw 2026.9.1 cron/security settings (best-effort; do not abort on failure)
-    python3 "$HELPER_PATH" apply-cron-settings "$CRON_SKIP_MISSED_JOBS" || true
+    python3 "$HELPER_PATH" apply-cron-settings "true" || true # 0.7.12.4: hardcoded — HA apps restart frequently, backfill is never wanted
     python3 "$HELPER_PATH" apply-blocked-hostnames "$BLOCKED_HOSTNAMES" || true
   else
     echo "WARN: oc_config_helper.py not found, cannot apply network settings"
@@ -725,22 +722,93 @@ fi
 LAN_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
 
 # -----------------------------------------------------------------------------
-# TLS certificate handling
-# In lan_https/tailnet_* OpenClaw generates and manages its own TLS certificate
-# via gateway.tls.autoGenerate. We no longer run a separate nginx HTTPS proxy.
-# A local CA + server cert is still generated as a fallback so that the
-# /cert/ca.crt Ingress download can remain available if OpenClaw's cert path
-# is not yet known.
+# TLS certificate handling (0.7.12.4: full restoration + X.509 hardening)
+# The v0.7.10.0 network-mode refactor accidentally dropped the server-cert
+# generation that this app had inherited (verified 2026-10-03: nginx serves
+# /config/certs/gateway.crt on :18789 and gateway.tls is disabled in
+# openclaw.json, so fresh installs in lan_https had no server cert at all).
+# Restored and extended:
+#   - Local CA (always generated; backs the /cert/ca.crt Ingress download)
+#   - Server cert with SANs, regenerated on LAN-IP or SAN change, gated to
+#     ENABLE_HTTPS_PROXY (lan_https/tailnet) where nginx terminates TLS
+#   - X.509v3 extensions on both certs (basicConstraints/keyUsage/EKU) so
+#     strict clients (Python requests with verify=, OpenSSL strict) accept
+#     them; pre-0.7.12.4 certs regenerate once via the .cert_ext marker
 # -----------------------------------------------------------------------------
 CERT_DIR="/config/certs"
 mkdir -p "$CERT_DIR"
+
+# --- Local CA (generated once, persists across restarts) ---
 if [ ! -f "$CERT_DIR/ca.key" ] || [ ! -f "$CERT_DIR/ca.crt" ]; then
-  echo "INFO: Generating local fallback CA certificate..."
+  echo "INFO: Generating local CA certificate (one-time)..."
   openssl genrsa -out "$CERT_DIR/ca.key" 2048 2>/dev/null
   openssl req -new -x509 -key "$CERT_DIR/ca.key" -out "$CERT_DIR/ca.crt" \
-    -days 3650 -nodes -subj "/CN=OpenClaw Local CA" 2>/dev/null
+    -days 3650 -nodes -subj "/CN=OpenClaw Local CA" \
+    -addext "basicConstraints=critical,CA:TRUE" \
+    -addext "keyUsage=critical,keyCertSign,cRLSign" 2>/dev/null
   chmod 600 "$CERT_DIR/ca.key"
-  echo "INFO: Local fallback CA created at $CERT_DIR/ca.crt"
+  echo "INFO: Local CA created at $CERT_DIR/ca.crt"
+fi
+
+# --- Extra SANs from gateway_additional_allowed_origins + gateway_public_url ---
+STORED_IP=$(cat "$CERT_DIR/.cert_ip" 2>/dev/null || echo "")
+STORED_EXTRA_SANS=$(cat "$CERT_DIR/.cert_extra_sans" 2>/dev/null || echo "")
+EXTRA_SANS=""
+EXTRA_SAN_SOURCES="${GATEWAY_ADDITIONAL_ALLOWED_ORIGINS},${GW_PUBLIC_URL}"
+if [ "$EXTRA_SAN_SOURCES" != "," ]; then
+  EXTRA_SANS="$(python3 - "$EXTRA_SAN_SOURCES" "${LAN_IP:-}" <<'SANPY'
+import sys, re
+from urllib.parse import urlparse
+raw = sys.argv[1] if len(sys.argv) > 1 else ""
+lan_ip = sys.argv[2] if len(sys.argv) > 2 else ""
+entries = [e.strip() for e in raw.split(",") if e.strip()]
+sans = []
+seen = {"127.0.0.1", "localhost", "homeassistant", "homeassistant.local"}
+if lan_ip:
+    seen.add(lan_ip)
+for entry in entries:
+    if "://" not in entry:
+        entry = "https://" + entry
+    host = urlparse(entry).hostname or ""
+    if host and host not in seen:
+        seen.add(host)
+        if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", host):
+            sans.append(f"IP:{host}")
+        else:
+            sans.append(f"DNS:{host}")
+print(",".join(sans), end="")
+SANPY
+)"
+fi
+
+# --- Server cert (regenerated when missing, IP/SAN change, or pre-extension) ---
+if [ "$ENABLE_HTTPS_PROXY" = "true" ]; then
+  if [ ! -f "$CERT_DIR/gateway.crt" ] || [ ! -f "$CERT_DIR/gateway.key" ] \
+     || [ "$LAN_IP" != "$STORED_IP" ] || [ "$EXTRA_SANS" != "$STORED_EXTRA_SANS" ] \
+     || [ ! -f "$CERT_DIR/.cert_ext" ]; then
+    echo "INFO: Generating server TLS certificate for IP: ${LAN_IP:-unknown}..."
+    openssl genrsa -out "$CERT_DIR/gateway.key" 2048 2>/dev/null
+    openssl req -new -key "$CERT_DIR/gateway.key" -out "$CERT_DIR/gateway.csr" \
+      -subj "/CN=OpenClaw Gateway" 2>/dev/null
+    cat > "$CERT_DIR/_san.ext" <<SANEOF
+subjectAltName=IP:${LAN_IP:-127.0.0.1},IP:127.0.0.1,DNS:localhost,DNS:homeassistant,DNS:homeassistant.local${EXTRA_SANS:+,${EXTRA_SANS}}
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+SANEOF
+    openssl x509 -req -in "$CERT_DIR/gateway.csr" \
+      -CA "$CERT_DIR/ca.crt" -CAkey "$CERT_DIR/ca.key" -CAcreateserial \
+      -out "$CERT_DIR/gateway.crt" -days 3650 \
+      -extfile "$CERT_DIR/_san.ext" 2>/dev/null
+    rm -f "$CERT_DIR/gateway.csr" "$CERT_DIR/_san.ext" "$CERT_DIR/ca.srl"
+    chmod 600 "$CERT_DIR/gateway.key"
+    printf '%s' "$LAN_IP" > "$CERT_DIR/.cert_ip"
+    printf '%s' "$EXTRA_SANS" > "$CERT_DIR/.cert_extra_sans"
+    touch "$CERT_DIR/.cert_ext"
+    echo "INFO: Server TLS certificate generated (SAN: IP:${LAN_IP:-127.0.0.1}${EXTRA_SANS:+,${EXTRA_SANS}}, X.509v3 extensions present)"
+  else
+    echo "INFO: Reusing existing TLS certificate (IP: $STORED_IP)"
+  fi
 fi
 
 INGRESS_PORT=49200

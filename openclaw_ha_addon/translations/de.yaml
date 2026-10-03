@@ -23,26 +23,6 @@ configuration:
     name: Ausgehender HTTP-Proxy
     description: Optional - Proxy-URL für ausgehende HTTP/HTTPS-Anfragen (Beispiel - http://192.168.2.1:3128)
   
-  router_ssh_host:
-    name: Router SSH-Host
-    description: Optional - SSH-Hostname oder IP-Adresse des Routers/der Firewall
-  
-  router_ssh_user:
-    name: Router SSH-Benutzer
-    description: Optional - SSH-Benutzername für Router/Firewall
-  
-  router_ssh_key_path:
-    name: Router SSH-Schlüsselpfad
-    description: Pfad zum privaten SSH-Schlüssel für Router-Zugriff (Standard - /data/keys/router_ssh)
-  
-  clean_session_locks_on_start:
-    name: Sitzungssperren beim Start bereinigen
-    description: Veraltete Sitzungssperrdateien nach Abstürzen/Neustarts beim Start der App bereinigen
-  
-  clean_session_locks_on_exit:
-    name: Sitzungssperren beim Beenden bereinigen
-    description: Sitzungssperrdateien beim ordnungsgemäßen Stoppen der App bereinigen
-  
   gateway_mode:
     name: Gateway-Modus
     description: Gateway-Betriebsmodus - local (Gateway lokal ausführen, empfohlen) oder remote (mit einem entfernten Gateway verbinden)
@@ -136,10 +116,6 @@ configuration:
   blocked_hostnames:
     name: "Blockierte Hostnamen"
     description: "Kommagetrennte Liste von Hostnamen, die für ausgehende Netzwerkzugriffe blockiert sind. Leer lassen, um alle zu erlauben. Beispiel - router.lan,192.168.178.1"
-
-  cron_skip_missed_jobs:
-    name: "Verpasste Cron-Jobs überspringen"
-    description: "Verpasste Cron-Ausführungen nach einem Neustart überspringen, statt überfällige wiederkehrende Jobs nachzuholen."
 
   enable_docs:
     name: "Docs aktivieren"

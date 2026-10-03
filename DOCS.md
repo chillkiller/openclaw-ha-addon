@@ -334,24 +334,10 @@ All options are set via **Settings → Apps → OpenClaw Assistant → Configura
 | `homeassistant_token` | string | _(empty)_ | Optional HA long-lived access token (use at own risk, can be very unsecure but very powerful). Saved to `/config/secrets/homeassistant.token` for use by scripts/skills |
 | `http_proxy` | string | _(empty)_ | Optional outbound proxy URL for HTTP/HTTPS requests from OpenClaw and Node tools. Example: `http://192.168.2.1:3128` |
 
-### Router SSH
-
-For skills or scripts that need SSH access to a router, firewall, or other network device:
-
-| Option | Type | Default | Description |
-|---|---|---|---|
-| `router_ssh_host` | string | _(empty)_ | Hostname or IP of the SSH target |
-| `router_ssh_user` | string | _(empty)_ | SSH username |
-| `router_ssh_key_path` | string | `/data/keys/router_ssh` | Path to the private key inside the container |
-
-To provide the SSH key: place the private key file in the app config directory so it appears at the configured path inside the container. Set permissions: `chmod 600`. (use at own risk, can be very unsecure but very powerful)
-
 ### Maintenance
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `clean_session_locks_on_start` | bool | `true` | Remove stale session lock files on startup (safe — only removes locks when gateway isn't running) |
-| `clean_session_locks_on_exit` | bool | `true` | Remove session lock files on clean shutdown |
 | `auto_configure_mcp` | bool | `false` | Auto-register Home Assistant as an MCP server on startup (requires `homeassistant_token`) |
 | `gateway_log_to_console` | bool | `false` | Mirror gateway stdout/stderr to the HA app log window (default: gateway logs go to `/config/clawd/logs/gateway_startup.log` only) |
 | `gateway_log_level` | `off` / `info` / `debug` | `info` | Gateway log verbosity |
@@ -363,7 +349,6 @@ To provide the SSH key: place the private key file in the app config directory s
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `cron_skip_missed_jobs` | bool | `true` | Skip missed cron executions after a restart; avoids backfills of overdue recurring jobs on frequently restarted apps |
 | `blocked_hostnames` | string | _(empty)_ | Comma-separated hostnames blocked from outbound SSRP. Empty allows all (example: `router.lan,192.168.178.1`) |
 
 ### Discovery & coding agents
@@ -617,31 +602,7 @@ To enable it, add to `/config/.openclaw/openclaw.json`:
 
 > **Note**: `noSandbox` is required inside Docker containers due to security namespace restrictions.
 
-### 6e. Router / Network Device SSH
-
-If you have skills or scripts that need SSH access to a router, firewall, or other network device:
-
-1. Generate an SSH key pair (if you don't have one):
-   ```sh
-   ssh-keygen -t ed25519 -f /config/keys/router_ssh -N ""
-   ```
-2. Copy the public key to your router:
-   ```sh
-   cat /config/keys/router_ssh.pub
-   ```
-   Add it to the router's authorized keys.
-3. Configure the app options:
-   - `router_ssh_host`: your router's IP (e.g., `192.168.1.1`)
-   - `router_ssh_user`: SSH username (e.g., `admin`)
-   - `router_ssh_key_path`: `/config/keys/router_ssh` (or wherever you saved it)
-4. Test from the terminal:
-   ```sh
-   ssh -i /config/keys/router_ssh admin@192.168.1.1
-   ```
-
-The connection details are also saved to `/config/CONNECTION_NOTES.txt` for reference by scripts.
-
-### 6f. Google Sheets / Google APIs (gog OAuth)
+### 6e. Google Sheets / Google APIs (gog OAuth)
 
 Some OpenClaw skills use [gog](https://github.com/deftdawg/gog) to interact with Google APIs (Sheets, Drive, etc.). Because the app runs inside a container, the standard browser-based OAuth flow won't work — the localhost redirect can't reach your PC. Use the **manual** flow instead.
 
@@ -694,7 +655,7 @@ You should see your account listed with the `sheets` service.
 
 
 
-### 6g. Memory & Embeddings Configuration
+### 6f. Memory & Embeddings Configuration
 
 The "Memory Search" feature allows OpenClaw to perform semantic searches over its knowledge base. This requires an **Embedding Provider** to convert text into vectors.
 

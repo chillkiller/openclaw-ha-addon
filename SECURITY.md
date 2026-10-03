@@ -101,21 +101,7 @@ OpenClaw supports installing skills from the community (ClawHub) and via npm. Th
 - Monitor the app logs for unexpected activity
 - Keep the app updated to get security patches
 
-### 6. Router SSH Access
-
-The `router_ssh_*` options allow the app to SSH into your router or network devices. This grants **direct access to your network infrastructure**.
-
-**Risks**:
-- A compromised app could reconfigure your router
-- Firewall rules could be modified
-- Network traffic could be intercepted or redirected
-
-**Mitigations**:
-- Use a dedicated SSH key with minimal permissions
-- Restrict the SSH user's capabilities on the router (read-only if possible)
-- Only enable if you have a specific use case that requires it, and only if you understand the risks very well
-
-### 7. Browser Automation (Chromium)
+### 6. Browser Automation (Chromium)
 
 The bundled Chromium runs with `noSandbox` (required in Docker). This reduces browser-level security isolation.
 
@@ -129,7 +115,7 @@ The bundled Chromium runs with `noSandbox` (required in Docker). This reduces br
 - Do not use it to log into sensitive accounts
 - The container itself provides some isolation from the host
 
-### 8. Prompt Injection
+### 7. Prompt Injection
 
 AI agents that process external content (web pages, documents, emails) are vulnerable to **prompt injection** — hidden instructions that manipulate the agent's behavior.
 
@@ -158,7 +144,6 @@ AI agents that process external content (web pages, documents, emails) are vulne
 | Use a dedicated HA user for the `homeassistant_token` | Medium |
 | Monitor app logs regularly | Medium |
 | Rotate gateway tokens periodically | Medium |
-| Restrict router SSH user permissions | Medium |
 | Back up your configuration regularly | Low |
 
 ---

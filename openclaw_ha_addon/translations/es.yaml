@@ -23,26 +23,6 @@ configuration:
     name: Proxy HTTP de salida
     description: Opcional - URL de proxy para solicitudes HTTP/HTTPS salientes (ejemplo - http://192.168.2.1:3128)
   
-  router_ssh_host:
-    name: Host SSH del router
-    description: Opcional - Nombre de host SSH o dirección IP del router/firewall
-  
-  router_ssh_user:
-    name: Usuario SSH del router
-    description: Opcional - Nombre de usuario SSH del router/firewall
-  
-  router_ssh_key_path:
-    name: Ruta de clave SSH del router
-    description: Ruta a la clave privada SSH para acceso al router (predeterminado - /data/keys/router_ssh)
-  
-  clean_session_locks_on_start:
-    name: Limpiar bloqueos de sesión al iniciar
-    description: Limpiar archivos de bloqueo de sesión obsoletos dejados después de fallos/reinicios cuando se inicia el complemento
-  
-  clean_session_locks_on_exit:
-    name: Limpiar bloqueos de sesión al salir
-    description: Limpiar archivos de bloqueo de sesión cuando el complemento se detiene correctamente
-  
   gateway_mode:
     name: Modo del Gateway
     description: Modo de operación del Gateway - local (ejecutar gateway localmente, recomendado) o remote (conectar a un gateway remoto)
@@ -137,10 +117,6 @@ configuration:
   blocked_hostnames:
     name: "Nombres de host bloqueados"
     description: "Lista separada por comas de nombres de host bloqueados para el acceso de red saliente. Dejar vacío para permitir todos. Ejemplo - router.lan,192.168.178.1"
-
-  cron_skip_missed_jobs:
-    name: "Omitir trabajos cron perdidos"
-    description: "Omitir ejecuciones cron perdidas tras un reinicio en lugar de reponer trabajos recurrentes atrasados."
 
   enable_docs:
     name: "Activar Docs"

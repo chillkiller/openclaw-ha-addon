@@ -253,6 +253,10 @@ http {
     # Proxy the exact /webui path directly to the gateway instead; browser
     # loads always use /webui/ (panel URL), so only the WS bridge hits this.
     location = /webui {
+      # 0.7.12.4: during gateway startup (multi-minute SQLite warmup) show the
+      # loading page instead of a raw 502, so the panel explains itself.
+      proxy_intercept_errors on;
+      error_page 502 503 504 = /loading;
       proxy_pass http://127.0.0.1:__GATEWAY_INTERNAL_PORT__/webui/;
       proxy_http_version 1.1;
       proxy_set_header Upgrade $http_upgrade;
@@ -270,6 +274,10 @@ http {
     }
 
     location ^~ /webui/ {
+      # 0.7.12.4: during gateway startup (multi-minute SQLite warmup) show the
+      # loading page instead of a raw 502, so the panel explains itself.
+      proxy_intercept_errors on;
+      error_page 502 503 504 = /loading;
       proxy_pass http://127.0.0.1:__GATEWAY_INTERNAL_PORT__/;
       proxy_set_header Accept-Encoding identity;
       proxy_http_version 1.1;
@@ -310,7 +318,8 @@ http {
       # When it doesn't (e.g. iframe/Companion App), a client-side script below
       # derives the path from window.location.pathname. We replace an existing
       # empty attribute to avoid duplicate attributes.
-      sub_filter_types text/html;
+      # sub_filter_types defaults to text/html — the explicit line caused
+      # "duplicate MIME type text/html" warnings on every nginx -t.
       sub_filter_once off;
 
       sub_filter '<html data-openclaw-control-ui-base-path=""' '<html data-openclaw-control-ui-base-path="$control_ui_base_path"';

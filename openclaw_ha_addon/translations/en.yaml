@@ -23,26 +23,6 @@ configuration:
     name: Outbound HTTP Proxy
     description: Optional - Proxy URL for outbound HTTP/HTTPS requests (example - http://192.168.2.1:3128)
   
-  router_ssh_host:
-    name: Router SSH Host
-    description: Optional - Router/firewall SSH hostname or IP address
-  
-  router_ssh_user:
-    name: Router SSH User
-    description: Optional - Router/firewall SSH username
-  
-  router_ssh_key_path:
-    name: Router SSH Key Path
-    description: Path to SSH private key for router access (default - /data/keys/router_ssh)
-  
-  clean_session_locks_on_start:
-    name: Clean Session Locks on Start
-    description: Cleanup stale session lock files left after crashes/restarts when app starts
-  
-  clean_session_locks_on_exit:
-    name: Clean Session Locks on Exit
-    description: Cleanup session lock files when app stops gracefully
-  
   gateway_mode:
     name: Gateway Mode
     description: Gateway operation mode - local (run gateway locally, recommended) or remote (connect to a remote gateway)
@@ -136,10 +116,6 @@ configuration:
   blocked_hostnames:
     name: "Blocked Hostnames"
     description: "Comma-separated list of hostnames blocked from outbound network access. Leave empty to allow all hostnames. Example - router.lan,192.168.178.1"
-
-  cron_skip_missed_jobs:
-    name: "Skip Missed Cron Jobs"
-    description: "Skip missed cron executions after a restart instead of backfilling overdue recurring jobs."
 
   enable_docs:
     name: "Enable Docs"
