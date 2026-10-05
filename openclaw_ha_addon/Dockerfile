@@ -319,6 +319,7 @@ COPY oc_acpx_helper.py /oc_acpx_helper.py
 COPY render_nginx.py /render_nginx.py
 COPY oc-cleanup.sh /usr/local/bin/oc-cleanup
 COPY oom-shim.cjs /usr/local/lib/oom-shim.cjs
+COPY undefined-rejection-shim.cjs /app/undefined-rejection-shim.cjs
 COPY openclaw-proxy-shim.cjs /usr/local/lib/openclaw-proxy-shim.cjs
 COPY nginx.conf.tpl /etc/nginx/nginx.conf.tpl
 COPY landing.html.tpl /etc/nginx/landing.html.tpl

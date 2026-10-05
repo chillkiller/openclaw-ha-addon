@@ -228,11 +228,13 @@ else
   NODE_HEAP_MB=2048
 fi
 if [ -z "${NODE_OPTIONS:-}" ]; then
-  export NODE_OPTIONS="--max-old-space-size=${NODE_HEAP_MB}"
+  # 0.7.12.5-hotfix (2026-10-05): preload undefined-rejection shim BEFORE openclaw modules
+  export NODE_OPTIONS="--require /app/undefined-rejection-shim.cjs --max-old-space-size=${NODE_HEAP_MB}"
 else
   # Preserve existing NODE_OPTIONS but ensure memory limit is set
   if [[ ! "$NODE_OPTIONS" =~ --max-old-space-size ]]; then
-    export NODE_OPTIONS="--max-old-space-size=${NODE_HEAP_MB} ${NODE_OPTIONS}"
+    # 0.7.12.5-hotfix (2026-10-05): preload undefined-rejection shim BEFORE openclaw modules
+    export NODE_OPTIONS="--require /app/undefined-rejection-shim.cjs --max-old-space-size=${NODE_HEAP_MB} ${NODE_OPTIONS}"
   fi
 fi
 echo "INFO: Node.js memory limit set to ${NODE_HEAP_MB}MB (host RAM: ${TOTAL_MEM_MB}MB)"

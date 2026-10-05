@@ -1,3 +1,6 @@
+## 0.7.12.5
+- **Hotfix — Gateway-Exit-Loop bei Chat-Start**: OpenClaw 2026.9.8 beendet den Gateway bei jeder unklassifizierten unhandled rejection (`process.exit(1)`). Auf dem Pi blockiert der Chat-Start die Event-Loop 13–25 s (plugin-tools-Init, SQLite reclamation), dabei wird pro Chat-Start eine stille Promise mit `reason === undefined` rejected → sofortiger Exit ("Unhandled promise rejection: undefined") und Restart-Schleife. Neuer `undefined-rejection-shim.cjs` (via `NODE_OPTIONS=--require`, vor allen OpenClaw-Modulen geladen) registriert in der OpenClaw-Handler-Registry (`Symbol.for("openclaw.unhandledRejection.handlers")`) einen Filter, der ausschließlich `reason === undefined` als handled einstuft; alle anderen Rejections laufen unverändert durch die 9.8-Politik. Dockerfile: Shim nach `/app/undefined-rejection-shim.cjs`; run.sh: `--require` in beiden NODE_OPTIONS-Zweigen.
+
 # Changelog — OpenClaw Assistant (Home Assistant App)
 
 Release-facing summary. Detailed per-release engineering notes: [openclaw_ha_addon/CHANGELOG.md](openclaw_ha_addon/CHANGELOG.md).
