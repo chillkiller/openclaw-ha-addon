@@ -7,3 +7,8 @@ openclaw_ha_addon/AUDIT-*.md
 DESIGN-network-modes.md
 __pycache__/
 *.pyc
+
+# Lokale Task-Liste / Repair-Notizen: nie committen (interne IPs) — Direktive GaRoN 2026-10-07
+REPAIR_STATUS.md
+# Windows-Redirect-Artefakt
+nul

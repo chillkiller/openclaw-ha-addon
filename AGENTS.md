@@ -93,7 +93,7 @@ Example placeholders (replace or remove them):
 
 ```markdown
 - Cameras: living-room -> main area; front-door -> entrance
-- SSH: home-server -> 192.168.1.100, user admin
+- SSH: home-server -> 192.0.2.100, user admin
 - TTS: preferred voice "Nova"; default speaker Kitchen HomePod
 ```
 
@@ -128,6 +128,12 @@ Be helpful without being annoying: check in a few times a day, do useful backgro
 ## Make It Yours
 
 This is a starting point. Add your own conventions, style, and rules as you figure out what works.
+
+## Repo Task State (local only)
+
+- `REPAIR_STATUS.md` is the always-current task list for ALL sessions working on this repo (Forge, Audit, Marvin, Seeker etc.). Read it at session start; keep it current when work state changes. Keyword search first (Seeker pattern), do not re-derive context.
+- It is intentionally gitignored — NEVER commit it: it documents internal IPs/hostnames by design. Same for other local-only notes (`nul`, junk artifacts: keep ignored, do not stage).
+- Security hygiene: example IPs in docs follow RFC 5737 documentation ranges; never reference real LAN addresses in committed files.
 
 ## Related
 

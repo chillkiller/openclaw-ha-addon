@@ -230,7 +230,7 @@ This is the practical flow users report as stable in HAOS.
 Set `gateway_public_url` in the app configuration to the URL where the gateway is reachable from your browser.
 
 **Examples**:
-- LAN HTTPS (built-in): `https://192.168.1.119:18789`
+- LAN HTTPS (built-in): `https://192.0.2.119:18789`
 - External HTTPS: `https://openclaw.example.com`
 - Tailscale: `https://ha-machine.ts.net:18789`
 
@@ -305,10 +305,10 @@ All options are set via **Settings → Apps → OpenClaw Assistant → Configura
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `gateway_mode` | `local` / `remote` | `local` | **local**: run gateway in this app. **remote**: connect to an external gateway |
-| `gateway_remote_url` | string | _(empty)_ | Remote gateway WebSocket URL used when `gateway_mode: remote` (example: `ws://192.168.1.20:18789` or `wss://gateway.example.com:443`) |
+| `gateway_remote_url` | string | _(empty)_ | Remote gateway WebSocket URL used when `gateway_mode: remote` (example: `ws://192.0.2.20:18789` or `wss://gateway.example.com:443`) |
 | `gateway_port` | int | `18789` | Port for the gateway. Only applies when `gateway_mode` is `local` |
 | `network_mode` | `ingress_only` / `lan_http` / `lan_https` / `reverse_proxy` / `tailnet_serve` / `tailnet_funnel` | `ingress_only` | **Single source of truth** for gateway bind/auth/TLS presets. See [Accessing the Gateway Web UI](#4-accessing-the-gateway-web-ui) |
-| `gateway_public_url` | string | _(empty)_ | Public URL for the "Open Gateway Web UI" button. Auto-constructed in `lan_https` mode if empty. Example: `https://192.168.1.119:18789`. In newer versions this origin is also merged into `gateway.controlUi.allowedOrigins` to reduce reverse-proxy origin errors. |
+| `gateway_public_url` | string | _(empty)_ | Public URL for the "Open Gateway Web UI" button. Auto-constructed in `lan_https` mode if empty. Example: `https://192.0.2.119:18789`. In newer versions this origin is also merged into `gateway.controlUi.allowedOrigins` to reduce reverse-proxy origin errors. |
 | `enable_openai_api` | bool | `false` | Enable the OpenAI-compatible `/v1/chat/completions` endpoint. Required for [Assist pipeline integration](#6c-assist-pipeline-integration-openai-api) |
 | `gateway_trusted_proxies` | string | _(empty)_ | Comma-separated trusted proxy IP/CIDR list used with `network_mode: reverse_proxy`. |
 | `gateway_additional_allowed_origins` | string | _(empty)_ | Comma-separated additional origins merged into `gateway.controlUi.allowedOrigins` in `lan_https` mode (example: `https://ha.example.com:8443,capacitor://localhost`). |
@@ -332,7 +332,7 @@ All options are set via **Settings → Apps → OpenClaw Assistant → Configura
 | Option | Type | Default | Description |
 |---|---|---|---|
 | `homeassistant_token` | string | _(empty)_ | Optional HA long-lived access token (use at own risk, can be very unsecure but very powerful). Saved to `/config/secrets/homeassistant.token` for use by scripts/skills |
-| `http_proxy` | string | _(empty)_ | Optional outbound proxy URL for HTTP/HTTPS requests from OpenClaw and Node tools. Example: `http://192.168.2.1:3128` |
+| `http_proxy` | string | _(empty)_ | Optional outbound proxy URL for HTTP/HTTPS requests from OpenClaw and Node tools. Example: `http://198.51.100.1:3128` |
 
 ### Maintenance
 
@@ -349,7 +349,7 @@ All options are set via **Settings → Apps → OpenClaw Assistant → Configura
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `blocked_hostnames` | string | _(empty)_ | Comma-separated hostnames blocked from outbound SSRP. Empty allows all (example: `router.lan,192.168.178.1`) |
+| `blocked_hostnames` | string | _(empty)_ | Comma-separated hostnames blocked from outbound SSRP. Empty allows all (example: `router.lan,198.51.100.254`) |
 
 ### Discovery & coding agents
 
@@ -386,7 +386,7 @@ This is the most common setup — accessing the Gateway Web UI from a browser on
 | Option | Value |
 |---|---|
 | `network_mode` | **reverse_proxy** |
-| `gateway_trusted_proxies` | **127.0.0.1,192.168.88.0/24** |
+| `gateway_trusted_proxies` | **127.0.0.1,198.51.100.0/24** |
 | `gateway_public_url` | `https://<your-domain>` |
 
 3. Configure your reverse proxy to forward HTTPS to `<HA-IP>:18789`
@@ -919,7 +919,7 @@ The embedded **Terminal** on the app landing page still works over plain HTTP.
 3. If the IP has changed since you last started, restart again — the cert and defaults are refreshed.
 4. **Manual override** (advanced, from the app terminal):
    ```sh
-   openclaw config set gateway.controlUi.allowedOrigins '["https://192.168.1.10:18789"]'
+   openclaw config set gateway.controlUi.allowedOrigins '["https://192.0.2.10:18789"]'
    ```
    Then restart the app to re-merge defaults + extras.
 
@@ -1006,7 +1006,7 @@ If Telegram is configured but polling fails with network fetch errors:
 **Symptom**: External API/network calls still fail in restricted networks even after setting proxy.
 
 **Checks**:
-1. Set app option `http_proxy` with full URL format: `http://host:port` (example: `http://192.168.2.1:3128`).
+1. Set app option `http_proxy` with full URL format: `http://host:port` (example: `http://198.51.100.1:3128`).
 2. Restart the app after changing configuration.
 3. Check logs for `INFO: Outbound HTTP/HTTPS proxy enabled from app configuration.`
 4. If you see `WARN: Invalid http_proxy value`, fix the URL format and restart.
