@@ -212,7 +212,7 @@ RUN chmod +x /usr/local/bin/link-playwright-chromium && \
 # Pins (survey 2026-10-07): crawl4ai 0.9.4 and patchright 1.63.0 = PyPI latest.
 # =============================================================================
 RUN uv pip install --system --break-system-packages "crawl4ai==0.9.4" "patchright==1.63.0" \
-    && python3 -c 'import crawl4ai; print("crawl4ai installed: " + crawl4ai.__version__)' \
+    && python3 -c 'from importlib.metadata import version; print("crawl4ai installed: " + version("crawl4ai"))' \
     && playwright install chromium \
     && patchright install chromium \
     && /usr/local/bin/link-playwright-chromium
