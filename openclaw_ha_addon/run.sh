@@ -927,6 +927,17 @@ if [ -n "$CUSTOM_INIT_SCRIPT" ]; then
 fi
 
 # ------------------------------------------------------------------------------
+# Chromium self-heal (Playwright layout drift: chrome-linux vs chrome-linux-arm64)
+# The image resolves the real binary at build time via browser_links.sh; a boot
+# re-run repairs a dangling /usr/bin/chromium (rebuild or layout change) instead
+# of silently killing OpenClaw browser automation and crawl4ai browser tasks.
+# ------------------------------------------------------------------------------
+if [ -x /usr/local/bin/link-playwright-chromium ] && [ ! -x /usr/bin/chromium ]; then
+  /usr/local/bin/link-playwright-chromium || \
+    echo "WARN: Chromium link repair failed — OpenClaw browser automation and crawl4ai browser tasks will fail"
+fi
+
+# ------------------------------------------------------------------------------
 # Ensure browser automation config (headless Chromium in container)
 # ------------------------------------------------------------------------------
 if [ -f "$HELPER_PATH" ] && [ -f "$OPENCLAW_CONFIG_PATH" ]; then

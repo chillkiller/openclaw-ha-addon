@@ -20,9 +20,11 @@ ENV LANG=C.UTF-8
 ENV LC_ALL=C.UTF-8
 ENV NODE_COMPILE_CACHE=/config/.node-compile-cache
 ENV CHROMIUM_CACHE=/tmp/openclaw/chromium_cache
-# Playwright browsers are installed to /opt/ms-playwright during build.
-# At runtime, run.sh symlinks /config/.cache/ms-playwright -> /opt/ms-playwright
-# so that crawl4ai and other tools find them in the expected location.
+# Playwright browsers are installed to /opt/ms-playwright during build and shared
+# by playwright, patchright and crawl4ai (PLAYWRIGHT_BROWSERS_PATH is set below):
+# Python tools resolve browsers directly in that root; /usr/bin/chromium is only
+# an alias maintained by /usr/local/bin/link-playwright-chromium (image build +
+# run.sh boot self-heal) - never by hardcoded globs.
 ENV CHROME_FLAGS="--disk-cache-dir=/tmp/openclaw/chromium_cache --disk-cache-size=524288000"
 
 # =============================================================================
@@ -180,24 +182,40 @@ RUN mkdir -p /etc/apt/keyrings \
 # Playwright Chromium - Single source for browser binaries
 # Replaces system chromium to avoid duplication
 # Installs to /opt/ms-playwright (inside the image, NOT /config which is runtime-only)
+# browser_links.sh -> /usr/local/bin/link-playwright-chromium resolves the real
+# binary layout-agnostically (chrome-linux/ on x64, chrome-linux-arm64/ on arm64;
+# the old chromium-*/chrome-linux/chrome glob matched only x64 and silently left
+# dangling symlinks on every arm64 rebuild) and FAILS THE BUILD if nothing is found.
+# Pin policy (survey 2026-10-07): playwright 1.63.0 = PyPI latest. Pins make
+# builds reproducible; version bumps are deliberate (survey + audit + owner GO).
 # =============================================================================
 ENV PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright
 # PEP 668 blocks system-wide pip on Debian Trixie.
 # --break-system-packages is safe in a Docker image (no system to break).
-RUN uv pip install --system --break-system-packages playwright && \
+COPY browser_links.sh /usr/local/bin/link-playwright-chromium
+RUN chmod +x /usr/local/bin/link-playwright-chromium && \
+    uv pip install --system --break-system-packages "playwright==1.63.0" && \
     playwright install chromium --with-deps && \
-    # Create symlinks for compatibility with scripts expecting chromium-browser
-    ln -sf /opt/ms-playwright/chromium-*/chrome-linux/chrome /usr/bin/chromium-browser && \
-    ln -sf /opt/ms-playwright/chromium-*/chrome-linux/chrome /usr/bin/chromium && \
-    echo "Playwright Chromium installed: $(/opt/ms-playwright/chromium-*/chrome-linux/chrome --version 2>/dev/null || echo 'version check failed')"
+    /usr/local/bin/link-playwright-chromium
 
 # =============================================================================
 # crawl4ai — Web Crawling Framework (Basis, ohne ML-Deps)
 # PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright (shared, ~956MB bereits im Image)
 # KEIN [all] — torch, transformers, scipy explizit ausgeschlossen
+# crawl4ai 0.9.x launches browsers through playwright AND patchright; each pins
+# its own Chromium revision. Browser downloads previously happened only in the
+# playwright layer above, so a crawl4ai bump could upgrade the packages while
+# the matching revision was never fetched into /opt/ms-playwright (green build,
+# broken crawls). Re-running both installs is a no-op at revision parity and
+# closes that drift; the linker refreshes /usr/bin/chromium when the revision
+# advances.
+# Pins (survey 2026-10-07): crawl4ai 0.9.4 and patchright 1.63.0 = PyPI latest.
 # =============================================================================
-RUN uv pip install --system --break-system-packages crawl4ai \
-    && echo "crawl4ai installed: $(python3 -c 'import crawl4ai; print(crawl4ai.__version__)' 2>/dev/null || echo 'version check failed')"
+RUN uv pip install --system --break-system-packages "crawl4ai==0.9.4" "patchright==1.63.0" \
+    && python3 -c 'import crawl4ai; print("crawl4ai installed: " + crawl4ai.__version__)' \
+    && playwright install chromium \
+    && patchright install chromium \
+    && /usr/local/bin/link-playwright-chromium
 
 # =============================================================================
 # Discord Plugin Dependency (P1)

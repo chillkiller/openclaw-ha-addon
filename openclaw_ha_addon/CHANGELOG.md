@@ -1,3 +1,21 @@
+## [0.7.12.6] - 2026-10-07
+
+### Fixed
+- **Dangling `/usr/bin/chromium` on every arm64 rebuild (P1)**: Playwright ≥1.63 installs arm64 Chromium to `chromium-<rev>/chrome-linux-arm64/`; the Dockerfile symlink glob hardcoded the x64 layout (`chromium-*/chrome-linux/chrome`), matched nothing on arm64, and `ln -sf` silently produced dangling symlinks — masked by the trailing `|| echo 'version check failed'`, so every rebuild shipped green with a dead OpenClaw browser tool (`browser.executablePath not found: /usr/bin/chromium`) while the binary existed at `/opt/ms-playwright/chromium-1243/chrome-linux-arm64/chrome`. Replaced by the shared resolver `browser_links.sh` → `/usr/local/bin/link-playwright-chromium`: layout-agnostic `find` (path `chromium-*/chrome-linux*/chrome`, highest revision wins via `sort -V`), re-links `/usr/bin/chromium` + `/usr/bin/chromium-browser`, and fails the build hard when no executable is found.
+- **crawl4ai browser-revision drift**: crawl4ai 0.9.4 launches through both `playwright` and `patchright` (browser_manager.py, browser_adapter.py and install.py reference patchright); both pin Chromium revision 1243 today, but browsers were only downloaded in the playwright layer — a future crawl4ai bump upgrading playwright/patchright would resolve revisions never present in `PLAYWRIGHT_BROWSERS_PATH` (green build, broken crawls). The crawl4ai layer now re-runs `playwright install chromium` and `patchright install chromium` (idempotent no-ops at revision parity) and refreshes the links via the shared resolver.
+- **Stale Dockerfile comment**: claimed `run.sh` symlinks `/config/.cache/ms-playwright -> /opt/ms-playwright` at runtime — no such code ever existed, and `PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright` makes it unnecessary. The comment now describes the real mechanism.
+
+### Added
+- **Boot self-heal in run.sh**: before the browser-config ensure step, run.sh re-runs the linker whenever `/usr/bin/chromium` is missing or non-executable, so future layout changes or rebuilds self-repair at start; a loud WARN (carrying the resolver's own error) replaces silent failure.
+
+### Changed
+- **Version pins** (owner-approved 2026-10-07): `crawl4ai==0.9.4`, `playwright==1.63.0`, `patchright==1.63.0` — all three were the PyPI latest at survey time, so nothing is lost today; pins move updates from build-time chance to deliberate release steps (survey + audit + owner GO), giving reproducible images.
+
+### Expectation map (the durable contract)
+- OpenClaw consumes `/usr/bin/chromium` (`browser.executablePath` in `openclaw.json`; CDP transport, no Python involved).
+- crawl4ai consumes revision-matched builds under `PLAYWRIGHT_BROWSERS_PATH=/opt/ms-playwright` via Python `playwright`/`patchright` (system packages; the persistent `/config/clawd/.venvs/crawl4ai` stays user-managed, currently the same revision).
+- Under `/opt/ms-playwright` the revision directory is the single source of truth; `/usr/bin/chromium` is only an alias, maintained at build and boot — never by hardcoded globs.
+
 ## [0.7.12.4] - 2026-10-03
 
 ### Performance
