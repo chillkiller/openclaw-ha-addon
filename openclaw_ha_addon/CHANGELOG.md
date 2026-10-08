@@ -226,17 +226,17 @@
 
 ### Changed
 - **Landing Page Titlebar Redesign**: Home Assistant Material Design 3 Stil mit korrigierten Farben. Alte Titlebar-Struktur mit Tabs oben beibehalten.
-- **UX**: HTTPS/Secure-Context-Warnbanner im Ingress entfernt.
+- **UX**: removed the HTTPS/secure-context warning banner inside the ingress.
 
 ### Fixed
-- **Tab-Visibility**: Tabs werden korrekt basierend auf Add-on-Konfiguration und iframe-Kontext ein-/ausgeblendet.
+- **Tab visibility**: tabs are shown/hidden correctly based on app configuration and iframe context.
 
 ## [0.7.9.24] - 2026-08-23
 
 ### Changed
-- **Landing Page Redesign**: Home Assistant Material Design 3 Stil mit Cards, Chips und Kachel-Navigation.
-- **Sicherheit**: `__GATEWAY_TOKEN__` wird in `render_nginx.py` mit `html.escape()` escaped.
-- **Features wiederhergestellt**: CA-Cert-Download (nur `lan_https`) und Disk-Usage-Anzeige im Footer.
+- **Landing page redesign**: Home Assistant Material Design 3 style with cards, chips and tile navigation.
+- **Security**: `__GATEWAY_TOKEN__` is escaped with `html.escape()` in `render_nginx.py`.
+- **Features restored**: CA cert download (only `lan_https`) and disk usage display in the footer.
 
 ## [0.7.9.23] - 2026-08-23
 
