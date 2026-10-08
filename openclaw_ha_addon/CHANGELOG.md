@@ -1,10 +1,10 @@
 ## [0.7.5.1] - 2026-04-19
-- **FIX:** Gateway-Bonjour/mDNS abgeschaltet — `OPENCLAW_DISABLE_BONJOUR=1` immer setzen und `discovery.mdns.mode="off"` in openclaw.json schreiben (verhindert Endlosschleife im Container)
-- **FIX:** D-Bus system bus wird vor Avahi gestartet (Container haben kein systemd)
+- **FIX:** gateway Bonjour/mDNS disabled — always set `OPENCLAW_DISABLE_BONJOUR=1` and write `discovery.mdns.mode="off"` in openclaw.json (prevents an endless loop in the container)
+- **FIX:** D-Bus system bus starts before Avahi (containers have no systemd)
 - **FIX:** TLS-SANs um mDNS-Hostname erweitert (`DNS:${mdns_host_name}.local`)
 - **FIX:** allowedOrigins um mDNS-Hostname erweitert
 - **FIX:** mDNS advertised korrekten GATEWAY_PORT (nicht NGINX_PORT/Ingress)
-- **FIX:** `hostname`- und `/etc/hostname`-Override entfernt (zerstört HA-Supervisor-Healthchecks)
+- **FIX:** removed the `hostname` and `/etc/hostname` override (it broke HA supervisor healthchecks)
 - **FIX:** `cleanup_stale_config_keys()` entfernt nur noch uppercase `mDNS`, nicht lowercase `mdns`
 - **UPGRADE:** OpenClaw 2026.4.14 → 2026.4.15
 
