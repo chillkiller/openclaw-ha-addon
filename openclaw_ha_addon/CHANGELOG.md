@@ -20,7 +20,7 @@
 - **FIX:** D-Bus socket wait raised from 5s to 10s (slow SD cards)
 - **FIX:** controlui_disable_device_auth Default false→true (konsistent mit DOCS.md)
 - **FIX:** ensure_browser_config() +localLaunchTimeoutMs +localCdpReadyTimeoutMs (ARM64)
-- **FIX:** repository.yaml Version synchronisiert
+- **FIX:** repository.yaml version synced
 - **IMPLEMENTED:** mdns_mode/host_name/service_port/interface_name in run.sh (Audit R3)
 - **IMPLEMENTED:** gateway_log_to_console/log_level, trace_log_to_console in run.sh (Audit R4)
 - **IMPLEMENTED:** runtime_apt_packages in run.sh (Audit R5)
