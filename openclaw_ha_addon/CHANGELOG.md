@@ -10,14 +10,14 @@
 - **FIX:** build dependencies (`build-essential`, `cmake`, `python3-dev`, `-dev` libs) stay in the image (no more purge) for runtime-native builds
 - **FIX:** `node-llama-cpp` fully compiled during the Docker build (instead of at runtime); the binary ships in the image
 - **FIX:** build parallelism for `node-llama-cpp` capped at 2 threads (`NLC_BUILD_PARALLEL=2`) — reduces CPU spikes on RPi5
-- **REMOVE:** Obsolete `AUDIT-REPORT-v0.7.7.*.md` Dateien aus dem Repository entfernt
+- **REMOVE:** removed obsolete `AUDIT-REPORT-v0.7.7.*.md` files from the repository
 
 ## [0.7.7.1] - 2026-06-17
-- **FIX:** Builder-Stage entfernt (toter Code seit v0.7.5.1, nie verdrahtet)
+- **FIX:** builder stage removed (dead code since v0.7.5.1, never wired)
 - **FIX:** build-essential nach npm install gepurged (~200MB Image-Ersparnis)
-- **FIX:** PYTHONPATH trailing colon entfernt (Security)
+- **FIX:** removed the PYTHONPATH trailing colon (security)
 - **FIX:** NODE_OPTIONS --dns-result-order Dedup
-- **FIX:** D-Bus Socket-Wait von 5s auf 10s erhöht (langsame SD-Karten)
+- **FIX:** D-Bus socket wait raised from 5s to 10s (slow SD cards)
 - **FIX:** controlui_disable_device_auth Default false→true (konsistent mit DOCS.md)
 - **FIX:** ensure_browser_config() +localLaunchTimeoutMs +localCdpReadyTimeoutMs (ARM64)
 - **FIX:** repository.yaml Version synchronisiert
@@ -27,7 +27,7 @@
 - **IMPLEMENTED:** custom_init_script in run.sh (Audit R6)
 
 ## [0.7.7.0] - 2026-06-16
-- **UPGRADE:** OpenClaw 2026.6.1 → 2026.6.8 (Security-Härtung, Telegram Rich-Text, Memory-Fixes, GLM-5.2, Haiku 4.5)
+- **UPGRADE:** OpenClaw 2026.6.1 → 2026.6.8 (security hardening, Telegram rich text, memory fixes, GLM-5.2, Haiku 4.5)
 - **FIX:** Go PATH conflict — golang-go (apt 1.19.8) is purged after the Go 1.24.1 binary
 - **FIX:** D-Bus + Avahi startup in run.sh — dbus-daemon starts before the gateway; mDNS now works
 - **ADD:** CUPS stack (cups, cups-client, cups-daemon, cups-filters, cups-ipp-utils, cups-browsed) for AirPrint/IPP printing
@@ -54,12 +54,12 @@
 - **FIX:** GATEWAY_PORT vor TERMINAL_PORT-Validierung verschoben (Crash "unbound variable")
 - **FIX:** MDNS_SERVICE_PORT jq-Interpolation durch bash-Default ersetzt (fragil → robust)
 - **FIX:** LAN_IP was defined twice → split into CERT_LAN_IP (TLS) and MDNS_LAN_IP (mDNS)
-- **FIX:** D-Bus Config XML DOCTYPE schließendes `>` hinzugefügt (Avahi-Mode kaputt)
+- **FIX:** added the missing closing `>` to the D-Bus config XML DOCTYPE (Avahi mode was broken)
 - **FIX:** Dockerfile Paket `dbus-daemon` → `dbus` (Debian Trixie)
 - **FIX:** build.yaml removed (obsolete for local HA apps)
 - **ADD:** trace_log_to_console in config.yaml options/schema aufgenommen
 - **ADD:** gateway_log_level Option (off|info|debug) mit LOG_LEVEL-Mapping
-- **ADD:** avahi-Option in allen 6 Übersetzungsdateien
+- **ADD:** avahi option in all 6 translation files
 - **ADD:** mdns_host_name Default "openclaw-ha-addon" statt leer (kryptischer Container-Name)
 
 ## [0.7.5.1] - 2026-04-19
@@ -73,8 +73,8 @@
 
 ## [0.7.5] - 2026-04-17
 - **CRITICAL FIX:** jq-Falsy-Falle – Alle `// true`/`// false` durch Null-Checks ersetzt
-- **FIX:** CONTROLUI_DISABLE_DEVICE_AUTH=true im lan_https-Case entfernt
+- **FIX:** removed CONTROLUI_DISABLE_DEVICE_AUTH=true from the lan_https case
 - **FIX:** controlui_disable_device_auth Default auf false
-- **FIX:** Dockerfile aufgeräumt
+- **FIX:** Dockerfile cleaned up
 - **FIX:** ensure-plugins in oc_config_helper.py sichert plugins.entries.ollama
 - **UPGRADE:** OpenClaw 2026.4.14 → 2026.4.15
