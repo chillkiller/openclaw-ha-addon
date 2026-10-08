@@ -30,7 +30,13 @@ Enhancement suggestions are tracked as [GitHub Issues](https://github.com/chillk
 - Explain why this enhancement would be useful
 - List some examples of how this feature would be used
 
-### Pull Requests
+## Language Policy
+
+All repository-facing written content is **English**: release notes, changelogs, commit messages, PR titles and bodies, issues, documentation, and code comments. GitHub is an international surface; contributors and external users read these texts.
+
+Exceptions (keep their target language): UI translation files and `README.de.md`.
+
+## Pull Requests
 
 1. **Fork the repository** and create your branch from `main`.
 2. **Make your changes** following the existing code style and structure.

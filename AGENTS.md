@@ -24,6 +24,14 @@ You wake up fresh each session. These files are your continuity:
 - **User model:** `USER.md` - durable preferences and profile facts written as active directives
 - **Long-term:** `MEMORY.md` - durable non-profile facts and decisions
 
+## Language Policy (non-negotiable)
+
+All repository-facing written content is **English**: release notes, changelogs (root `CHANGELOG.md` and `openclaw_ha_addon/CHANGELOG.md`), commit messages, PR titles/bodies, issues, documentation, and code comments. GitHub is an international surface; contributors and external users read these texts.
+
+Exceptions (keep their target language): UI translation files and `README.de.md`.
+
+This applies to every agent and human contributor working in this repository. Agent-internal memory files outside the repo are out of scope.
+
 Capture what matters: decisions, context, things to remember. Skip secrets unless asked to keep them.
 
 ### USER.md - Durable User Directives
