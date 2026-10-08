@@ -14,10 +14,10 @@
 
 ## [0.7.7.0] - 2026-06-16
 - **UPGRADE:** OpenClaw 2026.6.1 → 2026.6.8 (Security-Härtung, Telegram Rich-Text, Memory-Fixes, GLM-5.2, Haiku 4.5)
-- **FIX:** Go-PATH-Konflikt — golang-go (apt 1.19.8) wird nach Go 1.24.1 Binary gepurged
-- **FIX:** D-Bus + Avahi Startup in run.sh — dbus-daemon wird vor Gateway gestartet, mDNS funktioniert jetzt
-- **ADD:** CUPS-Stack (cups, cups-client, cups-daemon, cups-filters, cups-ipp-utils, cups-browsed) für AirPrint/IPP-Druck
-- **ADD:** Scanner-Stack (sane-airscan, sane-utils) für eSCL/AirScan/WSD
+- **FIX:** Go PATH conflict — golang-go (apt 1.19.8) is purged after the Go 1.24.1 binary
+- **FIX:** D-Bus + Avahi startup in run.sh — dbus-daemon starts before the gateway; mDNS now works
+- **ADD:** CUPS stack (cups, cups-client, cups-daemon, cups-filters, cups-ipp-utils, cups-browsed) for AirPrint/IPP printing
+- **ADD:** scanner stack (sane-airscan, sane-utils) for eSCL/AirScan/WSD
 - **ADD:** crawl4ai Basis im Image (uv pip install, ohne torch/transformers) — shared Playwright Chromium
 - **ADD:** Browser-Config Bootstrap (headless, noSandbox, extraArgs) via oc_config_helper.py
 - **ADD:** memory-core Dreaming enabled via oc_config_helper.py
@@ -39,22 +39,22 @@
 ## [0.7.5.2] - 2026-04-23
 - **FIX:** GATEWAY_PORT vor TERMINAL_PORT-Validierung verschoben (Crash "unbound variable")
 - **FIX:** MDNS_SERVICE_PORT jq-Interpolation durch bash-Default ersetzt (fragil → robust)
-- **FIX:** LAN_IP doppelt definiert → aufgeteilt in CERT_LAN_IP (TLS) und MDNS_LAN_IP (mDNS)
+- **FIX:** LAN_IP was defined twice → split into CERT_LAN_IP (TLS) and MDNS_LAN_IP (mDNS)
 - **FIX:** D-Bus Config XML DOCTYPE schließendes `>` hinzugefügt (Avahi-Mode kaputt)
 - **FIX:** Dockerfile Paket `dbus-daemon` → `dbus` (Debian Trixie)
-- **FIX:** build.yaml gelöscht (obsolet für HA lokale Addons)
+- **FIX:** build.yaml removed (obsolete for local HA apps)
 - **ADD:** trace_log_to_console in config.yaml options/schema aufgenommen
 - **ADD:** gateway_log_level Option (off|info|debug) mit LOG_LEVEL-Mapping
 - **ADD:** avahi-Option in allen 6 Übersetzungsdateien
 - **ADD:** mdns_host_name Default "openclaw-ha-addon" statt leer (kryptischer Container-Name)
 
 ## [0.7.5.1] - 2026-04-19
-- **FIX:** Gateway-Bonjour/mDNS abgeschaltet — OPENCLAW_DISABLE_BONJOUR=1 immer setzen und discovery.mdns.mode=off schreiben
-- **FIX:** D-Bus system bus wird vor Avahi gestartet
+- **FIX:** gateway Bonjour/mDNS disabled — always set OPENCLAW_DISABLE_BONJOUR=1 and write discovery.mdns.mode=off
+- **FIX:** D-Bus system bus starts before Avahi
 - **FIX:** TLS-SANs um mDNS-Hostname erweitert
 - **FIX:** allowedOrigins um mDNS-Hostname erweitert
 - **FIX:** mDNS advertised korrekten GATEWAY_PORT
-- **FIX:** hostname und /etc/hostname-Override entfernt
+- **FIX:** hostname and /etc/hostname override removed
 - **UPGRADE:** OpenClaw 2026.4.14 → 2026.4.15
 
 ## [0.7.5] - 2026-04-17
