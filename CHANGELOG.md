@@ -1,3 +1,13 @@
+# Changelog — OpenClaw Assistant (Home Assistant App)
+
+Release-facing summary. Detailed per-release engineering notes: [openclaw_ha_addon/CHANGELOG.md](openclaw_ha_addon/CHANGELOG.md).
+
+## 0.7.12.7
+- **Security — OWASP LLM01 Control #5, Invisible-Unicode-Guard:** Build-Patch `unicode-guard/` strippt unsichtbares Unicode kontextsensitiv an allen External-Content-Ingest-Grenzen (web_fetch/web_search, Email/Webhook/Cron/Browser). Ersetzt OpenClaw 2026.9.8s naive Zeichenklassen-Streiche: zerbrach gültige ZWJ-Emoji, ignorierte isolierte Variation Selectors (U+FE00–U+FE0F, belegter Prompt-Injection-Kanal) und ließ web_search-Ergebnisse komplett ungestrippt. Splices die getestete Implementierung in alle Naivkopien im dist-Baum (inkl. minifizierte Worker-Bundles), Anchor-exakt mit lautem Build-Fail bei Upstream-Drift; 15 Tests, Verhalten + Tradeoffs in `unicode-guard/README.md`.
+- **Watchdog-Kill bei sauberem Pi-Boot behoben:** HEALTHCHECK start-period 120s → 420s, retries 3 → 4. Beweis — Supervisor-Log 2026-10-07 19:41:39 („unhealthy, restarting" + docker kill exit 137) trotz sauberem Boot: Homebrew-Sync/Skill-Copy/Gateway-Init dauern auf dem Pi teils >4 Minuten, das alte Fenster lief vor der ersten `/startupz`-Antwort ab. Fails während der Start-Period zählen nicht gegen die Retries; echte Hänger bleiben schnell erkannt (4 konsekutive Fails à 30s).
+- **V21 — WebUI-extern-Button („WebUI ↗") zeigt immer auf die Ingress-URL:** statt der statisch gerenderten `__GATEWAY_PUBLIC_URL__` (boot-time LAN-IP, extern unbrauchbar) jetzt client-seitig same-origin `./webui/#token=<token>` — exakt Pfad + Autologin des funktionierenden Inline-Tabs. Seit 0.7.12.1 läuft die Landing ausschließlich in der HA-Ingress-Session (lokal + extern via Nabu/DyndNS identisch), damit ist `./webui/` immer korrekt. LAN-18789-Bypass entfällt bewusst (funktional irrelevant); kein Python/nginx-Touch.
+- **`sshpass` fest ins Image (apt Zone 1):** war nur Runtime-Install und ging bei jedem Rebuild/Container-Swap verloren; Debian bookworm/main arm64 verifiziert (1.09-1).
+
 ## 0.7.12.6
 - **Build-fix nach gescheitertem ersten Supervisor-Build:** Import-Check auf `importlib.metadata` (crawl4ai `__version__` ist ein Submodul; alter maskierter Check versteckte denselben Bug). Re-Tag ausgeführt: `main`=`f8b1ca0`, Tag `v0.7.12.6`->`032a5c5` (forced update), Release-Objekt folgt dem Tag.
 - **Dauerfix — Browser-Links zerfallen bei jedem arm64-Rebuild**: Playwright 1.63 legt Chromium auf arm64 unter `chromium-<rev>/chrome-linux-arm64/` ab; das alte Dockerfile-Glob `chromium-*/chrome-linux/chrome` matcht nur das x64-Layout → `ln -sf` erzeugte stumme Dangling-Symlinks (kaschiert durch `|| echo 'version check failed'`) → grünes Build, totes Browser-Tool (`browser.executablePath not found: /usr/bin/chromium`), obwohl die Binary unter `/opt/ms-playwright/chromium-1243/chrome-linux-arm64/chrome` existierte. Neu: `browser_links.sh` (im Image `/usr/local/bin/link-playwright-chromium`) als einzige Quelle — layout-agnostische Auflösung (`chromium-*/chrome-linux*/chrome`, höchste Revision gewinnt), linkt `/usr/bin/chromium` + `/usr/bin/chromium-browser`, bricht das Build hart ab, wenn nichts gefunden wird. run.sh repariert den Link zusätzlich bei jedem Start (Boot-Self-Heal).
@@ -6,10 +16,6 @@
 
 ## 0.7.12.5
 - **Hotfix — Gateway-Exit-Loop bei Chat-Start**: OpenClaw 2026.9.8 beendet den Gateway bei jeder unklassifizierten unhandled rejection (`process.exit(1)`). Auf dem Pi blockiert der Chat-Start die Event-Loop 13–25 s (plugin-tools-Init, SQLite reclamation), dabei wird pro Chat-Start eine stille Promise mit `reason === undefined` rejected → sofortiger Exit ("Unhandled promise rejection: undefined") und Restart-Schleife. Neuer `undefined-rejection-shim.cjs` (via `NODE_OPTIONS=--require`, vor allen OpenClaw-Modulen geladen) registriert in der OpenClaw-Handler-Registry (`Symbol.for("openclaw.unhandledRejection.handlers")`) einen Filter, der ausschließlich `reason === undefined` als handled einstuft; alle anderen Rejections laufen unverändert durch die 9.8-Politik. Dockerfile: Shim nach `/app/undefined-rejection-shim.cjs`; run.sh: `--require` in beiden NODE_OPTIONS-Zweigen.
-
-# Changelog — OpenClaw Assistant (Home Assistant App)
-
-Release-facing summary. Detailed per-release engineering notes: [openclaw_ha_addon/CHANGELOG.md](openclaw_ha_addon/CHANGELOG.md).
 
 ## 0.7.12.4
 - **Performance — RAM-adaptive heap budget**: the static 4 GB Node heap kept OpenClaw's memory-pressure threshold below the gateway's normal working set on this host, stalling `sessions.list` for 5+ seconds; the heap now sizes from host RAM (≥12 GB → 6144 MB here).

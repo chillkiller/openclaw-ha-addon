@@ -61,7 +61,7 @@
   <span class="version">__OPENCLAW_VERSION__</span>
   <div class="buttons">
     <button class="btn" id="btnWebui" onclick="setMode('webui')">WebUI</button>
-    <a class="btn" id="btnWebuiExternal" href="__GATEWAY_PUBLIC_URL__" target="_blank" rel="noopener noreferrer">WebUI ↗</a>
+    <a class="btn" id="btnWebuiExternal" href="./webui/" target="_blank" rel="noopener noreferrer">WebUI ↗</a>
     <button class="btn active" id="btnTerminal" onclick="setMode('terminal')">Terminal</button>
     <button class="btn" id="btnDocs" onclick="setMode('docs')">Docs</button>
     <a class="btn green small" id="btnCert" href="./cert/ca.crt" download="openclaw-ca.crt">CA Cert</a>
@@ -104,6 +104,19 @@
   const GATEWAY_TOKEN = '__GATEWAY_TOKEN__';
   const GATEWAY_INTERNAL_PORT = '__GATEWAY_INTERNAL_PORT__';
 
+  // V21 (GaRoN-Spec 2026-09-26): the external WebUI button targets same-origin ./webui/.
+  // Since 0.7.12.1 the landing page runs exclusively inside the HA Ingress session
+  // (local and external via Nabu Casa/DynDNS alike), so the Ingress path is ALWAYS
+  // correct — exactly the target the working inline tab uses. A direct LAN:18789 link
+  // would bypass Ingress and is functionally irrelevant; deliberately dropped.
+  // Autologin parity with the inline tab: same GATEWAY_TOKEN, same #token= mechanism,
+  // same guard against an unsubstituted template placeholder.
+  if (btnWebuiExternal) {
+    btnWebuiExternal.href = (GATEWAY_TOKEN && GATEWAY_TOKEN.indexOf('__') !== 0)
+      ? './webui/#token=' + encodeURIComponent(GATEWAY_TOKEN)
+      : './webui/';
+  }
+
   let inIframe;
   try { inIframe = window !== window.top; } catch (e) { inIframe = true; }
 
@@ -125,7 +138,7 @@
 
     // WebUI inline tab: visible only when enabled and inside HA Ingress iframe.
     buttons.webui.style.display = (SHOW_WEBUI && inIframe) ? '' : 'none';
-    // External WebUI link: visible when enabled and either not in iframe or no inline iframe possible (HTTP context).
+    // External WebUI link: visible whenever WebUI is enabled — opens same-origin ./webui/ in a new tab.
     if (btnWebuiExternal) {
       btnWebuiExternal.style.display = SHOW_WEBUI ? '' : 'none';
     }

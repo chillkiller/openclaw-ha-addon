@@ -1,4 +1,4 @@
-# OpenClaw HA-App v0.7.12.4 — Debian Bookworm Full-Stack
+# OpenClaw HA-App v0.7.12.7 — Debian Bookworm Full-Stack
 # OpenClaw 2026.9.8 + node-llama-cpp@3.20.0 + mcporter@0.12.3 + CUPS/Scanner + crawl4ai + Go-PATH-Fix + D-Bus/Avahi
 # Builder stage removed (dead code since v0.7.5.1 — never wired)
 # Build dependencies are kept in the final image so runtime native builds work
@@ -9,7 +9,7 @@ FROM ghcr.io/home-assistant/${BUILD_ARCH}-base-debian:bookworm
 
 # Labels required when not using the official GitHub builder action
 LABEL \
-  io.hass.version="0.7.12.4" \
+  io.hass.version="0.7.12.7" \
   io.hass.type="app" \
   io.hass.arch="aarch64|amd64"
 
@@ -45,6 +45,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     lsof \
     hostname \
     openssh-client \
+    sshpass \
     python3 \
     python3-pip \
     python3-full \
@@ -295,6 +296,18 @@ RUN npm install -g openclaw@2026.9.8 \
 # 2026-10-03 in dist/openai-http-E_fP_MwD.mjs: agentId forwarded at lines 386/400).
 # No patch block needed.
 
+# OWASP LLM01:2026 Control #5 — context-sensitive invisible-Unicode stripping at
+# OpenClaw's external-content ingest boundaries (web_fetch/web_search results,
+# email/webhook/cron/browser content). Upstream 2026.9.8 ships a naive char-class
+# strip that breaks valid ZWJ emoji (👨‍👩‍👧) and leaves isolated variation
+# selectors (U+FE00–U+FE0F) as a documented smuggling channel; web_search output
+# was not stripped at all. The patch script splices the tested implementation
+# from unicode-guard/strip-invisible-unicode.mjs into the dist and fails the
+# build LOUDLY when upstream anchors change (never silently lose a security
+# control). Behavior matrix + tradeoffs: unicode-guard/README.md.
+COPY unicode-guard /openclaw_ha_addon/unicode-guard
+RUN node /openclaw_ha_addon/unicode-guard/apply-unicode-guard-patch.mjs /usr/lib/node_modules/openclaw
+
 # Patch node-llama-cpp to honor NLC_BUILD_PARALLEL for constrained builds
 RUN node - <<'NODE'
 const fs = require('fs');
@@ -355,11 +368,18 @@ RUN mkdir -p /config/.local/lib/python3.11/site-packages
 ENV PYTHONPATH=/config/.local/lib/python3.11/site-packages
 
 # Health check for Home Assistant Supervisor Watchdog
-# 120s start-period accounts for Homebrew sync, skill copy, and gateway init on slow hardware.
+# 420s start-period + 4 retries (v0.7.12.7): Homebrew sync, skill copy, and gateway
+# init take >4 min on a Raspberry Pi. Evidence — supervisor log 2026-10-07 19:41:39:
+# "Watchdog found app OpenClaw Assistant is unhealthy, restarting..." followed by a
+# docker kill (exit 137) on a CLEAN boot: the old 120s window expired while the gateway
+# was still initializing, before /startupz could answer. Docker start-period semantics:
+# failures during the grace window do not count toward retries, so slow-but-clean boots
+# no longer trip the watchdog; real hangs are still caught fast afterwards (4 consecutive
+# failed probes at a 30s interval).
 # /api/health proves nginx is up; /startupz proves the OpenClaw gateway is ready for traffic.
 # The gateway port is read at check time from the persisted config so it works across
 # ingress_only / lan_http / lan_https internal port differences.
-HEALTHCHECK --interval=30s --timeout=10s --start-period=120s --retries=3 \
+HEALTHCHECK --interval=30s --timeout=10s --start-period=420s --retries=4 \
   CMD sh -c 'GW_PORT=$(jq -r ".gateway.port // 18789" /config/.openclaw/openclaw.json 2>/dev/null || echo 18789); \
     wget --no-verbose --tries=1 --spider http://localhost:49200/api/health \
     && wget --no-verbose --tries=1 --spider http://127.0.0.1:${GW_PORT}/startupz || exit 1'
