@@ -5,7 +5,7 @@
 - node-llama-cpp stays at 3.19.0 (no change)
 
 ### Notes
-- Add-on-Version synchronisiert: `0.7.8.0` (config.yaml, repository.yaml, Dockerfile)
+- Add-on version synced: `0.7.8.0` (config.yaml, repository.yaml, Dockerfile)
 
 ## [0.7.7.4] - 2026-06-26
 - **REMOVE:** automatic `browser` and `memory-core` configuration removed from `oc_config_helper.py` — configure both manually in `openclaw.json`
@@ -29,7 +29,7 @@
 - **FIX:** D-Bus socket wait raised from 5s to 10s (slow SD cards)
 - **FIX:** controlui_disable_device_auth Default false→true (konsistent mit DOCS.md)
 - **FIX:** ensure_browser_config() +localLaunchTimeoutMs +localCdpReadyTimeoutMs (ARM64)
-- **FIX:** repository.yaml Version synchronisiert
+- **FIX:** repository.yaml version synced
 - **IMPLEMENTED:** mdns_mode/host_name/service_port/interface_name in run.sh (Audit R3)
 - **IMPLEMENTED:** gateway_log_to_console/log_level, trace_log_to_console in run.sh (Audit R4)
 - **IMPLEMENTED:** runtime_apt_packages in run.sh (Audit R5)
