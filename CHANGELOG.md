@@ -3,23 +3,23 @@
 ## [0.7.9.1] - 2026-08-13
 
 ### Added
-- **Ingress-UI Refactor**: Tab-basierte Landing Page mit WebUI, Terminal, TUI und Docs.
-- **Statische Ingress-Assets**: `tui/index.html`, `docs/index.html`, `loading.html`, `icon.png` und `logo.png` werden jetzt ins Docker-Image kopiert und zur Laufzeit nach `/etc/nginx/html/` synchronisiert.
+- **Ingress UI refactor**: tab-based landing page with WebUI, Terminal, TUI and Docs.
+- **Static ingress assets**: `tui/index.html`, `docs/index.html`, `loading.html`, `icon.png` and `logo.png` are now copied into the Docker image and synced to `/etc/nginx/html/` at runtime.
 
 ### Fixed
-- **ControlUI im Ingress iframe**: Der WebUI-Tab wird jetzt immer innerhalb des HA-Ingress-iframes angezeigt, auch wenn der Browser-Kontext nicht als `secure context` gilt. Externer Link erscheint nur noch außerhalb des Ingress.
-- **TUI-Verzeichnis**: `run.sh` erzeugt jetzt `/etc/nginx/html/tui` vor dem Kopieren der TUI-Datei.
-- **HEALTHCHECK-Port**: Auf `http://localhost:49200/api/health` korrigiert, um mit `ingress_port: 49200` in `config.yaml` übereinzustimmen.
-- **Repository-Metadaten**: `repository.yaml` auf `ingress_port: 49200` und Version `0.7.9.1` aktualisiert.
+- **ControlUI in the ingress iframe**: the WebUI tab is now always displayed inside the HA ingress iframe, even when the browser context is not a `secure context`. The external link now appears only outside the ingress.
+- **TUI directory**: `run.sh` now creates `/etc/nginx/html/tui` before copying the TUI file.
+- **HEALTHCHECK port**: corrected to `http://localhost:49200/api/health` to match `ingress_port: 49200` in `config.yaml`.
+- **Repository metadata**: `repository.yaml` updated to `ingress_port: 49200` and version `0.7.9.1`.
 
 ## [0.7.8.0] - 2026-07-14
 
 ### Upgraded
 - **OpenClaw 2026.6.11 → 2026.7.1** — siehe https://github.com/openclaw/openclaw/releases/tag/v2026.7.1
-- Node-llama-cpp bleibt bei 3.19.0 (keine Änderung)
+- node-llama-cpp stays at 3.19.0 (no change)
 
 ### Notes
-- Add-on-Version synchronisiert: `0.7.8.0` (config.yaml, repository.yaml, Dockerfile)
+- Add-on version synced: `0.7.8.0` (config.yaml, repository.yaml, Dockerfile)
 
 ## [0.7.7.7] - 2026-07-08
 
