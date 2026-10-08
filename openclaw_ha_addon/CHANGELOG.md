@@ -87,7 +87,7 @@
 
 ### Changed
 - **Landing Page Titlebar Redesign**: Home Assistant Material Design 3 Stil mit korrigierten Farben. Alte Titlebar-Struktur mit Tabs oben beibehalten.
-- **UX**: HTTPS/Secure-Context-Warnbanner im Ingress entfernt.
+- **UX**: removed the HTTPS/secure-context warning banner inside the ingress.
 
 ### Fixed
 - **Tab visibility**: tabs are shown/hidden correctly based on app configuration and iframe context.
