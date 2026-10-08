@@ -5,17 +5,17 @@
 - **FIX:** allowedOrigins um mDNS-Hostname erweitert
 - **FIX:** mDNS advertised korrekten GATEWAY_PORT (nicht NGINX_PORT/Ingress)
 - **FIX:** removed the `hostname` and `/etc/hostname` override (it broke HA supervisor healthchecks)
-- **FIX:** `cleanup_stale_config_keys()` entfernt nur noch uppercase `mDNS`, nicht lowercase `mdns`
+- **FIX:** `cleanup_stale_config_keys()` now removes only uppercase `mDNS`, not lowercase `mdns`
 - **UPGRADE:** OpenClaw 2026.4.14 → 2026.4.15
 
 ## [0.7.5] - 2026-04-17
 - **CRITICAL FIX:** jq-Falsy-Falle – Alle `// true`/`// false` durch Null-Checks ersetzt
-- **FIX:** `CONTROLUI_DISABLE_DEVICE_AUTH=true` im `lan_https`-Case entfernt (trustedProxies reicht)
+- **FIX:** removed `CONTROLUI_DISABLE_DEVICE_AUTH=true` from the `lan_https` case (trustedProxies suffices)
 - **FIX:** `controlui_disable_device_auth` Default auf `false` (war `true`)
-- **FIX:** Dockerfile aufgeräumt (doppelte ENV, leerer apt-run, doppelter npm cache clean)
+- **FIX:** Dockerfile cleaned up (duplicate ENV, empty apt run, duplicate npm cache clean)
 - **FIX:** `ensure-plugins` in oc_config_helper.py sichert `plugins.entries.ollama`
-- **FIX:** `build.yaml` entfernt (HA-supervisor-obsolet)
-- Repo aufgeräumt: Backup-Dateien, __pycache__ entfernt, .gitignore erweitert
+- **FIX:** `build.yaml` removed (obsolete for the HA supervisor)
+- Repository cleaned up: removed backup files and __pycache__, extended .gitignore
 
 ## [0.6.1.13] - 2026-04-13
 - Version bump to trigger Home Assistant update (HA ignores versions <= 0.6.1.12)
