@@ -83,8 +83,8 @@ BLOCKED_HOSTNAMES=$(jq -r '.blocked_hostnames // empty' "$OPTIONS_FILE")
 
 # --- v0.7.13 safety-net options (jq has-guard per V7 pattern: explicit false wins) ---
 ABORT_ON_UPGRADE_BACKUP_FAILURE=$(jq -r 'if has("abort_on_upgrade_backup_failure") then (.abort_on_upgrade_backup_failure|tostring) else "true" end' "$OPTIONS_FILE")
-UPGRADE_BACKUP_KEEP=$(jq -r 'if has("upgrade_backup_keep") then (.upgrade_backup_keep|number) else 3 end' "$OPTIONS_FILE")
-GW_DOCTOR_REPAIR_MAX=$(jq -r 'if has("gateway_doctor_repair_max") then (.gateway_doctor_repair_max|number) else 3 end' "$OPTIONS_FILE")
+UPGRADE_BACKUP_KEEP=$(jq -r 'if has("upgrade_backup_keep") and (.upgrade_backup_keep != null) then (.upgrade_backup_keep|tonumber) else 3 end' "$OPTIONS_FILE")
+GW_DOCTOR_REPAIR_MAX=$(jq -r 'if has("gateway_doctor_repair_max") and (.gateway_doctor_repair_max != null) then (.gateway_doctor_repair_max|tonumber) else 3 end' "$OPTIONS_FILE")
 
 # ACPX harnesses (Claude Code, Codex, OpenCode)
 ACPX_ENABLED=$(jq -r 'if has("acpx_enabled") then (.acpx_enabled|tostring) else "true" end' "$OPTIONS_FILE")

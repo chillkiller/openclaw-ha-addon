@@ -1,3 +1,8 @@
+## [0.7.13.1] - 2026-10-09
+
+### Fixed
+- **Boot exit-3 loop on real `options.json` (0.7.13 day-zero, 2026-10-09):** the safety-net option reads used the invented jq builtin `|number`. On any `options.json` that actually contained `upgrade_backup_keep` / `gateway_doctor_repair_max` (both present by default), jq refused to compile the program ("number/0 is not defined", exit 3) and `set -euo pipefail` ended the start before nginx/gateway could run - watchdog restart loop with ExitCode=3 (~10 cycles 05:26-05:31). Fix: real builtin `tonumber` + explicit `!= null` guard per the V7 has-guard pattern (missing key -> default 3, null -> default 3, string `"5"` -> 5, explicit `0` -> 0). Empirical proof in the 0.7.13 image (jq 1.6): old program -> exit 3 on the real options.json (negative control), new program 6/6 probes green, `bash -n` OK, repo-wide `|number` sweep negative.
+
 ## [0.7.13] - 2026-10-09
 
 ### Changed
