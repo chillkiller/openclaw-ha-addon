@@ -78,7 +78,9 @@ echo "  5) All of the above"
 echo "  6) Show Docker prune commands (must run from HA host SSH)"
 echo "  q) Quit"
 echo ""
-read -r -p "Choose [1-6/q]: " choice
+# EOF (non-interactive use) must not kill the script under `set -e`;
+# the EOF fallback below then selects quit.
+read -r -p "Choose [1-6/q]: " choice || choice=q
 
 cleanup_npm() {
   echo -e "${CYAN}Cleaning npm cache...${RESET}"

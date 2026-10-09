@@ -17,7 +17,7 @@ fi
 # Read app options (only app-specific knobs; OpenClaw is configured via onboarding)
 # ------------------------------------------------------------------------------
 
-TZNAME=$(jq -r '.timezone // "Europe/Sofia"' "$OPTIONS_FILE")
+TZNAME=$(jq -r '.timezone // "Europe/Berlin"' "$OPTIONS_FILE")
 GW_PUBLIC_URL=$(jq -r '.gateway_public_url // empty' "$OPTIONS_FILE")
 HA_TOKEN=$(jq -r '.homeassistant_token // empty' "$OPTIONS_FILE")
 ADDON_HTTP_PROXY=$(jq -r '.http_proxy // empty' "$OPTIONS_FILE")
@@ -315,7 +315,7 @@ PERSISTENT_NODE_GLOBAL="/config/.node_global"
 mkdir -p "$PERSISTENT_NODE_GLOBAL"
 npm config set prefix "$PERSISTENT_NODE_GLOBAL" 2>/dev/null || true
 export PATH="${PERSISTENT_NODE_GLOBAL}/bin:${PATH}"
-export NODE_PATH="${PERSISTENT_NODE_GLOBAL}/lib/node_modules:${NODE_PATH:-}"
+export NODE_PATH="${PERSISTENT_NODE_GLOBAL}/lib/node_modules${NODE_PATH:+:${NODE_PATH}}"
 
 # Also configure pnpm global dir to persistent storage
 export PNPM_HOME="${PERSISTENT_NODE_GLOBAL}/pnpm"
@@ -339,6 +339,13 @@ is_reserved_gateway_env_var() {
       ;;
     # App internal control vars.
     OPENCLAW_*)
+      return 0
+      ;;
+    # SECURITY: app-validated runtime variables consumed by run.sh (nginx/
+    # node-relay config rendering, port guards, cert SANs). Allowing them via
+    # gateway_env_vars would invalidate the explicit validation run.sh and
+    # render_nginx.py perform (nginx/node config injection vector).
+    GATEWAY_PORT|GATEWAY_INTERNAL_PORT|GATEWAY_MODE|GATEWAY_BIND|GATEWAY_AUTH_MODE|GATEWAY_REMOTE_URL|GATEWAY_TLS_ENABLED|GATEWAY_TLS_AUTO|GATEWAY_LOG_LEVEL|GATEWAY_TRUSTED_PROXIES|NETWORK_MODE|ACCESS_MODE|INGRESS_PORT|TERMINAL_PORT|HTTPS_PROXY_PORT|ENABLE_HTTPS_PROXY|CERTS_DIR|LAN_IP|GW_PUBLIC_URL|GW_TOKEN|NGINX_LOG_LEVEL|SHOW_WEBUI|SHOW_TERMINAL|SHOW_DOCS|INVISIBLE_)
       return 0
       ;;
     *)
@@ -566,8 +573,13 @@ cleanup_session_locks # 0.7.12.4: always on — stale locks must never survive r
 # ------------------------------------------------------------------------------
 
 if [ -n "$HA_TOKEN" ]; then
-  umask 077
-  printf '%s' "$HA_TOKEN" > /config/secrets/homeassistant.token
+  # Audit: the umask used to be set globally here, leaking 077 into the rest
+  # of boot (backup archives, cert files, helper writes) conditionally on
+  # whether an HA token was set. Keep the tight mode local to the token file.
+  (
+    umask 077
+    printf '%s' "$HA_TOKEN" > /config/secrets/homeassistant.token
+  )
 fi
 
 
@@ -656,6 +668,7 @@ if [ ! -f "$OPENCLAW_CONFIG_PATH" ]; then
   echo "INFO: OpenClaw config missing; bootstrapping minimal config at $OPENCLAW_CONFIG_PATH"
   python3 - <<'PY'
 import json
+import os
 import secrets
 from pathlib import Path
 
@@ -679,7 +692,11 @@ cfg = {
   }
 }
 
-cfg_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding='utf-8')
+# Atomic write: a crash mid-write must never leave a truncated openclaw.json
+# behind (the corrupt-file path used to lead to a config-wipe bug).
+tmp_path = cfg_path.with_suffix('.json.tmp')
+tmp_path.write_text(json.dumps(cfg, indent=2) + "\n", encoding='utf-8')
+os.replace(tmp_path, cfg_path)
 print("INFO: Wrote minimal OpenClaw config (gateway.mode=local, auth.token generated)")
 PY
 fi
@@ -698,7 +715,11 @@ fi
 
 if [ -f "$OPENCLAW_CONFIG_PATH" ]; then
   if [ -f "$HELPER_PATH" ]; then
-    if ! python3 "$HELPER_PATH" apply-network-settings \
+    # Audit H2: `rc=$?` after `if !` captures the exit status of the negation
+    # (always 0), so real helper failures logged "exit code 0" and exited 0 —
+    # a silent crash-loop before nginx/ttyd start. Capture the helper's own rc.
+    rc=0
+    python3 "$HELPER_PATH" apply-network-settings \
       "$NETWORK_MODE" \
       "$GATEWAY_MODE" \
       "$GATEWAY_REMOTE_URL" \
@@ -710,8 +731,8 @@ if [ -f "$OPENCLAW_CONFIG_PATH" ]; then
       "$GATEWAY_TRUSTED_PROXIES" \
       "$GATEWAY_TLS_ENABLED" \
       "$GATEWAY_TLS_AUTO" \
-      "$TAILSCALE_MODE"; then
-      rc=$?
+      "$TAILSCALE_MODE" || rc=$?
+    if [ "$rc" -ne 0 ]; then
       echo "ERROR: Failed to apply network settings via oc_config_helper.py (exit code ${rc})."
       echo "ERROR: Gateway configuration may be incorrect; aborting startup."
       exit "${rc}"
@@ -789,6 +810,12 @@ for entry in entries:
         entry = "https://" + entry
     host = urlparse(entry).hostname or ""
     if host and host not in seen:
+        # Audit M2: only allow openssl-safe SAN hostnames. An unsupported host
+        # (IDN, IPv6, special chars) used to abort the whole boot at the
+        # unguarded `openssl x509 -extfile` step below.
+        if not re.fullmatch(r"[A-Za-z0-9.-]{1,63}", host):
+            print(f"WARNING: skipped unsupported SAN host: {host}", file=sys.stderr)
+            continue
         seen.add(host)
         if re.match(r"^\d{1,3}(\.\d{1,3}){3}$", host):
             sans.append(f"IP:{host}")
@@ -814,10 +841,26 @@ basicConstraints=critical,CA:FALSE
 keyUsage=critical,digitalSignature,keyEncipherment
 extendedKeyUsage=serverAuth
 SANEOF
-    openssl x509 -req -in "$CERT_DIR/gateway.csr" \
+    # Audit M2: a SAN-triggered openssl failure used to kill boot via set -e.
+    # Retry once with the base SANs only; fail loud but keep boot alive.
+    if ! openssl x509 -req -in "$CERT_DIR/gateway.csr" \
       -CA "$CERT_DIR/ca.crt" -CAkey "$CERT_DIR/ca.key" -CAcreateserial \
       -out "$CERT_DIR/gateway.crt" -days 3650 \
-      -extfile "$CERT_DIR/_san.ext" 2>/dev/null
+      -extfile "$CERT_DIR/_san.ext" 2>/dev/null; then
+      echo "WARN: Server cert with extra SANs failed; retrying with base SANs only"
+      cat > "$CERT_DIR/_san.ext" <<SANEOF
+subjectAltName=IP:${LAN_IP:-127.0.0.1},IP:127.0.0.1,DNS:localhost,DNS:homeassistant,DNS:homeassistant.local
+basicConstraints=critical,CA:FALSE
+keyUsage=critical,digitalSignature,keyEncipherment
+extendedKeyUsage=serverAuth
+SANEOF
+      if ! openssl x509 -req -in "$CERT_DIR/gateway.csr" \
+        -CA "$CERT_DIR/ca.crt" -CAkey "$CERT_DIR/ca.key" -CAcreateserial \
+        -out "$CERT_DIR/gateway.crt" -days 3650 \
+        -extfile "$CERT_DIR/_san.ext" 2>/dev/null; then
+        echo "ERROR: TLS server certificate generation failed entirely; HTTPS listener cannot start"
+      fi
+    fi
     rm -f "$CERT_DIR/gateway.csr" "$CERT_DIR/_san.ext" "$CERT_DIR/ca.srl"
     chmod 600 "$CERT_DIR/gateway.key"
     printf '%s' "$LAN_IP" > "$CERT_DIR/.cert_ip"
@@ -969,7 +1012,9 @@ fi
 # Configure ControlUI allowed origins
 # - In lan_https/tailnet_*: include public URL origins when known
 # - In all modes: also include origin from gateway_public_url when present
-# - Helper merges with existing origins + user extras and deduplicates
+# - Helper REPLACES the app-managed origin list each boot (deterministic:
+#   no stale origins from old LAN IPs); user extras belong in the
+#   gateway_additional_allowed_origins option, which is preserved.
 # ------------------------------------------------------------------
 if [ -f "$HELPER_PATH" ] && [ -f "$OPENCLAW_CONFIG_PATH" ]; then
   ALLOWED_ORIGINS=""
@@ -1134,8 +1179,10 @@ fi
 if [ "$ACPX_ENABLED" = "true" ] || [ "$ACPX_ENABLED" = "1" ]; then
   if [ -f "$ACPX_HELPER_PATH" ]; then
     echo "INFO: Initializing ACPX harnesses..."
-    python3 "$ACPX_HELPER_PATH" || \
-      echo "WARN: ACPX harness initialization failed — Claude/Codex/OpenCode harnesses may not be available"
+    # Pass the validated internal gateway port so the config bootstrap (first
+    # boot) uses the correct port per network mode (18790 in lan_https).
+    GATEWAY_INTERNAL_PORT="$GATEWAY_INTERNAL_PORT" python3 "$ACPX_HELPER_PATH" || \
+      echo "ERROR: ACPX harness initialization failed (exit $?) — Claude/Codex/OpenCode harnesses unavailable this boot"
   else
     echo "WARN: ACPX helper not found; skipping ACPX harness initialization"
   fi
@@ -1175,24 +1222,35 @@ start_openclaw_runtime() {
     NODE_HOST=""
     NODE_PORT=""
     NODE_TLS_FLAG=""
-    if ! eval "$(python3 - "$REMOTE_URL" <<'PY'
+    # SECURITY (audit K1): never eval() generated shell code — the previous
+    # design executed shell metacharacters from this user-controlled URL as
+    # root ($(...) / backticks survived urlparse). Python now returns plain
+    # data, one value per line, consumed only as quoted arguments below. The
+    # hostname is additionally restricted to shell-safe characters.
+    if ! REMOTE_PARSED="$(python3 - "$REMOTE_URL" <<'PY'
+import re
 import sys
 from urllib.parse import urlparse
 url = (sys.argv[1] or '').strip()
 p = urlparse(url)
 if p.scheme not in ('ws', 'wss') or not p.hostname:
-    print('echo "ERROR: Invalid gateway.remote.url (expected ws:// or wss://): %s"' % url.replace('"', '\\"'))
-    print('exit 1')
-    raise SystemExit(0)
+    print('ERROR: Invalid gateway.remote.url (expected ws:// or wss://)', file=sys.stderr)
+    sys.exit(2)
+if not re.fullmatch(r'[A-Za-z0-9._:-]+', p.hostname):
+    print(f'ERROR: gateway.remote.url hostname contains unsupported characters: {url}', file=sys.stderr)
+    sys.exit(2)
 port = p.port or (443 if p.scheme == 'wss' else 80)
-print(f'NODE_HOST={p.hostname}')
-print(f'NODE_PORT={port}')
-print(f'NODE_TLS_FLAG={"--tls" if p.scheme == "wss" else ""}')
+print(p.hostname)
+print(port)
+print('--tls' if p.scheme == 'wss' else '')
 PY
 )"; then
       echo "ERROR: Failed to parse gateway.remote.url: $REMOTE_URL"
       return 1
     fi
+    NODE_HOST="$(printf '%s\n' "$REMOTE_PARSED" | sed -n '1p')"
+    NODE_PORT="$(printf '%s\n' "$REMOTE_PARSED" | sed -n '2p')"
+    NODE_TLS_FLAG="$(printf '%s\n' "$REMOTE_PARSED" | sed -n '3p')"
 
     echo "INFO: gateway_mode=remote detected; starting node host to $NODE_HOST:$NODE_PORT ${NODE_TLS_FLAG}"
     # shellcheck disable=SC2086
@@ -1412,7 +1470,10 @@ else
 fi
 
 # Start ingress reverse proxy (nginx). This provides the app UI inside HA.
-# Token is injected server-side; never put it in the browser URL.
+# Token handling (audit comment fix): the token is injected server-side into
+# the proxy Authorization header. The landing page additionally embeds it as a
+# `#token=` fragment BY DESIGN (ControlUI in the HA sidebar via Ingress/IFrame
+# needs it client-side); a URL fragment is never sent to any server.
 NGINX_PID_FILE="/var/run/openclaw-nginx.pid"
 
 # Clean up stale nginx process from previous run (e.g., after crash/unclean restart)
@@ -1431,8 +1492,10 @@ if command -v pkill >/dev/null 2>&1; then
   pkill -f "nginx.*-c /etc/nginx/nginx.conf" 2>/dev/null || true
   sleep 1
 fi
-# Verify ingress port is actually free before proceeding
-if command -v ss >/dev/null 2>&1 && ss -tlnp 2>/dev/null | grep -q ':${INGRESS_PORT} '; then
+# Verify ingress port is actually free before proceeding (audit M1: the
+# pattern used to be single-quoted, so ${INGRESS_PORT} never expanded and the
+# check could never fire)
+if command -v ss >/dev/null 2>&1 && ss -tlnp 2>/dev/null | grep -q ":${INGRESS_PORT} "; then
   echo "WARN: Port ${INGRESS_PORT} still in use after cleanup; nginx may fail to start"
 fi
 
@@ -1474,6 +1537,7 @@ print(json.load(open(p)).get('gateway',{}).get('auth',{}).get('token',''), end='
   GW_PUBLIC_URL="$GW_PUBLIC_URL" GW_TOKEN="$token" TERMINAL_PORT="$TERMINAL_PORT" \
     ENABLE_HTTPS_PROXY="$ENABLE_HTTPS_PROXY" HTTPS_PROXY_PORT="$HTTPS_PROXY_PORT" \
     GATEWAY_INTERNAL_PORT="$GATEWAY_INTERNAL_PORT" ACCESS_MODE="$ACCESS_MODE" \
+    NETWORK_MODE="$NETWORK_MODE" \
     DISK_TOTAL="$disk_total" DISK_USED="$disk_used" DISK_AVAIL="$disk_avail" DISK_PCT="$disk_pct" \
     NGINX_LOG_LEVEL="$NGINX_LOG_LEVEL" \
     python3 /render_nginx.py
@@ -1507,6 +1571,11 @@ fi
 # a background re-render so the "Open Gateway Web UI" button gets the real token
 # once openclaw onboard writes openclaw.json (typically within 30-90 s).
 (
+  # This subshell may poll for up to 2 minutes; it must not hold the
+  # startup lock (fd 9) — a gateway self-restart during onboarding would
+  # otherwise be blocked by flock, and a /proc-scan PID tracker could even
+  # mis-track this subshell as the daemon.
+  exec 9>&- || true
   CONFIG_PATH="${OPENCLAW_CONFIG_PATH:-/config/.openclaw/openclaw.json}"
   for _i in $(seq 1 24); do
     sleep 5
@@ -1566,7 +1635,15 @@ start_gw_relay
 #        `kill -0` fails, we check again for a live daemon to re-track.
 #     3. Before any supervisor-initiated restart, do a final port-occupancy
 #        guard to prevent launching a duplicate.
-GW_IS_CHILD=true   # true only when GW_PID was started by us (can use `wait`)
+# Audit N4: `wait` is only valid on a PID we actually spawned. After a failed
+# initial start GW_PID is empty and the documented GW_IS_CHILD=false path must
+# carry into the loop; unconditionally true used to make the loop block on
+# `wait ""` and log a bogus "runtime exited with code 127".
+if [ -n "${GW_PID:-}" ]; then
+  GW_IS_CHILD=true   # our child (can block on `wait`)
+else
+  GW_IS_CHILD=false
+fi
 
 # --- v0.7.13 (B8/B4): restart-loop hardening state ---------------------------
 # GW_BOOT_START: wallclock at the most recent gateway (re)start — used to judge

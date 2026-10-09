@@ -10,6 +10,7 @@ Called by run.sh with the following env vars:
 """
 
 import os
+import re
 import subprocess
 from pathlib import Path
 import html
@@ -31,6 +32,25 @@ def main():
     network_mode = os.environ.get('NETWORK_MODE', 'ingress_only')
     openclaw_version = os.environ.get('OPENCLAW_VERSION', 'unknown')
 
+    # Defense-in-depth (audit 2026-10-09): every value interpolated into
+    # nginx.conf below reaches an nginx directive or `listen`/proxy_pass port.
+    # run.sh validates these, but the render step must not rely on its caller:
+    # refuse to render instead of injecting a non-numeric or malformed value.
+    for name, value, allow_empty in (
+        ('INGRESS_PORT', ingress_port, False),
+        ('TERMINAL_PORT', terminal_port, False),
+        ('HTTPS_PROXY_PORT', https_port, True),
+        ('GATEWAY_INTERNAL_PORT', internal_gw_port, True),
+    ):
+        if value == '' and allow_empty:
+            continue
+        if not value.isdigit() or not 1 <= len(value) <= 5:
+            print(f"ERROR: {name} failed validation (expected numeric port, got {value!r}) — refusing to render nginx config", flush=True)
+            raise SystemExit(1)
+    if not re.fullmatch(r'[A-Za-z0-9._-]{0,64}', certs_dir):
+        print(f"ERROR: CERTS_DIR failed validation ({certs_dir!r}) — refusing to render nginx config", flush=True)
+        raise SystemExit(1)
+
     # Tab visibility flags (render to JS booleans)
     show_webui = os.environ.get('SHOW_WEBUI', 'true').lower() in ('1', 'true', 'yes')
     show_terminal = os.environ.get('SHOW_TERMINAL', 'true').lower() in ('1', 'true', 'yes')
@@ -49,6 +69,12 @@ def main():
 
     # Token comes from environment (best-effort CLI query in run.sh)
     token = os.environ.get('GW_TOKEN', '')
+    # Audit: a token containing nginx metacharacters (quotes, semicolons,
+    # whitespace, newlines) used to break/inject `proxy_set_header` directives.
+    # Omit auth rendering loudly instead of interpolating an unvalidated value.
+    if token and not re.fullmatch(r'[A-Za-z0-9._~+/=-]+', token):
+        print('ERROR: gateway token contains unsupported characters — Authorization header and landing token omitted (fix openclaw.json gateway.auth.token)', flush=True)
+        token = ''
 
     gw_path = '' if public_url.endswith('/') else '/'
 

@@ -9,7 +9,7 @@ FROM ghcr.io/home-assistant/${BUILD_ARCH}-base-debian:bookworm
 
 # Labels required when not using the official GitHub builder action
 LABEL \
-  io.hass.version="0.7.13" \
+  io.hass.version="0.7.13.3" \
   io.hass.type="app" \
   io.hass.arch="aarch64|amd64"
 
@@ -388,10 +388,20 @@ ENV PYTHONPATH=/config/.local/lib/python3.11/site-packages
 # /api/health proves nginx is up; /startupz proves the OpenClaw gateway is ready for traffic.
 # The gateway port is read at check time from the persisted config so it works across
 # ingress_only / lan_http / lan_https internal port differences.
+# TLS (audit 2026-10-09): in tailnet_serve/tailnet_funnel modes the gateway
+# serves HTTPS on GW_PORT, so the plain-HTTP probe failed on every check and
+# put a healthy container into the Supervisor restart loop. Read
+# gateway.tls.enabled and probe accordingly.
 HEALTHCHECK --interval=30s --timeout=10s --start-period=420s --retries=4 \
-  CMD sh -c 'GW_PORT=$(jq -r ".gateway.port // 18789" /config/.openclaw/openclaw.json 2>/dev/null || echo 18789); \
-    wget --no-verbose --tries=1 --spider http://localhost:49200/api/health \
-    && wget --no-verbose --tries=1 --spider http://127.0.0.1:${GW_PORT}/startupz || exit 1'
+  CMD sh -c 'CONF=/config/.openclaw/openclaw.json; \
+    GW_PORT=$(jq -r ".gateway.port // 18789" "$CONF" 2>/dev/null || echo 18789); \
+    TLS=$(jq -r ".gateway.tls.enabled // false" "$CONF" 2>/dev/null || echo false); \
+    wget --no-verbose --tries=1 --spider http://localhost:49200/api/health || exit 1; \
+    if [ "$TLS" = "true" ]; then \
+      wget --no-verbose --tries=1 --spider --no-check-certificate https://127.0.0.1:${GW_PORT}/startupz; \
+    else \
+      wget --no-verbose --tries=1 --spider http://127.0.0.1:${GW_PORT}/startupz; \
+    fi'
 
 ENTRYPOINT [ "/usr/bin/tini", "-g", "--" ]
 CMD [ "/run.sh" ]

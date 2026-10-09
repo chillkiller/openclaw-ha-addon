@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import json
 import os
+import secrets
 import shutil
 import subprocess
 import sys
@@ -76,10 +77,15 @@ def read_json(path: Path) -> dict[str, Any]:
 
 
 def write_json(path: Path, data: dict[str, Any]) -> None:
+    """Atomic write (temp + rename): a crash mid-write must never leave a
+    truncated JSON behind — for openclaw.json that used to lead to a
+    corrupt-config stub-overwrite cycle on the next start."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
+    tmp_path = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp_path, "w", encoding="utf-8") as f:
         json.dump(data, f, indent=2, ensure_ascii=False)
         f.write("\n")
+    os.replace(tmp_path, path)
 
 
 def deploy_harness_configs() -> None:
@@ -242,12 +248,25 @@ def patch_openclaw_config() -> None:
 
     if not config_path.exists():
         log(f"INFO: {config_path} does not exist yet; bootstrapping minimal config")
+        # SECURITY (audit 2026-10-09): never bootstrap a well-known gateway
+        # token. The repo-visible PLACEHOLDER_ONBOARDING_TOKEN used to be
+        # picked up by the post-onboard render loop and injected as bearer
+        # auth in nginx — authenticating every ingress client with a string
+        # committed to the public repository. A per-install random token keeps
+        # the same "auth enabled from first boot" behavior without a public
+        # secret; onboarding overwrites this token with its own anyway.
+        # Port: use the add-on's validated internal gateway port (differs per
+        # network mode, e.g. 18790 in lan_https) instead of a hardcoded value.
+        try:
+            gateway_port = int(os.environ.get("GATEWAY_INTERNAL_PORT", "") or 18789)
+        except ValueError:
+            gateway_port = 18789
         cfg = {
             "gateway": {
                 "mode": "local",
-                "port": 18789,
+                "port": gateway_port,
                 "bind": "loopback",
-                "auth": {"mode": "token", "token": "PLACEHOLDER_ONBOARDING_TOKEN"},
+                "auth": {"mode": "token", "token": secrets.token_hex(24)},
             },
             "agents": {"defaults": {"workspace": "/config/clawd"}},
         }

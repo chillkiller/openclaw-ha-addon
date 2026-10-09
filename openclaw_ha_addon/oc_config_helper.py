@@ -23,18 +23,36 @@ CONFIG_PATH = Path(
 
 
 def read_config():
-    """Read and parse openclaw.json."""
+    """Read and parse openclaw.json.
+
+    SECURITY/DATA-LOSS invariant (audit 2026-10-09): a corrupt (unparseable)
+    config is quarantined as openclaw.json.corrupt and this helper exits 1.
+    Callers historically fell back to `read_config() or {}` and wrote a
+    minimal stub back over the corrupt file — silently destroying provider
+    keys, agents and plugin entries. A quarantine must never be overwritten;
+    the operator restores from the .corrupt copy (or a pre-upgrade backup).
+    """
     if not CONFIG_PATH.exists():
         return None
     try:
         return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, IOError) as e:
+    except json.JSONDecodeError as e:
+        quarantine = CONFIG_PATH.with_name(CONFIG_PATH.name + ".corrupt")
+        print(f"ERROR: openclaw.json is not valid JSON ({e}); refusing to overwrite a corrupt config", file=sys.stderr)
+        try:
+            CONFIG_PATH.rename(quarantine)
+            print(f"INFO: corrupt config quarantined as {quarantine} — restore it manually after repair", file=sys.stderr)
+        except OSError as qe:
+            print(f"ERROR: quarantine failed: {qe} — the corrupt file was left in place", file=sys.stderr)
+        sys.exit(1)
+    except IOError as e:
         print(f"ERROR: Failed to read config: {e}", file=sys.stderr)
         return None
 
 
 def write_config(cfg):
     """Atomic write to prevent corruption on crash."""
+    temp_path = None
     try:
         CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
         temp_path = CONFIG_PATH.with_suffix(".json.tmp")
@@ -43,7 +61,7 @@ def write_config(cfg):
         return True
     except IOError as e:
         print(f"ERROR: Failed to write config: {e}", file=sys.stderr)
-        if temp_path.exists():
+        if temp_path is not None:
             temp_path.unlink(missing_ok=True)
         return False
 
@@ -255,10 +273,23 @@ def set_control_ui_origins(
     if not isinstance(current_origins, list):
         current_origins = []
 
+    # Deterministic replace (audit 2026-10-09): the previous union-merge kept
+    # stale entries forever (e.g. origins from old LAN IPs after a DHCP change
+    # grew the list unboundedly and stayed CORS-allowed). The app-managed list
+    # is rebuilt each boot from config-derived defaults + the explicit
+    # user-extras option (`gateway_additional_allowed_origins`). Dropped
+    # entries are logged so a hand-added origin can be re-added via the option.
     merged = []
-    for origin in [*default_origins, *current_origins, *additional_origins]:
+    for origin in [*default_origins, *additional_origins]:
         if isinstance(origin, str) and origin and origin not in merged:
             merged.append(origin)
+
+    dropped_origins = [o for o in current_origins if isinstance(o, str) and o and o not in merged]
+    if dropped_origins:
+        print(
+            "INFO: pruned stale ControlUI allowedOrigins (re-add permanently via "
+            f"gateway_additional_allowed_origins if still needed): {dropped_origins}"
+        )
 
     changes = []
     if current_origins != merged:
