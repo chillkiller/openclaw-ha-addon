@@ -1,4 +1,4 @@
-## [0.7.14] - 2026-10-09
+## [0.7.13.2] - 2026-10-09
 
 ### Changed
 - **ACP harness modernization (B9):** removed all three custom ACP wrappers (`claude/codex/opencode-acp-wrapper.mjs`) plus `oc_provider_env.mjs` — the acpx plugin generates passthrough wrappers at gateway start and custom wrappers cannot survive that regeneration (they were repeatedly clobbered at 18:04/earlier). Provider routing now flows through ambient environment exports and config templates:
