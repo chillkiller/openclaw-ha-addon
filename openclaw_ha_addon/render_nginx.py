@@ -36,15 +36,20 @@ def main():
     # nginx.conf below reaches an nginx directive or `listen`/proxy_pass port.
     # run.sh validates these, but the render step must not rely on its caller:
     # refuse to render instead of injecting a non-numeric or malformed value.
+    # ASCII-only digits (audit round 2): str.isdigit() also accepts Unicode
+    # digit characters (e.g. '²'), which nginx rejects.
     for name, value, allow_empty in (
         ('INGRESS_PORT', ingress_port, False),
         ('TERMINAL_PORT', terminal_port, False),
         ('HTTPS_PROXY_PORT', https_port, True),
-        ('GATEWAY_INTERNAL_PORT', internal_gw_port, True),
+        # GATEWAY_INTERNAL_PORT is interpolated into the base proxy_pass
+        # directives 16x — an empty value is never valid here.
+        ('GATEWAY_INTERNAL_PORT', internal_gw_port, False),
     ):
         if value == '' and allow_empty:
             continue
-        if not value.isdigit() or not 1 <= len(value) <= 5:
+        # 1-65535, ASCII digits only, 1-5 characters.
+        if not re.fullmatch(r'[0-9]{1,5}', value) or not 1 <= int(value) <= 65535:
             print(f"ERROR: {name} failed validation (expected numeric port, got {value!r}) — refusing to render nginx config", flush=True)
             raise SystemExit(1)
     # Audit-fix: certs_dir is a path (contains '/'), not a shell identifier —

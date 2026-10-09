@@ -345,7 +345,7 @@ is_reserved_gateway_env_var() {
     # (nginx/node-relay config rendering, port guards, cert SANs). Allowing
     # them via gateway_env_vars would invalidate the explicit validation
     # run.sh and render_nginx.py perform (nginx/node config injection vector).
-    GATEWAY_PORT|GATEWAY_INTERNAL_PORT|GATEWAY_MODE|GATEWAY_BIND|GATEWAY_AUTH_MODE|GATEWAY_REMOTE_URL|GATEWAY_TLS_ENABLED|GATEWAY_TLS_AUTO|GATEWAY_LOG_LEVEL|GATEWAY_TRUSTED_PROXIES|NETWORK_MODE|ACCESS_MODE|INGRESS_PORT|TERMINAL_PORT|HTTPS_PROXY_PORT|ENABLE_HTTPS_PROXY|CERTS_DIR|LAN_IP|GW_PUBLIC_URL|GW_TOKEN|NGINX_LOG_LEVEL|SHOW_WEBUI|SHOW_TERMINAL|SHOW_DOCS)
+    GATEWAY_PORT|GATEWAY_INTERNAL_PORT|GATEWAY_MODE|GATEWAY_BIND|GATEWAY_AUTH_MODE|GATEWAY_REMOTE_URL|GATEWAY_TLS_ENABLED|GATEWAY_TLS_AUTO|GATEWAY_LOG_LEVEL|GATEWAY_TRUSTED_PROXIES|NETWORK_MODE|ACCESS_MODE|INGRESS_PORT|TERMINAL_PORT|HTTPS_PROXY_PORT|ENABLE_HTTPS_PROXY|CERTS_DIR|LAN_IP|GW_PUBLIC_URL|GW_TOKEN|NGINX_LOG_LEVEL|SHOW_WEBUI|SHOW_TERMINAL|SHOW_DOCS|TAILSCALE_MODE|GATEWAY_ADDITIONAL_ALLOWED_ORIGINS|MDNS_MODE|CONTROLUI_DISABLE_DEVICE_AUTH|ACPX_ENABLED)
       return 0
       ;;
     *)
@@ -666,7 +666,12 @@ fi
 OPENCLAW_CONFIG_PATH="/config/.openclaw/openclaw.json"
 if [ ! -f "$OPENCLAW_CONFIG_PATH" ] && compgen -G "${OPENCLAW_CONFIG_PATH}.corrupt*" >/dev/null 2>&1; then
   echo "ERROR: a corrupt openclaw.json was quarantined earlier (${OPENCLAW_CONFIG_PATH}.corrupt*)."
-  echo "ERROR: Restore/repair it manually (e.g. from the .corrupt copy or an upgrade-backup archive) and restart."
+  echo "ERROR: Restore/repair it manually and restart. NOTE: the web terminal is NOT"
+  echo "ERROR: available for this (fail-closed) state — repair from the Home Assistant"
+  echo "ERROR: host instead: the config folder is shared via the 'addon_configs' storage"
+  echo "ERROR: (Samba share 'addon_configs' or an SSH/Terminal add-on at"
+  echo "ERROR: /mnt/data/supervisor/addon_configs/). A .corrupt copy or a"
+  echo "ERROR: pre-upgrade backup archive can be renamed back to openclaw.json."
   echo "ERROR: NOT bootstrapping a fresh stub — a stub would silently replace the real configuration."
   exit 1
 fi
@@ -1803,6 +1808,12 @@ while true; do
   if ! start_openclaw_runtime; then
     echo "ERROR: Failed to restart OpenClaw runtime; retrying in ${GW_BACKOFF}s..."
     sleep "$GW_BACKOFF"
+    # Audit: a failed restart must not leave a stale (already reaped or
+    # re-tracked-external) GW_PID behind — with GW_IS_CHILD still true the
+    # next iteration `wait`s on the reaped child and logs a bogus
+    # "exited with code 127". Mirror the failed-initial-start state here.
+    GW_PID=""
+    GW_IS_CHILD=false
   else
     GW_IS_CHILD=true
     GW_BOOT_START=$(date +%s)

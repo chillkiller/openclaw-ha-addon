@@ -78,13 +78,25 @@ def read_json(path: Path) -> dict[str, Any]:
 def write_json(path: Path, data: dict[str, Any]) -> None:
     """Atomic write (temp + rename): a crash mid-write must never leave a
     truncated JSON behind — for openclaw.json that used to lead to a
-    corrupt-config stub-overwrite cycle on the next start."""
+    corrupt-config stub-overwrite cycle on the next start.
+
+    A failure during dump leaves no orphaned .tmp file behind (cleaned up in
+    the except branch). This is intentionally local to this helper: it is the
+    only writer of the auxiliary files (package.json, opencode.jsonc,
+    auth.json), so no shared abstraction is needed."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp_path = path.with_suffix(path.suffix + ".tmp")
-    with open(tmp_path, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2, ensure_ascii=False)
-        f.write("\n")
-    os.replace(tmp_path, path)
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        os.replace(tmp_path, path)
+    finally:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
 
 
 def deploy_harness_configs() -> None:
@@ -173,8 +185,12 @@ def prepare_opencode_home() -> None:
         log("Replaced legacy opencode config.toml placeholder")
 
 
-def install_acpx_npm_project() -> None:
-    """Ensure a managed npm project exists with the required ACP packages."""
+def install_acpx_npm_project() -> bool:
+    """Ensure a managed npm project exists with the required ACP packages.
+
+    Returns True on success (or already-up-to-date), False on install failure.
+    Callers (run.sh) treat False as "harnesses unavailable this boot"."""
+    PROJECT_DIR.mkdir(parents=True, exist_ok=True)
     PROJECT_DIR.mkdir(parents=True, exist_ok=True)
 
     package_json = PROJECT_DIR / "package.json"
@@ -219,26 +235,31 @@ def install_acpx_npm_project() -> None:
             )
             if result.returncode != 0:
                 log(f"ERROR: npm install failed:\n{result.stderr}")
-                # Do not abort; the wrappers can fall back to npx
-            else:
-                log("ACPX npm project installed successfully")
+                # Do not raise; run.sh surfaces the failure via the exit code
+                return False
+            log("ACPX npm project installed successfully")
+            return True
         except subprocess.TimeoutExpired:
             log("ERROR: npm install timed out after 10 minutes")
+            return False
         except Exception as e:
             log(f"ERROR: npm install raised exception: {e}")
+            return False
     else:
         log("ACPX npm project already up to date")
+        return True
 
 
-def patch_openclaw_config() -> None:
-    """Ensure the top-level cp section exists with a sane backend.
+def patch_openclaw_config() -> bool:
+    """Ensure the top-level acp section exists with a sane backend.
 
     This function is intentionally minimal. We do NOT create or modify
     agents.list entries here. User-configured coding agents (with
     runtime.acp.agent / runtime.acp.backend) are preserved as-is.
 
+    The config itself is NOT created here — run.sh is the single bootstrap
+    owner (first start only, random per-install token, per-mode port).
     The only edits we make to openclaw.json are:
-      - Bootstrap a minimal config if it is missing (first start only).
       - Set acp.enabled = true if it is missing/false.
       - Set acp.backend = 'acpx' if it is missing.
       - Ensure acp.allowedAgents contains the four required harness names.
@@ -251,13 +272,13 @@ def patch_openclaw_config() -> None:
         # No duplicate bootstrap here: two divergent implementations drift and
         # can reintroduce the first-boot port/token bugs.
         log(f"INFO: {config_path} does not exist; skipping openclaw.json patch")
-        return
+        return False
 
     try:
         cfg = read_json(config_path)
     except Exception as e:
         log(f"ERROR: failed to read {config_path}: {e} — NOT patching a config that cannot be parsed")
-        return
+        return False
 
     changed = False
 
@@ -265,7 +286,7 @@ def patch_openclaw_config() -> None:
     acp = cfg.setdefault("acp", {})
     if not isinstance(acp, dict):
         log("WARN: openclaw.json has a non-object acp section; leaving it untouched")
-        return
+        return False
 
     if acp.get("enabled") is not True:
         acp["enabled"] = True
@@ -288,16 +309,22 @@ def patch_openclaw_config() -> None:
             log("Updated top-level acp section in openclaw.json (agents preserved)")
         except Exception as e:
             log(f"ERROR: failed to write {config_path}: {e}")
+            return False
+        return True
     else:
         log("NOTE: openclaw.json already has acp configuration; agents preserved")
+        return True
 
 def main() -> int:
     log("Initializing local-model ACP harnesses (Codex, Claude, OpenCode)")
     deploy_harness_configs()
-    install_acpx_npm_project()
-    patch_openclaw_config()
-    log("ACPX initialization complete")
-    return 0
+    ok = install_acpx_npm_project()
+    ok = patch_openclaw_config() and ok
+    if ok:
+        log("ACPX initialization complete")
+    else:
+        log("ACPX initialization completed WITH FAILURES (harnesses may be unavailable this boot)")
+    return 0 if ok else 1
 
 
 if __name__ == "__main__":
