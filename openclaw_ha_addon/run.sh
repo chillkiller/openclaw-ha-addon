@@ -73,6 +73,17 @@ TRACE_LOG_TO_CONSOLE=$(jq -r '.trace_log_to_console // false' "$OPTIONS_FILE")
 OLLAMA_BASE_URL=$(jq -r '.ollama_base_url // "http://localhost:11434"' "$OPTIONS_FILE")
 export OLLAMA_BASE_URL
 
+# Local-model provider routing for ACP harnesses (verified 2026-10-09):
+# The acpx generated codex/claude wrappers passthrough this ambient env, so
+# Claude Code reaches the Ollama backend without any custom wrapper.
+# ANTHROPIC_MODEL is the Claude Code harness model; override per app option
+# if a different Ollama model is wanted for Claude sessions.
+if [ -z "$ANTHROPIC_API_KEY" ]; then
+  export ANTHROPIC_BASE_URL="$OLLAMA_BASE_URL"
+  export ANTHROPIC_AUTH_TOKEN="ollama"
+  export ANTHROPIC_MODEL="${OLLAMA_ACP_MODEL:-glm-5.3-flash:cloud}"
+fi
+
 
 # Runtime extensibility (was defined in config.yaml but never read — Audit R5/R6)
 RUNTIME_APT_PACKAGES=$(jq -r '.runtime_apt_packages // empty' "$OPTIONS_FILE")

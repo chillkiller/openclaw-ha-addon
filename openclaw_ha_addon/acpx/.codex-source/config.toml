@@ -1,0 +1,24 @@
+# Codex source config template (OpenClaw HA Add-on).
+# acpx reads this file ($CODEX_HOME || ~/.codex) ONCE per gateway start and
+# inherits ONLY: model, model_provider, model_reasoning_effort, sandbox_mode,
+# safe [model_providers.*] fields, and project trust entries.
+# Constraints (verified 2026-10-09): wire_api "chat" is rejected by codex;
+# provider id "ollama" is reserved, hence "garon_ollama";
+# requires_openai_auth=true reads auth.json (env_key breaks gateway spawns).
+# Trust entries must be unique (tomllib rejects duplicate table headers).
+model = "__CODEX_MODEL__"
+model_provider = "garon_ollama"
+sandbox_mode = "workspace-write"
+
+[model_providers.garon_ollama]
+name = "Ollama (OpenClaw HA App)"
+base_url = "__OLLAMA_BASE_URL__/v1"
+wire_api = "responses"
+requires_openai_auth = true
+
+[projects."/share/temp"]
+trust_level = "trusted"
+[projects."/share/projekte/github/openclaw-ha-addon"]
+trust_level = "trusted"
+[projects."/config/clawd"]
+trust_level = "trusted"

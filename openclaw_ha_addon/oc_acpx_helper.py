@@ -3,14 +3,19 @@
 OpenClaw HA App — ACPX harness initializer.
 
 This helper runs during app startup (called from run.sh) and ensures that
-Claude Code, Codex and OpenCode ACP harnesses are ready to use:
+the local-model ACP harnesses are ready to use:
 
-  1. Copies wrapper launchers into /config/.openclaw/acpx/
+  1. Deploys codex auth.json + /config/.codex/config.toml (the acpx
+     inheritance source for provider routing, verified 2026-10-09)
   2. Creates a small managed npm project in /config/.openclaw/acpx/.node_project
      with @openclaw/acpx, @openclaw/codex and opencode installed
-  3. Patches /config/.openclaw/openclaw.json to enable ACPX and define the
-     coding-main (Forge) and coding-review (Audit) agents with their harnesses
-  4. Makes wrapper files executable
+  3. Patches /config/.openclaw/openclaw.json to enable ACPX (agents preserved)
+
+Custom wrapper launchers are NO longer used (2026-10-09): the acpx plugin
+generates passthrough wrappers for codex/claude at gateway start, and the
+provider env is exported by run.sh (ambient env). All harnesses reach the
+local Ollama backend via config files (codex config.toml inheritance,
+opencode.jsonc) or ambient env (claude ANTHROPIC_*), no wrapper edits.
 
 All operations are idempotent and safe to run on every app restart.
 """
@@ -20,7 +25,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import stat
 import subprocess
 import sys
 from pathlib import Path
@@ -31,12 +35,35 @@ CONFIG_DIR = Path("/config/.openclaw")
 ACPX_DIR = CONFIG_DIR / "acpx"
 WRAPPER_SRC_DIR = Path("/openclaw_ha_addon/acpx")
 PROJECT_DIR = ACPX_DIR / ".node_project"
+OPENCODE_GLOBAL_DIR = Path("/config/opencode")
+CODEX_SOURCE_HOME = Path("/config/.codex")
 
 # npm package versions (bump when the app image is rebuilt)
 OPENCLAW_ACPX_VERSION = os.environ.get("OPENCLAW_ACPX_VERSION", "2026.7.1")
 OPENCLAW_CODEX_VERSION = os.environ.get("OPENCLAW_CODEX_VERSION", "2026.7.1-1")
 OPENCODE_VERSION = os.environ.get("OPENCODE_VERSION", "latest")
 OPENCODE_PACKAGE = os.environ.get("OPENCODE_PACKAGE", "opencode-ai")
+OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+# Role-differentiated harness models (verified 2026-10-09, GaRoN decision):
+#   codex = coding-review (Audit)  -> kimi-k2.7-code:cloud
+#   opencode = coding-main (Forge) -> glm-5.3:cloud
+# gemma4 was only ever a placeholder; never use it for audits.
+OLLAMA_CODEX_MODEL = os.environ.get("OLLAMA_CODEX_MODEL", "kimi-k2.7-code:cloud")
+OLLAMA_OPENCODE_MODEL = os.environ.get("OLLAMA_OPENCODE_MODEL", "glm-5.3-flash:cloud")
+
+# Template tokens that must never be committed as real infra data (AGENTS.md
+# security hygiene: LAN addresses stay out of the repository).
+TEMPLATE_SUBSTITUTIONS = {
+    "__OLLAMA_BASE_URL__": OLLAMA_BASE_URL.rstrip("/"),
+    "__CODEX_MODEL__": OLLAMA_CODEX_MODEL,
+    "__OPENCODE_MODEL__": OLLAMA_OPENCODE_MODEL,
+}
+
+
+def render_template(text: str) -> str:
+    for token, value in TEMPLATE_SUBSTITUTIONS.items():
+        text = text.replace(token, value)
+    return text
 
 
 def log(msg: str) -> None:
@@ -55,56 +82,90 @@ def write_json(path: Path, data: dict[str, Any]) -> None:
         f.write("\n")
 
 
-def make_executable(path: Path) -> None:
-    if not path.exists():
-        return
-    mode = path.stat().st_mode
-    if not (mode & stat.S_IXUSR):
-        path.chmod(mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+def deploy_harness_configs() -> None:
+    """Deploy the harness config templates from the source directory.
 
-
-def copy_wrapper_files() -> None:
-    """Copy wrapper launchers and home directories into persistent storage."""
+    - codex-home/auth.json into ACPX_DIR (the acpx generated wrapper's
+      CODEX_HOME; without it codex fails with "Authentication required",
+      verified 2026-10-09)
+    - /config/.codex/config.toml: the acpx inheritance source, from which
+      the plugin regenerates the operational codex-home/config.toml at
+      every gateway start (verified 2026-10-09: only model, model_provider,
+      model_reasoning_effort, sandbox_mode and [model_providers.*] plus
+      trust entries are inherited; regenerates once per gateway start).
+    """
     if not WRAPPER_SRC_DIR.exists():
-        log(f"WARNING: wrapper source directory not found: {WRAPPER_SRC_DIR}")
+        log(f"WARNING: harness config source directory not found: {WRAPPER_SRC_DIR}")
         return
 
-    ACPX_DIR.mkdir(parents=True, exist_ok=True)
+    # codex auth.json (wrapper CODEX_HOME, read at every adapter start)
+    codex_home = ACPX_DIR / "codex-home"
+    codex_home.mkdir(parents=True, exist_ok=True)
+    auth_path = codex_home / "auth.json"
+    if not auth_path.exists():
+        write_json(
+            auth_path,
+            {"OPENAI_API_KEY": "ollama", "tokens": None, "last_refresh": None},
+        )
+        try:
+            os.chmod(auth_path, 0o600)
+        except OSError as e:
+            log(f"WARN: could not chmod auth.json: {e}")
+        log("Created codex auth.json (placeholder API key)")
 
-    files_to_copy = [
-        "claude-agent-acp-wrapper.mjs",
-        "codex-acp-wrapper.mjs",
-        "opencode-acp-wrapper.mjs",
-        "oc_provider_env.mjs",
-    ]
-    for name in files_to_copy:
-        src = WRAPPER_SRC_DIR / name
-        dst = ACPX_DIR / name
-        if src.exists() and (not dst.exists() or src.read_bytes() != dst.read_bytes()):
-            shutil.copy2(src, dst)
-            log(f"Installed/updated wrapper: {name}")
-        make_executable(dst)
+    # Codex inheritance source for the acpx plugin (gateway-start regeneration)
+    src_codex_source = WRAPPER_SRC_DIR / ".codex-source" / "config.toml"
+    if src_codex_source.exists():
+        CODEX_SOURCE_HOME.mkdir(parents=True, exist_ok=True)
+        desired = render_template(src_codex_source.read_text(encoding="utf-8"))
+        target = CODEX_SOURCE_HOME / "config.toml"
+        if not target.exists():
+            target.write_text(desired, encoding="utf-8")
+            log("Installed /config/.codex/config.toml (acpx inheritance source)")
+        else:
+            current = target.read_text(encoding="utf-8")
+            if "[model_providers." not in current:
+                target.write_text(desired, encoding="utf-8")
+                log("Upgraded /config/.codex/config.toml (provider routing)")
+            elif current != desired:
+                log("NOTE: /config/.codex/config.toml is customized; leaving intact")
+    else:
+        log(f"WARNING: {src_codex_source} not found; codex provider inheritance not applied")
 
-    # Copy home directories (Codex / OpenCode config)
-    for home_name in ("codex-home", "opencode-home"):
-        src_home = WRAPPER_SRC_DIR / home_name
-        dst_home = ACPX_DIR / home_name
-        if src_home.exists():
-            if dst_home.exists():
-                # Merge: overwrite config.toml if source differs
-                src_config = src_home / "config.toml"
-                dst_config = dst_home / "config.toml"
-                if src_config.exists():
-                    dst_home.mkdir(parents=True, exist_ok=True)
-                    if (
-                        not dst_config.exists()
-                        or src_config.read_bytes() != dst_config.read_bytes()
-                    ):
-                        shutil.copy2(src_config, dst_config)
-                        log(f"Updated {home_name}/config.toml")
-            else:
-                shutil.copytree(src_home, dst_home)
-                log(f"Installed {home_name}")
+    # OpenCode JSON(C) provider config (ACPX_DIR home + global dir)
+    prepare_opencode_home()
+
+
+def prepare_opencode_home() -> None:
+    """Ensure OpenCode finds its JSON(C) provider config.
+
+    OpenCode reads config files as JSON(C) even when the filename ends in
+    .toml (verified 2026-10-09: "config.toml is not valid JSON(C)"). The
+    real config therefore lives in opencode.jsonc, deployed into
+    OPENCODE_HOME and the global /config/opencode directory.
+    """
+    src_config = WRAPPER_SRC_DIR / "opencode.jsonc"
+    if not src_config.exists():
+        log(f"WARNING: {src_config} not found; opencode provider config not applied")
+        return
+
+    desired = render_template(src_config.read_text(encoding="utf-8"))
+
+    for target_dir in (ACPX_DIR / "opencode-home", OPENCODE_GLOBAL_DIR):
+        target_dir.mkdir(parents=True, exist_ok=True)
+        target = target_dir / "opencode.jsonc"
+        if not target.exists() or target.read_text(encoding="utf-8") != desired:
+            target.write_text(desired, encoding="utf-8")
+            log(f"Updated {target} (Ollama provider config)")
+
+    # Neutralize the legacy TOML placeholder (comment-only file).
+    legacy = ACPX_DIR / "opencode-home" / "config.toml"
+    legacy_src = WRAPPER_SRC_DIR / "opencode-home" / "config.toml"
+    if legacy_src.exists() and (
+        not legacy.exists() or legacy.read_bytes() != legacy_src.read_bytes()
+    ):
+        shutil.copy2(legacy_src, legacy)
+        log("Replaced legacy opencode config.toml placeholder")
 
 
 def install_acpx_npm_project() -> None:
@@ -162,14 +223,6 @@ def install_acpx_npm_project() -> None:
             log(f"ERROR: npm install raised exception: {e}")
     else:
         log("ACPX npm project already up to date")
-
-
-def find_installed_acp_binary(package_name: str, relative_path: str) -> str | None:
-    """Find a binary inside the managed ACPX npm project."""
-    candidate = PROJECT_DIR / "node_modules" / package_name / relative_path
-    if candidate.exists():
-        return str(candidate)
-    return None
 
 
 def patch_openclaw_config() -> None:
@@ -244,8 +297,8 @@ def patch_openclaw_config() -> None:
         log("NOTE: openclaw.json already has acp configuration; agents preserved")
 
 def main() -> int:
-    log("Initializing ACPX harnesses (Claude Code, Codex, OpenCode)")
-    copy_wrapper_files()
+    log("Initializing local-model ACP harnesses (Codex, Claude, OpenCode)")
+    deploy_harness_configs()
     install_acpx_npm_project()
     patch_openclaw_config()
     log("ACPX initialization complete")
