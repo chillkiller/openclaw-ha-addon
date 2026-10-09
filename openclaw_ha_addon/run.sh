@@ -78,7 +78,7 @@ export OLLAMA_BASE_URL
 # Claude Code reaches the Ollama backend without any custom wrapper.
 # ANTHROPIC_MODEL is the Claude Code harness model; override per app option
 # if a different Ollama model is wanted for Claude sessions.
-if [ -z "$ANTHROPIC_API_KEY" ]; then
+if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
   export ANTHROPIC_BASE_URL="$OLLAMA_BASE_URL"
   export ANTHROPIC_AUTH_TOKEN="ollama"
   export ANTHROPIC_MODEL="${OLLAMA_ACP_MODEL:-glm-5.3-flash:cloud}"

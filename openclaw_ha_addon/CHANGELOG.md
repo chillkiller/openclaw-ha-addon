@@ -1,3 +1,8 @@
+## [0.7.13.3] - 2026-10-09
+
+### Fixed
+- **Boot unbound-variable kill in the 0.7.13.2 ambient-env routing (day-zero, 2026-10-09):** `run.sh` line 81 read `$ANTHROPIC_API_KEY` under `set -euo pipefail`; the variable is not preset in the addon container (no real Anthropic key configured), so every start failed with `line 81: ANTHROPIC_API_KEY: unbound variable` and the watchdog cycled (21:34-21:45, supervisor stop/start actions, container never reached nginx/gateway stages). Fix: POSIX-safe default expansion `${ANTHROPIC_API_KEY:-}` — unset/empty still triggers the intended Ollama routing, a configured key is respected. Proven in `bash -u` (negative control: old form -> rc 127 with the byte-identical error; fixed: unset->fallback, set->keep-real, empty->fallback); `bash -n` OK; repo-wide `set -u` conditional-read sweep found no additional unguarded reads (`env_count`, `max_env_vars`, `HA_TOKEN` etc. are all assigned before use).
+
 ## [0.7.13.2] - 2026-10-09
 
 ### Changed

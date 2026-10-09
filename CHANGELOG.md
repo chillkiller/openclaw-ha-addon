@@ -2,6 +2,12 @@
 
 Release-facing summary. Detailed per-release engineering notes: [openclaw_ha_addon/CHANGELOG.md](openclaw_ha_addon/CHANGELOG.md).
 
+## 0.7.13.3
+- **Hotfix (boot unbound-variable):** the 0.7.13.2 ACP ambient-env routing read `$ANTHROPIC_API_KEY` guarded only by `[ -z ... ]` — under `set -u` this is an unbound-variable kill whenever the key is not preset in the container environment (the default case: no real Anthropic key configured). Every start died at run.sh line 81 before nginx/gateway existed (watchdog restart loop 2026-10-09 21:34-21:45 after the 21:34 store rollout; supervisor actions ~8 cycles). Reads now use the POSIX-safe `${ANTHROPIC_API_KEY:-}` default-expansion form (unset/empty -> Ollama routing as intended, a set/non-empty key wins). Empirical proof: `bash -u` negative control (old form on unset var -> rc 127, byte-identical error line), fixed form 3/3 probes green (unset -> fallback, set -> keep-real, empty -> fallback); `bash -n` OK; repo-wide set -u sweep found no other unguarded conditional reads. Also repairs the 0.7.13.2 docs slips: the [0.7.13.2] changelog section was sorted between 0.7.10.21 and the 0.7.9.x wall (now ordered correctly at the top) and the 0.7.13.2 DEPLOYMENT matrix row was missing (added).
+
+## 0.7.13.2
+- **ACP harness modernization (B9):** removed all custom ACP wrappers — acpx passthrough wrappers + ambient env routing instead. Claude Code, Codex and OpenCode reach the local Ollama backend with zero wrapper files; role-differentiated model defaults (audit: `kimi-k2.7-code:cloud`, forge: `glm-5.3-flash:cloud`), env-overridable. New config templates deploy to the acpx inheritance source (fixes recurring codex config clobber). Proven by 4 live audit runs through the real gateway.
+
 ## 0.7.13.1
 - **Hotfix (boot exit 3):** the two new safety-net option reads in `run.sh` used `|number`, which is not a jq builtin - jq failed compilation whenever `options.json` contained the key ("number/0 is not defined", exit 3), and `set -euo pipefail` killed every start before the gateway came up (restart loop 2026-10-09 05:26-05:31, container ExitCode=3). Reads now use `tonumber` with an explicit `!= null` guard (missing key/null -> default 3, string "5" -> 5, explicit 0 -> 0). Verified in the 0.7.13 image (jq 1.6): negative control (old program -> rc 3 on the real options.json) plus 6/6 positive probes; `bash -n` OK; no other `|number` in the tree.
 
@@ -151,11 +157,6 @@ Release-facing summary. Detailed per-release engineering notes: [openclaw_ha_add
 
 ## 0.7.10.21
 - Fix OpenClaw ControlUI asset loading inside HA Ingress when X-Ingress-Path header is missing by rewriting asset links to relative URLs (with absolute fallback when the header is present).
-## [0.7.13.2] - 2026-10-09
-
-### Changed
-- **ACP harness modernization (B9):** removed all custom ACP wrappers — acpx passthrough wrappers + ambient env routing instead. Claude Code, Codex and OpenCode reach the local Ollama backend with zero wrapper files; role-differentiated model defaults (audit: `kimi-k2.7-code:cloud`, forge: `glm-5.3-flash:cloud`), env-overridable. New config templates deploy to the acpx inheritance source (fixes recurring codex config clobber). Proven by 4 live audit runs through the real gateway.
-
 ## [0.7.9.24] - 2026-08-23
 
 ### Changed
