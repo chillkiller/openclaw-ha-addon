@@ -13,3 +13,9 @@ REPAIR_STATUS.md
 # Windows-Redirect-Artefakt
 nul
 /agents/
+
+# Directive GaRoN 2026-10-09: no dev reports/plans/cookbooks in the repo —
+# they live exclusively in agent workspaces or /share/* dirs.
+INVESTIGATION-*
+*findings*
+*FINDING*
