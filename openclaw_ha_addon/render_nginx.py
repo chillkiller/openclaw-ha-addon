@@ -47,7 +47,11 @@ def main():
         if not value.isdigit() or not 1 <= len(value) <= 5:
             print(f"ERROR: {name} failed validation (expected numeric port, got {value!r}) — refusing to render nginx config", flush=True)
             raise SystemExit(1)
-    if not re.fullmatch(r'[A-Za-z0-9._-]{0,64}', certs_dir):
+    # Audit-fix: certs_dir is a path (contains '/'), not a shell identifier —
+    # the previous regex rejected the only value ever passed ('/config/certs')
+    # and made every boot fail in render_landing. Validate as a metachar-free
+    # absolute path instead.
+    if not re.fullmatch(r'[/A-Za-z0-9._-]+', certs_dir):
         print(f"ERROR: CERTS_DIR failed validation ({certs_dir!r}) — refusing to render nginx config", flush=True)
         raise SystemExit(1)
 

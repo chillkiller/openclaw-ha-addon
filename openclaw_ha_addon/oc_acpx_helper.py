@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import json
 import os
-import secrets
 import shutil
 import subprocess
 import sys
@@ -247,40 +246,17 @@ def patch_openclaw_config() -> None:
     config_path = CONFIG_DIR / "openclaw.json"
 
     if not config_path.exists():
-        log(f"INFO: {config_path} does not exist yet; bootstrapping minimal config")
-        # SECURITY (audit 2026-10-09): never bootstrap a well-known gateway
-        # token. The repo-visible PLACEHOLDER_ONBOARDING_TOKEN used to be
-        # picked up by the post-onboard render loop and injected as bearer
-        # auth in nginx — authenticating every ingress client with a string
-        # committed to the public repository. A per-install random token keeps
-        # the same "auth enabled from first boot" behavior without a public
-        # secret; onboarding overwrites this token with its own anyway.
-        # Port: use the add-on's validated internal gateway port (differs per
-        # network mode, e.g. 18790 in lan_https) instead of a hardcoded value.
-        try:
-            gateway_port = int(os.environ.get("GATEWAY_INTERNAL_PORT", "") or 18789)
-        except ValueError:
-            gateway_port = 18789
-        cfg = {
-            "gateway": {
-                "mode": "local",
-                "port": gateway_port,
-                "bind": "loopback",
-                "auth": {"mode": "token", "token": secrets.token_hex(24)},
-            },
-            "agents": {"defaults": {"workspace": "/config/clawd"}},
-        }
-        try:
-            write_json(config_path, cfg)
-            log("Bootstrapped minimal openclaw.json")
-        except Exception as e:
-            log(f"ERROR: failed to create {config_path}: {e}")
+        # run.sh bootstraps a missing openclaw.json before this helper runs
+        # (single bootstrap owner, random per-install token, per-mode port).
+        # No duplicate bootstrap here: two divergent implementations drift and
+        # can reintroduce the first-boot port/token bugs.
+        log(f"INFO: {config_path} does not exist; skipping openclaw.json patch")
         return
 
     try:
         cfg = read_json(config_path)
     except Exception as e:
-        log(f"ERROR: failed to read {config_path}: {e}")
+        log(f"ERROR: failed to read {config_path}: {e} — NOT patching a config that cannot be parsed")
         return
 
     changed = False

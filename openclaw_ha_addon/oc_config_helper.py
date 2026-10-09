@@ -36,18 +36,24 @@ def read_config():
         return None
     try:
         return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as e:
+    except (json.JSONDecodeError, UnicodeDecodeError, IOError) as e:
+        # JSONDecodeError/UnicodeDecodeError: corrupt content. IOError (EACCES,
+        # EIO): unreadable content. Both are data the caller must not treat as
+        # "no config" — exiting 1 (with quarantine) keeps boot fail-closed
+        # instead of letting a write-back stub replace the real configuration.
+        print(f"ERROR: openclaw.json is unreadable/corrupt ({e}); refusing to treat it as an empty config", file=sys.stderr)
+        import datetime
+        stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d-%H%M%S")
         quarantine = CONFIG_PATH.with_name(CONFIG_PATH.name + ".corrupt")
-        print(f"ERROR: openclaw.json is not valid JSON ({e}); refusing to overwrite a corrupt config", file=sys.stderr)
+        if quarantine.exists():
+            # Never clobber an existing recovery copy.
+            quarantine = CONFIG_PATH.with_name(f"{CONFIG_PATH.name}.corrupt.{stamp}")
         try:
             CONFIG_PATH.rename(quarantine)
             print(f"INFO: corrupt config quarantined as {quarantine} — restore it manually after repair", file=sys.stderr)
         except OSError as qe:
             print(f"ERROR: quarantine failed: {qe} — the corrupt file was left in place", file=sys.stderr)
         sys.exit(1)
-    except IOError as e:
-        print(f"ERROR: Failed to read config: {e}", file=sys.stderr)
-        return None
 
 
 def write_config(cfg):

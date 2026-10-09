@@ -58,8 +58,7 @@ Exposure is controlled by the **`network_mode`** option. Presets (see also `conf
 - The gateway endpoint could be discovered by network scanners
 
 **Mitigations**:
-- Use HTTPS whenever possible (`lan_https` or your own reverse proxy)
-- Prefer `lan_https`/`tailnet` over `lan_http` for remote/private-network access
+- Use HTTPS whenever possible (`lan_https`, a `tailnet_*` mode, or your own reverse proxy)
 - Keep the default `ingress_only` mode if you only need local/sidebar access
 - Keep your gateway auth token secret
 
@@ -72,7 +71,7 @@ In most network modes the gateway authenticates via **token** (`gateway.auth.mod
 - The token grants full access to the gateway
 
 **Mitigations**:
-- Only enable `lan_http` on trusted networks; prefer `lan_https` or `tailnet` modes
+- Only enable `lan_http` on trusted networks; prefer `lan_https` or `tailnet_*` modes
 - Rotate your gateway token periodically: `openclaw config set gateway.auth.token <new-token>`
 
 ### 4. Home Assistant Token

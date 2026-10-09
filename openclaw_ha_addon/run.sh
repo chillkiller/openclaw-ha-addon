@@ -341,11 +341,11 @@ is_reserved_gateway_env_var() {
     OPENCLAW_*)
       return 0
       ;;
-    # SECURITY: app-validated runtime variables consumed by run.sh (nginx/
-    # node-relay config rendering, port guards, cert SANs). Allowing them via
-    # gateway_env_vars would invalidate the explicit validation run.sh and
-    # render_nginx.py perform (nginx/node config injection vector).
-    GATEWAY_PORT|GATEWAY_INTERNAL_PORT|GATEWAY_MODE|GATEWAY_BIND|GATEWAY_AUTH_MODE|GATEWAY_REMOTE_URL|GATEWAY_TLS_ENABLED|GATEWAY_TLS_AUTO|GATEWAY_LOG_LEVEL|GATEWAY_TRUSTED_PROXIES|NETWORK_MODE|ACCESS_MODE|INGRESS_PORT|TERMINAL_PORT|HTTPS_PROXY_PORT|ENABLE_HTTPS_PROXY|CERTS_DIR|LAN_IP|GW_PUBLIC_URL|GW_TOKEN|NGINX_LOG_LEVEL|SHOW_WEBUI|SHOW_TERMINAL|SHOW_DOCS|INVISIBLE_)
+    # SECURITY (audit): app-validated runtime variables consumed by run.sh
+    # (nginx/node-relay config rendering, port guards, cert SANs). Allowing
+    # them via gateway_env_vars would invalidate the explicit validation
+    # run.sh and render_nginx.py perform (nginx/node config injection vector).
+    GATEWAY_PORT|GATEWAY_INTERNAL_PORT|GATEWAY_MODE|GATEWAY_BIND|GATEWAY_AUTH_MODE|GATEWAY_REMOTE_URL|GATEWAY_TLS_ENABLED|GATEWAY_TLS_AUTO|GATEWAY_LOG_LEVEL|GATEWAY_TRUSTED_PROXIES|NETWORK_MODE|ACCESS_MODE|INGRESS_PORT|TERMINAL_PORT|HTTPS_PROXY_PORT|ENABLE_HTTPS_PROXY|CERTS_DIR|LAN_IP|GW_PUBLIC_URL|GW_TOKEN|NGINX_LOG_LEVEL|SHOW_WEBUI|SHOW_TERMINAL|SHOW_DOCS)
       return 0
       ;;
     *)
@@ -664,6 +664,12 @@ fi
 # Bootstrap minimal OpenClaw config ONLY if missing.
 # We do not overwrite or patch existing configs; onboarding owns everything else.
 OPENCLAW_CONFIG_PATH="/config/.openclaw/openclaw.json"
+if [ ! -f "$OPENCLAW_CONFIG_PATH" ] && compgen -G "${OPENCLAW_CONFIG_PATH}.corrupt*" >/dev/null 2>&1; then
+  echo "ERROR: a corrupt openclaw.json was quarantined earlier (${OPENCLAW_CONFIG_PATH}.corrupt*)."
+  echo "ERROR: Restore/repair it manually (e.g. from the .corrupt copy or an upgrade-backup archive) and restart."
+  echo "ERROR: NOT bootstrapping a fresh stub — a stub would silently replace the real configuration."
+  exit 1
+fi
 if [ ! -f "$OPENCLAW_CONFIG_PATH" ]; then
   echo "INFO: OpenClaw config missing; bootstrapping minimal config at $OPENCLAW_CONFIG_PATH"
   python3 - <<'PY'
@@ -675,10 +681,14 @@ from pathlib import Path
 cfg_path = Path('/config/.openclaw/openclaw.json')
 cfg_path.parent.mkdir(parents=True, exist_ok=True)
 
+# Use the per-mode internal gateway port (exported above), so a first boot in
+# lan_https (internal 18790) is not bootstrapped with the 18789 default.
+gateway_port = int(os.environ.get('GATEWAY_INTERNAL_PORT', '') or 18789)
+
 cfg = {
   "gateway": {
     "mode": "local",
-    "port": 18789,
+    "port": gateway_port,
     "bind": "loopback",
     "auth": {
       "mode": "token",
@@ -863,10 +873,18 @@ SANEOF
     fi
     rm -f "$CERT_DIR/gateway.csr" "$CERT_DIR/_san.ext" "$CERT_DIR/ca.srl"
     chmod 600 "$CERT_DIR/gateway.key"
-    printf '%s' "$LAN_IP" > "$CERT_DIR/.cert_ip"
-    printf '%s' "$EXTRA_SANS" > "$CERT_DIR/.cert_extra_sans"
-    touch "$CERT_DIR/.cert_ext"
-    echo "INFO: Server TLS certificate generated (SAN: IP:${LAN_IP:-127.0.0.1}${EXTRA_SANS:+,${EXTRA_SANS}}, X.509v3 extensions present)"
+    if [ -f "$CERT_DIR/gateway.crt" ]; then
+      printf '%s' "$LAN_IP" > "$CERT_DIR/.cert_ip"
+      printf '%s' "$EXTRA_SANS" > "$CERT_DIR/.cert_extra_sans"
+      touch "$CERT_DIR/.cert_ext"
+      echo "INFO: Server TLS certificate generated (SAN: IP:${LAN_IP:-127.0.0.1}${EXTRA_SANS:+,${EXTRA_SANS}}, X.509v3 extensions present)"
+    else
+      # Audit: markers and the success INFO only after the cert actually
+      # exists — a failed generation must not be masked; without the
+      # .cert_ext marker the next boot regenerates instead of trusting the
+      # broken state. nginx will fail on the absent ssl_certificate.
+      echo "ERROR: No server certificate in $CERT_DIR — lan_https cannot start. Check gateway_additional_allowed_origins/gateway_public_url and restart."
+    fi
   else
     echo "INFO: Reusing existing TLS certificate (IP: $STORED_IP)"
   fi
@@ -1179,9 +1197,9 @@ fi
 if [ "$ACPX_ENABLED" = "true" ] || [ "$ACPX_ENABLED" = "1" ]; then
   if [ -f "$ACPX_HELPER_PATH" ]; then
     echo "INFO: Initializing ACPX harnesses..."
-    # Pass the validated internal gateway port so the config bootstrap (first
-    # boot) uses the correct port per network mode (18790 in lan_https).
-    GATEWAY_INTERNAL_PORT="$GATEWAY_INTERNAL_PORT" python3 "$ACPX_HELPER_PATH" || \
+    # GATEWAY_INTERNAL_PORT is exported above (run.sh owns the config
+    # bootstrap; the helper only patches the acp section).
+    python3 "$ACPX_HELPER_PATH" || \
       echo "ERROR: ACPX harness initialization failed (exit $?) — Claude/Codex/OpenCode harnesses unavailable this boot"
   else
     echo "WARN: ACPX helper not found; skipping ACPX harness initialization"

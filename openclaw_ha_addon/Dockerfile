@@ -9,7 +9,7 @@ FROM ghcr.io/home-assistant/${BUILD_ARCH}-base-debian:bookworm
 
 # Labels required when not using the official GitHub builder action
 LABEL \
-  io.hass.version="0.7.13.3" \
+  io.hass.version="0.7.13.4" \
   io.hass.type="app" \
   io.hass.arch="aarch64|amd64"
 
