@@ -137,6 +137,13 @@ Be helpful without being annoying: check in a few times a day, do useful backgro
 
 This is a starting point. Add your own conventions, style, and rules as you figure out what works.
 
+## Artifact Placement (hard rule — GaRoN 2026-10-09)
+
+- **No development reports, audits, findings, plans, cookbooks, investigation notes or similar dev-work artifacts in this repository** — not in the working tree, not in commits, not in release tags. They are internal work products; nobody outside the team gets to see them here.
+- These artifacts live **exclusively** in agent workspaces (e.g. `/config/clawd/agents/<agent>/agents/…`) or dedicated `/share/*` folders. If no fitting folder exists, create one — never "temporarily" park them in the project folder.
+- **Temporarily** acceptable in the local project folder only: a current issue list or PR reference — and even that should be avoided; keep it in `REPAIR_STATUS.md` or the workspace instead. Nothing of this class is ever committed.
+- Enforcement: `.gitignore` carries `/agents/`, `INVESTIGATION-*`, `*findings*`, `AUDIT-*` patterns; staging a file matching them is a mistake, not a shortcut.
+
 ## Repo Task State (local only)
 
 - `REPAIR_STATUS.md` is the always-current task list for ALL sessions working on this repo (Forge, Audit, Marvin, Seeker etc.). Read it at session start; keep it current when work state changes. Keyword search first (Seeker pattern), do not re-derive context.
