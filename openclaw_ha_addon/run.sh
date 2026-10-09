@@ -345,7 +345,7 @@ is_reserved_gateway_env_var() {
     # (nginx/node-relay config rendering, port guards, cert SANs). Allowing
     # them via gateway_env_vars would invalidate the explicit validation
     # run.sh and render_nginx.py perform (nginx/node config injection vector).
-    GATEWAY_PORT|GATEWAY_INTERNAL_PORT|GATEWAY_MODE|GATEWAY_BIND|GATEWAY_AUTH_MODE|GATEWAY_REMOTE_URL|GATEWAY_TLS_ENABLED|GATEWAY_TLS_AUTO|GATEWAY_LOG_LEVEL|GATEWAY_TRUSTED_PROXIES|NETWORK_MODE|ACCESS_MODE|INGRESS_PORT|TERMINAL_PORT|HTTPS_PROXY_PORT|ENABLE_HTTPS_PROXY|CERTS_DIR|LAN_IP|GW_PUBLIC_URL|GW_TOKEN|NGINX_LOG_LEVEL|SHOW_WEBUI|SHOW_TERMINAL|SHOW_DOCS|TAILSCALE_MODE|GATEWAY_ADDITIONAL_ALLOWED_ORIGINS|MDNS_MODE|CONTROLUI_DISABLE_DEVICE_AUTH|ACPX_ENABLED)
+    GATEWAY_PORT|GATEWAY_INTERNAL_PORT|GATEWAY_MODE|GATEWAY_BIND|GATEWAY_AUTH_MODE|GATEWAY_REMOTE_URL|GATEWAY_TLS_ENABLED|GATEWAY_TLS_AUTO|GATEWAY_LOG_LEVEL|GATEWAY_TRUSTED_PROXIES|NETWORK_MODE|ACCESS_MODE|INGRESS_PORT|TERMINAL_PORT|HTTPS_PROXY_PORT|ENABLE_HTTPS_PROXY|CERTS_DIR|LAN_IP|GW_PUBLIC_URL|GW_TOKEN|NGINX_LOG_LEVEL|SHOW_WEBUI|SHOW_TERMINAL|SHOW_DOCS|TAILSCALE_MODE|GATEWAY_ADDITIONAL_ALLOWED_ORIGINS|MDNS_MODE|CONTROLUI_DISABLE_DEVICE_AUTH|ACPX_ENABLED|ENABLE_OPENAI_API|BLOCKED_HOSTNAMES|AUTO_CONFIGURE_MCP|TRACE_LOG_TO_CONSOLE|GATEWAY_LOG_TO_CONSOLE)
       return 0
       ;;
     *)
@@ -688,7 +688,13 @@ cfg_path.parent.mkdir(parents=True, exist_ok=True)
 
 # Use the per-mode internal gateway port (exported above), so a first boot in
 # lan_https (internal 18790) is not bootstrapped with the 18789 default.
-gateway_port = int(os.environ.get('GATEWAY_INTERNAL_PORT', '') or 18789)
+# Audit round 4: a non-numeric value must fall back to the default, not kill
+# the first boot — this is the last line of defense for a hand-edited
+# options export that slipped through shell validation.
+try:
+    gateway_port = int(os.environ.get('GATEWAY_INTERNAL_PORT', '') or 18789)
+except ValueError:
+    gateway_port = 18789
 
 cfg = {
   "gateway": {
@@ -847,6 +853,11 @@ if [ "$ENABLE_HTTPS_PROXY" = "true" ]; then
      || [ "$LAN_IP" != "$STORED_IP" ] || [ "$EXTRA_SANS" != "$STORED_EXTRA_SANS" ] \
      || [ ! -f "$CERT_DIR/.cert_ext" ]; then
     echo "INFO: Generating server TLS certificate for IP: ${LAN_IP:-unknown}..."
+    # Audit round 4: remove any PREVIOUS cert first — otherwise a failed
+    # regeneration leaves the stale cert in place, `[ -f gateway.crt ]`
+    # below still succeeded and claimed the new IP/SANs for the OLD cert.
+    # Missing crt = loud nginx failure + regeneration on the next boot.
+    rm -f "$CERT_DIR/gateway.crt" "$CERT_DIR/.cert_ip" "$CERT_DIR/.cert_extra_sans"
     openssl genrsa -out "$CERT_DIR/gateway.key" 2048 2>/dev/null
     openssl req -new -key "$CERT_DIR/gateway.key" -out "$CERT_DIR/gateway.csr" \
       -subj "/CN=OpenClaw Gateway" 2>/dev/null

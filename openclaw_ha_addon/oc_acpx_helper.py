@@ -191,7 +191,6 @@ def install_acpx_npm_project() -> bool:
     Returns True on success (or already-up-to-date), False on install failure.
     Callers (run.sh) treat False as "harnesses unavailable this boot"."""
     PROJECT_DIR.mkdir(parents=True, exist_ok=True)
-    PROJECT_DIR.mkdir(parents=True, exist_ok=True)
 
     package_json = PROJECT_DIR / "package.json"
     desired_pkg = {
@@ -220,6 +219,14 @@ def install_acpx_npm_project() -> bool:
                     break
         except Exception:
             need_install = True
+
+    # Audit round 4: package.json alone says nothing about node_modules —
+    # a failed npm install wrote package.json first, so every later boot
+    # took the "already up to date" path while node_modules stayed absent
+    # (harnesses silently broken until a version pin changed).
+    if not need_install and not (PROJECT_DIR / "node_modules" / "@openclaw" / "acpx").exists():
+        log("node_modules incomplete (acpx missing); reinstalling")
+        need_install = True
 
     if need_install:
         write_json(package_json, desired_pkg)

@@ -74,7 +74,9 @@ def main():
 
     # Internal gateway port exposed to the landing page JS so it can probe
     # the OpenClaw health endpoint for a deeper readiness indication.
-    gateway_internal_port = os.environ.get('GATEWAY_INTERNAL_PORT', '')
+    # Reuse the VALIDATED variable (audit round 4): a second, unvalidated
+    # env read could drift past the port check above.
+    gateway_internal_port = internal_gw_port
 
     # Token comes from environment (best-effort CLI query in run.sh)
     token = os.environ.get('GW_TOKEN', '')
