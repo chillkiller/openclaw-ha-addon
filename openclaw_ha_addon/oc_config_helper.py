@@ -265,10 +265,16 @@ def set_control_ui_origins(
         control_ui["allowedOrigins"] = merged
         changes.append(f"allowedOrigins -> {merged}")
 
-    desired_flag = True if disable_device_auth else False
-    if control_ui.get("dangerouslyDisableDeviceAuth") is not desired_flag:
-        control_ui["dangerouslyDisableDeviceAuth"] = desired_flag
-        changes.append(f"dangerouslyDisableDeviceAuth -> {desired_flag}")
+    # v0.7.13 (B2, TechArtDev 0.5.90 parity): gateway.controlUi
+    # .dangerouslyDisableDeviceAuth is RETIRED and ignored since OpenClaw
+    # 2026.9.8 (dist-verified: legacy lint rule says "retired and ignored",
+    # doctor deletes the key). Writing it every boot only fights
+    # `openclaw doctor --fix`. Keep the config honest: REMOVE the legacy key
+    # instead of setting it. The disable_device_auth argument is kept for CLI
+    # signature compatibility but no longer influences the gateway config.
+    if "dangerouslyDisableDeviceAuth" in control_ui:
+        del control_ui["dangerouslyDisableDeviceAuth"]
+        changes.append("removed retired key: dangerouslyDisableDeviceAuth")
 
     # Remove stale keys from earlier app versions
     for stale in ("pairingMode",):

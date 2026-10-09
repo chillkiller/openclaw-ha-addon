@@ -1,3 +1,38 @@
+## [0.7.13] - 2026-10-09
+
+### Changed
+- **OpenClaw pin 2026.9.8 → 2026.9.9** (v0.7.13 delta analysis, tarball-verified 2026-10-09):
+  - **Verification before the bump:** `resolveThresholds` (memory threshold calibration) byte-identical between 2026.9.8 and 2026.9.9 dist tarballs — our RAM-adaptive heap ladder stays correct; exit-classifier token counts identical (AbortError×3, ECONN×2, fatal×5, network×1, sqlite×5, watch×10); npm engines unchanged (`>=24.16.0 <25 || >=26.1.0`, Node 24 compliant); no schema retirements, no option renames, no controlUi/allowedOrigins/device-auth/CSP/health-endpoint changes; openai-http agentId fix present natively (dist/openai-http-CQ7X8xZA.mjs).
+  - **Patch anchors re-verified against the real 2026.9.9 dist:** unicode-guard applies 8/8 sites (4+4), 5/5 `node --check`, universality sweep 0 residues across 9160 dist files, exit 0; undefined-rejection shim registry symbol present in the new dist (upstream still ships no equivalent — the shim stays required).
+  - **Upstream gains for our restart-heavy profile:** failed-update recovery hardening (#164497/#164724), restart-recovery triage retry (#160173), Docker upgrade-loop fix reusing verified rollback backups (#162305), doctor session-archive repair imports (#164867), quarantined-database respect + WAL-preservation guidance (#161783), long memory-checkpoint no longer stalls channel replies (#137359), scheduled-job isolation.
+  - **Watch items (no action):** gateway token storage trend toward the secret store (#162372) — our helper still writes the bootstrap token directly; Telegram `/controlui` vs `/dashboard` split (irrelevant behind HA Ingress).
+
+### Added
+- **Pre-upgrade state backup gate (TechArtDev 0.5.94 parity):**
+  - `backup_upgrade_state()` + `upgrade_backup_gate()` in `run.sh`: on any detected version change, archives `openclaw.json` + `state/` + `agents/` (WAL files included; SHM/locks/corrupt files excluded) to `/config/.openclaw/upgrade-backups/openclaw-state-<version>-<stamp>.tar.gz` (chmod 600) before the gateway starts.
+  - Runs inside `start_openclaw_runtime()` so every attempt (initial + supervised restarts) is covered; skip-on-fail integrates with the hardened restart backoff.
+  - **Options:** `abort_on_upgrade_backup_failure` (bool, default true — data fail-closed: no start into the new version without a complete archive; container stays up with nginx/terminal so the operator can free disk), `upgrade_backup_keep` (int, default 3, pruning keeps the newest).
+  - **Rationale:** upstream verified backups engage only while the gateway starts; a boot that dies during its own migration (proven 2026-10-04/05 crash-loop: 130 restart cycles, corrupted state DB, manual SQLite surgery) previously had no honest rollback path.
+- **Automatic doctor repair after consecutive start failures (TechArtDev 0.5.90 parity, BACKLOG V16/B4):**
+  - After 2 consecutive failed starts, the repair runs in the restart path only — with openclaw.json snapshotted first — invoking `openclaw doctor --fix --non-interactive --yes`; budget `gateway_doctor_repair_max` (int, default 3, 0 disables) per app start; local modes only (remote mode never repairs a foreign gateway).
+- **Three new schema options** (all with jq `has()` guards — explicit false/0 wins per the V7 lesson): `abort_on_upgrade_backup_failure`, `upgrade_backup_keep`, `gateway_doctor_repair_max`.
+
+### Fixed
+- **Restart storm hazard removed (TechArtDev 0.5.90 parity, BACKLOG V16/B8):**
+  - Flat `sleep 2` replaced by exponential backoff `2^streak` capped at 60s; streak resets only when the previous boot survived ≥ 120s (measured at exit detection time, not after the ~20s self-restart detection sleeps — measuring after sleeps was the peer's pinned-at-2s bug).
+  - Failure-streak telemetry in the log line (exit code + streak + backoff); loud diagnostic hint after 5+ consecutive failures.
+
+### Changed (config hygiene)
+- **Retired key no longer written (BACKLOG V8/B2):**
+  - `oc_config_helper.py::set_control_ui_origins` now REMOVES `gateway.controlUi.dangerouslyDisableDeviceAuth` from the gateway config instead of writing it every boot (retired + ignored upstream since 2026.9.8: lint rule says "retired and ignored", doctor deletes it). Ends the boot-time fight with `openclaw doctor --fix`.
+  - `controlui_disable_device_auth` option kept (config compatibility), marked deprecated in the comment; all six translation descriptions now describe the real behavior (device-flow pairing in every mode, no 1008 exception). Their earlier text promised a pairing-skip the gateway no longer honors.
+
+### Security
+- Both 0.7.12.7 security controls re-verified against the 2026.9.9 dist (unicode-guard patch green live against the actual tarball; shim registry present). No new ingest boundaries introduced in 2026.9.9.
+
+### Deliberately open
+- The undefined-rejection crash-loop root cause (§ REPAIR_STATUS 12.1 factor C) is NOT fixed upstream in 2026.9.9 (0 changelog hits); the shim + the three safety nets above remain the mitigation.
+
 ## [0.7.12.7] - 2026-10-08
 
 ### Security

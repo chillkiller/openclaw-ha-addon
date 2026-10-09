@@ -39,8 +39,20 @@ configuration:
     description: Origens extras da Control UI separadas por vírgula, mescladas em gateway.controlUi.allowedOrigins no modo lan_https (exemplo - https://ha.example.com:8443,capacitor://localhost)
 
   controlui_disable_device_auth:
-    name: Desativar pareamento por dispositivo no Control UI (lan_https)
-    description: "Quando LIGADO (recomendado), define gateway.controlUi.dangerouslyDisableDeviceAuth=true para pular aprovação por dispositivo e evitar erro 1008 no modo LAN HTTPS. Mantenha LIGADO em rede doméstica/confiável. Desligue apenas se quiser pareamento estrito para cada novo navegador/dispositivo."
+    name: Obsoleta — sem efeito (o pareamento sempre é pelo fluxo de dispositivo)
+    description: "Opção obsoleta (mantida por compatibilidade). Desde o OpenClaw 2026.9.8, a flag gateway.controlUi.dangerouslyDisableDeviceAuth foi aposentada e é ignorada pelo upstream, e o app não a grava mais na configuração do gateway. Navegadores do Control-UI sempre pareiam pelo fluxo de dispositivo normal em qualquer modo de rede; nenhuma etapa manual no terminal é necessária."
+  
+  abort_on_upgrade_backup_failure:
+    name: Abortar se falhar o backup pré-atualização
+    description: "Quando LIGADO (recomendado), o app não iniciará uma nova versão do OpenClaw se o backup de estado pré-atualização falhar (ex.: disco cheio). Desligue apenas em emergências; retornar à versão anterior pode ficar impossível."
+  
+  upgrade_backup_keep:
+    name: Backups de atualização a manter
+    description: "Quantos arquivos de backup pré-atualização são mantidos antes do mais antigo ser removido (padrão 3)."
+  
+  gateway_doctor_repair_max:
+    name: Execuções de reparo doctor por início
+    description: "Máximo de execuções automáticas de `openclaw doctor --fix` por início do app após 2 falhas consecutivas do gateway. 0 desativa o reparo automático."
 
   gateway_port:
     name: Porta do Gateway

@@ -39,8 +39,20 @@ configuration:
     description: Допълнителни origins за Control UI, разделени със запетая; сливат се в gateway.controlUi.allowedOrigins при lan_https (пример - https://ha.example.com:8443,capacitor://localhost)
 
   controlui_disable_device_auth:
-    name: Изключи device pairing за Control UI (lan_https)
-    description: "Когато е ВКЛ. (препоръчително), задава gateway.controlUi.dangerouslyDisableDeviceAuth=true и пропуска одобрението по устройство, за да избегне error 1008 в LAN HTTPS режим. Остави ВКЛ. за домашна/доверена мрежа. Изключи само ако искаш стриктно pairing потвърждение за всеки нов браузър/устройство."
+    name: Отживяла — без ефект (сдвояването винаги е чрез device flow)
+    description: "Отживяла опция (запазена за съвместимост). От OpenClaw 2026.9.8 флагът gateway.controlUi.dangerouslyDisableDeviceAuth е премахнат и игнориран от upstream, а приложението повече не го записва в конфигурацията на gateway. Браузърите на Control-UI винаги се сдвояват чрез нормалния device flow във всеки мрежов режим; не са необходими ръчни стъпки в терминала."
+  
+  abort_on_upgrade_backup_failure:
+    name: Прекъсване при неуспешен backup преди обновяване
+    description: "Когато е ВКЛ. (препоръчително), приложението не стартира новата OpenClaw версия, ако резервното копие преди обновяването е неуспешно (напр. пълен диск). Изключвайте само в извънредни случаи; връщането към предишната версия тогава може да е невъзможно."
+  
+  upgrade_backup_keep:
+    name: Запазени backup-и преди обновяване
+    description: "Колко архивни копия преди обновяване се пазят, преди най-старото да бъде изтрито (по подразбиране 3)."
+  
+  gateway_doctor_repair_max:
+    name: Doctor-ремонти на старт
+    description: "Максимален брой автоматични `openclaw doctor --fix` старта на приложение след 2 последователни неуспешни старта на gateway. 0 изключва автоматичния ремонт."
 
   gateway_port:
     name: Порт на Gateway

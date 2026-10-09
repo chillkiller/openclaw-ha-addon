@@ -39,8 +39,20 @@ configuration:
     description: Dodatkowe origins Control UI rozdzielone przecinkami; łączone z gateway.controlUi.allowedOrigins w trybie lan_https (przykład - https://ha.example.com:8443,capacitor://localhost)
 
   controlui_disable_device_auth:
-    name: Wyłącz parowanie urządzeń Control UI (lan_https)
-    description: "Gdy WŁĄCZONE (zalecane), ustawia gateway.controlUi.dangerouslyDisableDeviceAuth=true, pomija akceptację per-urządzenie i zapobiega błędowi 1008 w trybie LAN HTTPS. Zostaw WŁĄCZONE w domowej/zaufanej sieci. Wyłącz tylko jeśli chcesz ścisłe parowanie dla każdej nowej przeglądarki/urządzenia."
+    name: Przestarzała — bez efektu (parowanie zawsze przez przepływ urządzeń)
+    description: "Opcja przestarzała (zachowana dla kompatybilności). Od OpenClaw 2026.9.8 flaga gateway.controlUi.dangerouslyDisableDeviceAuth została wycofana i jest ignorowana przez upstream, a aplikacja nie zapisuje jej już w konfiguracji gatewaya. Przeglądarki Control-UI zawsze łączą się poprzez normalny przepływ parowania urządzeń w każdym trybie sieciowym; nie są wymagane żadne ręczne kroki w terminalu."
+  
+  abort_on_upgrade_backup_failure:
+    name: Przerwij przy nieudanej kopii przed aktualizacją
+    description: "Gdy WŁĄCZONE (zalecane), aplikacja nie uruchomi nowej wersji OpenClaw, jeśli kopia zapasowa przed aktualizacją się nie powiedzie (np. pełny dysk). Wyłączaj tylko w nagłych przypadkach; powrót do poprzedniej wersji może być wtedy niemożliwy."
+  
+  upgrade_backup_keep:
+    name: Liczba zachowanych kopii przed aktualizacją
+    description: "Ile kopii zapasowych przed aktualizacją jest przechowywanych, zanim najstarsza zostanie usunięta (domyślnie 3)."
+  
+  gateway_doctor_repair_max:
+    name: Naprawy doctor na start
+    description: "Maksymalna liczba automatycznych uruchomień `openclaw doctor --fix` na start aplikacji po 2 kolejnych nieudanych startach gatewaya. 0 wyłącza automatyczną naprawę."
 
   gateway_port:
     name: Port Gateway

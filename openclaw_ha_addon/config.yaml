@@ -1,7 +1,7 @@
-# OpenClaw Home Assistant App v0.7.12.7 Configuration
-# OpenClaw 2026.9.8 — GPT-6.1 Sol, delegated-result attribution, container update hardening
+# OpenClaw Home Assistant App v0.7.13 Configuration
+# OpenClaw 2026.9.9 — failed-update recovery, session archive repairs, Docker upgrade-loop fix
 name: OpenClaw Assistant
-version: "0.7.12.7"
+version: "0.7.13"
 slug: openclaw_ha_addon
 description: Agentic AI assistant for Home Assistant — full OpenClaw runtime with Ingress Web UI, web terminal, Assist pipeline and MCP integration
 url: https://github.com/chillkiller/openclaw-ha-addon
@@ -93,8 +93,23 @@ options:
   # Optional: additional allowed origins for ControlUI (rarely needed)
   gateway_additional_allowed_origins: ""
 
-  # Disable per-device Control UI auth ceremony (avoids pairing error 1008 on LAN)
+  # Deprecated since OpenClaw 2026.9.8: gateway.controlUi.dangerouslyDisableDeviceAuth
+  # is retired + ignored upstream; the app no longer writes this key (device pairing
+  # always uses the normal Control-UI device flow). Option kept for config compatibility.
   controlui_disable_device_auth: true
+
+  # --- v0.7.13 safety nets (TechArtDev 0.5.94 parity) ---
+  # Pre-upgrade state backup: archive openclaw.json + state/ + agents/ before
+  # the first boot of a changed OpenClaw version. Failing archive aborts the
+  # version change (data fail-closed) unless this is turned off.
+  abort_on_upgrade_backup_failure: true
+
+  # How many pre-upgrade archives to keep (newest wins).
+  upgrade_backup_keep: 3
+
+  # Automatic `openclaw doctor --fix` runs per app start after 2 consecutive
+  # failed gateway starts (openclaw.json snapshotted first). 0 disables.
+  gateway_doctor_repair_max: 3
 
   # Enable OpenAI-compatible Chat Completions API endpoint (for HA Assist pipeline)
   enable_openai_api: false
@@ -186,6 +201,9 @@ schema:
   gateway_trusted_proxies: str?
   gateway_additional_allowed_origins: str?
   controlui_disable_device_auth: bool?
+  abort_on_upgrade_backup_failure: bool?
+  upgrade_backup_keep: int(1,10)?
+  gateway_doctor_repair_max: int(0,10)?
   enable_openai_api: bool?
   force_ipv4_dns: bool?
   nginx_log_level: list(full|minimal)?

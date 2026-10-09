@@ -39,8 +39,20 @@ configuration:
     description: Kommagetrennte zusätzliche Control-UI-Origins, die bei lan_https in gateway.controlUi.allowedOrigins zusammengeführt werden (Beispiel - https://ha.example.com:8443,capacitor://localhost)
 
   controlui_disable_device_auth:
-    name: Control-UI-Geräte-Pairing deaktivieren (lan_https)
-    description: "Wenn EIN (empfohlen), setzt dies gateway.controlUi.dangerouslyDisableDeviceAuth=true, überspringt die Gerätefreigabe und vermeidet Fehler 1008 im LAN-HTTPS-Modus. Für Heim-/vertrauenswürdiges LAN eingeschaltet lassen. Nur AUS schalten, wenn du striktes Geräte-Pairing für jeden neuen Browser/jedes neue Gerät willst."
+    name: Veraltet — ohne Wirkung (Kopplung immer über Geräte-Flow)
+    description: "Veraltete Option (aus Kompatibilitätsgründen beibehalten). Seit OpenClaw 2026.9.8 ist gateway.controlUi.dangerouslyDisableDeviceAuth upstream entfernt und wirkungslos; die App schreibt den Schlüssel nicht mehr in die Gateway-Konfiguration. Control-UI-Browser koppeln in jedem Netzwerkmodus immer über den normalen Geräte-Flow; keine manuellen Terminal-Schritte nötig."
+  
+  abort_on_upgrade_backup_failure:
+    name: Abbruch bei fehlgeschlagenem Upgrade-Backup
+    description: "Wenn EIN (empfohlen), startet die App eine neue OpenClaw-Version nicht, wenn das Vorab-Backup fehlschlägt (z. B. volle Disk). Nur im Notfall AUS schalten; ein Rollback zur Vorgängerversion ist dann evtl. unmöglich."
+  
+  upgrade_backup_keep:
+    name: Zu behaltende Upgrade-Backups
+    description: "Anzahl der aufbewahrten Vorab-Backup-Archive, bevor das älteste gelöscht wird (Standard 3)."
+  
+  gateway_doctor_repair_max:
+    name: Doctor-Reparaturen pro Start
+    description: "Maximale automatische `openclaw doctor --fix`-Läufe pro App-Start nach 2 aufeinanderfolgenden fehlgeschlagenen Gateway-Starts. 0 deaktiviert die automatische Reparatur."
 
   network_mode:
     name: Netzwerkmodus

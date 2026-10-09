@@ -1,5 +1,5 @@
-# OpenClaw HA-App v0.7.12.7 — Debian Bookworm Full-Stack
-# OpenClaw 2026.9.8 + node-llama-cpp@3.20.0 + mcporter@0.12.3 + CUPS/Scanner + crawl4ai + Go-PATH-Fix + D-Bus/Avahi
+# OpenClaw HA-App v0.7.13 — Debian Bookworm Full-Stack
+# OpenClaw 2026.9.9 + node-llama-cpp@3.20.0 + mcporter@0.12.3 + CUPS/Scanner + crawl4ai + Go-PATH-Fix + D-Bus/Avahi
 # Builder stage removed (dead code since v0.7.5.1 — never wired)
 # Build dependencies are kept in the final image so runtime native builds work
 # NOTE: Since HA Supervisor 2026.04, build.yaml is obsolete. Base image must be
@@ -9,7 +9,7 @@ FROM ghcr.io/home-assistant/${BUILD_ARCH}-base-debian:bookworm
 
 # Labels required when not using the official GitHub builder action
 LABEL \
-  io.hass.version="0.7.12.7" \
+  io.hass.version="0.7.13" \
   io.hass.type="app" \
   io.hass.arch="aarch64|amd64"
 
@@ -276,7 +276,7 @@ RUN ARCH=$(echo ${TARGETARCH:-$(dpkg --print-architecture)} | sed 's|arm64|aarch
     && chmod +x /usr/local/bin/ttyd
 
 # =============================================================================
-# Install OpenClaw 2026.9.4 + node-llama-cpp 3.20.0 + mcporter 0.12.3
+# Install OpenClaw 2026.9.9 + node-llama-cpp 3.20.0 + mcporter 0.12.3
 # Bundle node-llama-cpp in the image so the default local memory/embeddings
 # provider works in HAOS without requiring manual npm installs in /usr/lib.
 #
@@ -286,22 +286,31 @@ RUN ARCH=$(echo ${TARGETARCH:-$(dpkg --print-architecture)} | sed 's|arm64|aarch
 # conservative thread count. The compiled binary is baked into the image.
 # =============================================================================
 ENV NODE_LLAMA_CPP_POSTINSTALL=skip
-RUN npm install -g openclaw@2026.9.8 \
+# Version pinned after the 0.7.13 delta analysis (dist-verified 2026-10-09:
+# exit-classifier token-identical to 2026.9.8, resolveThresholds byte-identical,
+# unicode-guard anchors + undefined-rejection shim registry present, no Node
+# engine bump). npm itself verifies the registry dist.integrity for the pinned
+# version; the post-install gate re-checks the exact installed version so a
+# silently wrong registry manifest fails the build loudly.
+RUN npm install -g openclaw@2026.9.9 \
+    && node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('/usr/lib/node_modules/openclaw/package.json','utf8'));if(p.version!=='2026.9.9'){console.error('ERROR: unexpected OpenClaw version installed: '+p.version);process.exit(1)};console.log('OpenClaw pin verified: '+p.version)" \
     && npm install -g node-llama-cpp@3.20.0 \
     && npm install -g mcporter@0.12.3 \
     && npm install -g pnpm \
     && npm cache clean --force
 
-# OpenClaw 2026.9.8 keeps the openai-http agentId fix natively (tarball-verified
-# 2026-10-03 in dist/openai-http-E_fP_MwD.mjs: agentId forwarded at lines 386/400).
-# No patch block needed.
+# OpenClaw 2026.9.9 keeps the openai-http agentId fix natively (tarball-verified
+# 2026-10-09 in dist/openai-http-CQ7X8xZA.mjs: agentId forwarded in the
+# request-context path). No patch block needed.
 
 # OWASP LLM01:2026 Control #5 — context-sensitive invisible-Unicode stripping at
 # OpenClaw's external-content ingest boundaries (web_fetch/web_search results,
 # email/webhook/cron/browser content). Upstream 2026.9.8 ships a naive char-class
 # strip that breaks valid ZWJ emoji (👨‍👩‍👧) and leaves isolated variation
 # selectors (U+FE00–U+FE0F) as a documented smuggling channel; web_search output
-# was not stripped at all. The patch script splices the tested implementation
+# strip was not stripped at all. Through 2026.9.9 upstream ships no native
+# sanitizer (tarball-verified 2026-10-09: the patch applies cleanly, universality
+# sweep 0 residues across 9160 dist files). The patch script splices the tested implementation
 # from unicode-guard/strip-invisible-unicode.mjs into the dist and fails the
 # build LOUDLY when upstream anchors change (never silently lose a security
 # control). Behavior matrix + tradeoffs: unicode-guard/README.md.

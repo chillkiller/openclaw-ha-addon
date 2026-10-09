@@ -81,6 +81,11 @@ CUSTOM_INIT_SCRIPT=$(jq -r '.custom_init_script // empty' "$OPTIONS_FILE")
 # OpenClaw 2026.9.1 configuration controls
 BLOCKED_HOSTNAMES=$(jq -r '.blocked_hostnames // empty' "$OPTIONS_FILE")
 
+# --- v0.7.13 safety-net options (jq has-guard per V7 pattern: explicit false wins) ---
+ABORT_ON_UPGRADE_BACKUP_FAILURE=$(jq -r 'if has("abort_on_upgrade_backup_failure") then (.abort_on_upgrade_backup_failure|tostring) else "true" end' "$OPTIONS_FILE")
+UPGRADE_BACKUP_KEEP=$(jq -r 'if has("upgrade_backup_keep") then (.upgrade_backup_keep|number) else 3 end' "$OPTIONS_FILE")
+GW_DOCTOR_REPAIR_MAX=$(jq -r 'if has("gateway_doctor_repair_max") then (.gateway_doctor_repair_max|number) else 3 end' "$OPTIONS_FILE")
+
 # ACPX harnesses (Claude Code, Codex, OpenCode)
 ACPX_ENABLED=$(jq -r 'if has("acpx_enabled") then (.acpx_enabled|tostring) else "true" end' "$OPTIONS_FILE")
 
@@ -828,6 +833,114 @@ export OPENCLAW_VERSION="$(openclaw --version 2>/dev/null | head -1 | awk '/^Ope
 echo "INFO: OpenClaw version detected: ${OPENCLAW_VERSION}"
 
 # -----------------------------------------------------------------------------
+# v0.7.13 (B1, TechArtDev 0.5.94 parity): pre-upgrade state backup.
+# Upstream verified backups only run WHILE the gateway starts. If that very
+# start triggers a schema migration and dies, the rollback path is gone
+# (proven by the 2026-10-04/05 crash-loop saga: 130 restart cycles ending in a
+# corrupted state DB). Archiving state BEFORE the first boot of a new version
+# makes the rollback honest. The gate lives inside start_openclaw_runtime so
+# every start attempt is covered; failure handling is fail-soft on the
+# container (nginx/terminal stay up) and fail-closed on the data (no start
+# into the new version unless abort_on_upgrade_backup_failure is turned OFF).
+# Snapshot members are explicit (openclaw.json + state/ + agents/); sibling bulk
+# dirs (media/, npm/, skills/, logs/, .cache/) are never members and thus never
+# enter the archive. WAL files are deliberately INCLUDED so the snapshot
+# reflects the active databases; *.sqlite-shm (rebuilt from WAL on restore),
+# transient locks and *.corrupt.* quarantine artifacts are excluded.
+# -----------------------------------------------------------------------------
+UPGRADE_BACKUP_DIR="${OPENCLAW_CONFIG_DIR}/upgrade-backups"
+
+backup_upgrade_state() {
+  # args: <version> -> archive upgrade-sensitive state once; caller updates state.
+  local version="$1" stamp archive tmp
+  local members=(./openclaw.json)
+  [ -d "${OPENCLAW_CONFIG_DIR}/state" ] && members+=(./state)
+  [ -d "${OPENCLAW_CONFIG_DIR}/agents" ] && members+=(./agents)
+  if [ "${#members[@]}" -lt 2 ]; then
+    echo "INFO: No existing OpenClaw state found; nothing to pre-upgrade back up."
+    return 0
+  fi
+  stamp="$(date -u +%Y%m%d-%H%M%S)"
+  archive="${UPGRADE_BACKUP_DIR}/openclaw-state-${version}-${stamp}.tar.gz"
+  tmp="${archive}.partial"
+  echo "INFO: Creating pre-upgrade state backup for OpenClaw ${version}..."
+  if ! tar -C "$OPENCLAW_CONFIG_DIR" \
+      --exclude='*.sqlite-shm' \
+      --exclude='*.lock' \
+      --exclude='*.corrupt.*' \
+      -czf "$tmp" "${members[@]}" 2>"${UPGRADE_BACKUP_DIR}/backup-errors.log"; then
+    rm -f "$tmp" 2>/dev/null || true
+    echo "ERROR: Pre-upgrade state backup FAILED (see ${UPGRADE_BACKUP_DIR}/backup-errors.log)."
+    return 1
+  fi
+  if ! mv "$tmp" "$archive"; then
+    rm -f "$tmp" 2>/dev/null || true
+    echo "ERROR: Could not finalize the pre-upgrade state backup."
+    return 1
+  fi
+  chmod 600 "$archive" 2>/dev/null || true
+  echo "INFO: Pre-upgrade state backup saved: ${archive}"
+  # Retention: keep the newest UPGRADE_BACKUP_KEEP archives.
+  ls -1t "${UPGRADE_BACKUP_DIR}"/openclaw-state-*.tar.gz 2>/dev/null \
+    | tail -n +"$((UPGRADE_BACKUP_KEEP + 1))" \
+    | while IFS= read -r old; do
+        echo "INFO: Pruning old upgrade backup: ${old}"
+        rm -f "$old" 2>/dev/null || true
+      done || true
+  return 0
+}
+
+# v0.7.13 (audit P2-6): atomic version-marker writes. A failed/truncated write
+# must never kill the supervisor shell (set -e) and a corrupted marker must not
+# silently skip a future backup (the gate self-heals from the archive names).
+record_upgrade_version() {
+  printf '%s' "$1" > "${UPGRADE_BACKUP_DIR}/.last-version.tmp" 2>/dev/null \
+    || { rm -f "${UPGRADE_BACKUP_DIR}/.last-version.tmp" 2>/dev/null || true; return 1; }
+  mv -f "${UPGRADE_BACKUP_DIR}/.last-version.tmp" "${UPGRADE_BACKUP_DIR}/.last-version" 2>/dev/null || true
+}
+
+upgrade_backup_gate() {
+  # args: <version>. Runs once per add-on start, before the gateway launch.
+  local version="$1" prev
+  [ -f "${OPENCLAW_CONFIG_DIR}/openclaw.json" ] || return 0
+  mkdir -p "$UPGRADE_BACKUP_DIR"
+  prev="$(cat "${UPGRADE_BACKUP_DIR}/.last-version" 2>/dev/null || echo '')"
+  if [ -z "$prev" ]; then
+    # Self-heal (audit P2-6b): an empty/truncated marker after power loss must
+    # not silently skip the next backup — derive the previous version from the
+    # newest archive name instead.
+    prev="$(ls -1t "${UPGRADE_BACKUP_DIR}"/openclaw-state-*.tar.gz 2>/dev/null | head -1 | sed -n 's/.*openclaw-state-\([0-9.]*\)-.*/\1/p' || true)"
+  fi
+  if [ -z "$prev" ]; then
+    # First boot with this system (fresh image or restored config):
+    # record baseline only — there is no previous version to roll back to.
+    if ! record_upgrade_version "$version"; then
+      echo "WARN: Could not record the upgrade baseline marker; the gate will re-check on the next start."
+    fi
+    return 0
+  fi
+  if [ "$prev" = "$version" ]; then
+    return 0
+  fi
+  echo "INFO: OpenClaw version change detected: ${prev} -> ${version}"
+  if backup_upgrade_state "$version"; then
+    if record_upgrade_version "$version"; then
+      echo "IMPORTANT: pre-upgrade backup complete; proceeding into OpenClaw ${version}."
+    else
+      echo "WARN: Pre-upgrade backup exists, but the version marker could not be updated; the gate will re-derive it from the archive on the next start."
+    fi
+    return 0
+  fi
+  if [ "${ABORT_ON_UPGRADE_BACKUP_FAILURE}" = "true" ]; then
+    echo "ERROR: abort_on_upgrade_backup_failure=true — NOT starting OpenClaw ${version} without a complete state backup. Free disk space or inspect ${UPGRADE_BACKUP_DIR}/backup-errors.log, then restart the app to retry."
+    return 1
+  fi
+  echo "WARN: abort_on_upgrade_backup_failure=false — continuing into OpenClaw ${version} WITHOUT a pre-upgrade backup. Rollback to the previous version may be impossible."
+  record_upgrade_version "$version" || true
+  return 0
+}
+
+# -----------------------------------------------------------------------------
 # Copy static Ingress assets (Docs, icon) into nginx web root
 # -----------------------------------------------------------------------------
 # docs/index.html is rendered from docs/index.html.tpl by render_nginx.py (v0.7.12.1).
@@ -1021,6 +1134,12 @@ fi
 
 start_openclaw_runtime() {
   echo "Starting OpenClaw Assistant runtime (openclaw)..."
+
+  # v0.7.13 (B1): pre-upgrade state backup gate — run before ANY gateway start
+  # attempt (initial and supervised retries) so a crashing migration can never
+  # destroy the only rollback copy. Gate returning 1 skips this start attempt;
+  # the supervisor loop retries after its (hardened, B8) backoff.
+  upgrade_backup_gate "$OPENCLAW_VERSION" || return 1
 
   # Apply gateway log level (Audit R4)
   export LOG_LEVEL="$GATEWAY_LOG_LEVEL"
@@ -1406,6 +1525,12 @@ if ! start_openclaw_runtime; then
   GW_IS_CHILD=false
   GW_PID=""
 fi
+# Only a successful (re)start updates the boot timer; if-form on purpose so a
+# failed initial start (empty GW_PID) can never kill the supervisor shell.
+if [ -n "${GW_PID:-}" ]; then
+  GW_BOOT_START=$(date +%s)
+  GW_PREV_BOOT_ALIVE=1   # the initial boot actually came up (audit P2-1)
+fi
 
 start_gw_relay
 
@@ -1431,6 +1556,16 @@ start_gw_relay
 #     3. Before any supervisor-initiated restart, do a final port-occupancy
 #        guard to prevent launching a duplicate.
 GW_IS_CHILD=true   # true only when GW_PID was started by us (can use `wait`)
+
+# --- v0.7.13 (B8/B4): restart-loop hardening state ---------------------------
+# GW_BOOT_START: wallclock at the most recent gateway (re)start — used to judge
+# boot health at exit time. GW_CONSECUTIVE_FAILS: drives exponential backoff
+# (2s -> 60s cap). GW_DOCTOR_REPAIR_RUNS: budget for automatic
+# `openclaw doctor --fix` runs per add-on start.
+GW_BOOT_START=$(date +%s)
+: "${GW_PREV_BOOT_ALIVE:=0}"   # was the last gateway attempt a boot that actually ran? (kept if the initial boot already came up)
+GW_CONSECUTIVE_FAILS=0
+GW_DOCTOR_REPAIR_RUNS=0
 
 while true; do
   if [ "$GW_IS_CHILD" = "true" ]; then
@@ -1472,6 +1607,8 @@ while true; do
     echo "INFO: OpenClaw runtime active (PID $RESTARTED_PID); monitoring."
     GW_PID="$RESTARTED_PID"
     GW_IS_CHILD=false
+    GW_BOOT_START=$(date +%s)
+    GW_PREV_BOOT_ALIVE=1
     continue
   fi
 
@@ -1488,11 +1625,69 @@ while true; do
     echo "INFO: Gateway port ${GATEWAY_INTERNAL_PORT} occupied by PID ${PORT_PID:-unknown}; monitoring."
     GW_PID="${PORT_PID:-$GW_PID}"
     GW_IS_CHILD=false
+    GW_BOOT_START=$(date +%s)
+    GW_PREV_BOOT_ALIVE=1
     continue
   fi
 
-  echo "WARN: OpenClaw runtime exited with code ${GW_EXIT_CODE}. Restarting in 2s..."
-  sleep 2
+  # --- v0.7.13 (B8): exponential restart backoff -----------------------------
+  # Boot health is sampled NOW (at exit detection), not after the detection
+  # sleeps above — measuring after the sleeps was the peer add-on's bug that
+  # pinned its backoff at 2s forever. Only a previous attempt that actually
+  # booted (GW_PREV_BOOT_ALIVE) and survived >= 120s (comfortably above the
+  # ~45s Pi cold start) resets the streak; a start that never came up (e.g.
+  # blocked by the upgrade-backup gate) must NOT reset it, or the streak could
+  # never trigger the doctor repair or grow the backoff.
+  GW_BOOT_SECONDS=$(( $(date +%s) - ${GW_BOOT_START:-0} ))
+  if [ "${GW_PREV_BOOT_ALIVE:-0}" = "1" ] && [ "$GW_BOOT_SECONDS" -ge 120 ]; then
+    GW_CONSECUTIVE_FAILS=0
+    echo "INFO: Previous gateway boot survived ${GW_BOOT_SECONDS}s; failure streak reset."
+  fi
+  GW_PREV_BOOT_ALIVE=0
+  GW_CONSECUTIVE_FAILS=$((GW_CONSECUTIVE_FAILS + 1))
+
+  # --- v0.7.13 (B4): automatic doctor repair gate ----------------------------
+  # After 2 consecutive failed starts, run `openclaw doctor --fix
+  # --non-interactive --yes` (documented non-interactive form) at most
+  # GW_DOCTOR_REPAIR_MAX times per add-on start, snapshotting openclaw.json
+  # first so the repair stays reversible. Doctor must never run against a live
+  # gateway state — we are between starts here (runtime exited), and only in
+  # local modes (remote mode must not repair a foreign gateway).
+  if [ "$GATEWAY_MODE" != "remote" ] && [ "$GW_CONSECUTIVE_FAILS" -ge 2 ] && [ "$GW_DOCTOR_REPAIR_RUNS" -lt "$GW_DOCTOR_REPAIR_MAX" ]; then
+    GW_DOCTOR_REPAIR_RUNS=$((GW_DOCTOR_REPAIR_RUNS + 1))
+    echo "NOTICE: Gateway failed ${GW_CONSECUTIVE_FAILS} times in a row; running 'openclaw doctor --fix' (attempt ${GW_DOCTOR_REPAIR_RUNS}/${GW_DOCTOR_REPAIR_MAX})..."
+    # Snapshot the live config first so the automatic repair stays reversible.
+    DOCTOR_STAMP="$(date -u +%Y%m%d-%H%M%S)"
+    cp -a "${OPENCLAW_CONFIG_DIR}/openclaw.json" "${OPENCLAW_CONFIG_DIR}/openclaw.json.pre-doctor-${DOCTOR_STAMP}" 2>/dev/null \
+      || echo "WARN: Could not snapshot openclaw.json before doctor --fix; proceeding without snapshot."
+    ls -1t "${OPENCLAW_CONFIG_DIR}"/openclaw.json.pre-doctor-* 2>/dev/null \
+      | tail -n +6 \
+      | while IFS= read -r old; do rm -f "$old" 2>/dev/null || true; done || true
+    if timeout 300 openclaw doctor --fix --non-interactive --yes; then
+      echo "INFO: 'openclaw doctor --fix' completed."
+    else
+      echo "WARN: 'openclaw doctor --fix' exited non-zero — repair may be incomplete."
+    fi
+  elif [ "$GW_CONSECUTIVE_FAILS" -ge 2 ]; then
+    echo "WARN: doctor repair budget exhausted (runs=${GW_DOCTOR_REPAIR_RUNS}/${GW_DOCTOR_REPAIR_MAX}) or remote mode; continuing with backoff only."
+  fi
+
+  # Clamp the exponent BEFORE exponentiation (audit P1-2): bash 64-bit
+  # arithmetic wraps at 2**63 (negative) — a wrapped value slips past the -gt 60
+  # cap and feeds `sleep` a negative interval (empirically proven on arm64).
+  if [ "$GW_CONSECUTIVE_FAILS" -ge 6 ]; then
+    GW_BACKOFF=60
+  else
+    GW_BACKOFF=$((2 ** GW_CONSECUTIVE_FAILS))
+  fi
+  if [ "$GW_BACKOFF" -gt 60 ]; then
+    GW_BACKOFF=60
+  fi
+  if [ "$GW_CONSECUTIVE_FAILS" -gt 5 ]; then
+    echo "NOTICE: Still failing after ${GW_CONSECUTIVE_FAILS} starts. Diagnose via terminal: 'openclaw doctor' and the gateway log under /config/.openclaw/logs."
+  fi
+  echo "WARN: OpenClaw runtime exited with code ${GW_EXIT_CODE}. Restarting in ${GW_BACKOFF}s (failure streak: ${GW_CONSECUTIVE_FAILS})..."
+  sleep "$GW_BACKOFF"
 
   # Stop the loopback relay BEFORE restarting the gateway (tailnet mode only).
   # The relay holds 127.0.0.1:GATEWAY_PORT — leaving it up causes the new gateway
@@ -1500,10 +1695,12 @@ while true; do
   stop_gw_relay
 
   if ! start_openclaw_runtime; then
-    echo "ERROR: Failed to restart OpenClaw runtime; retrying in 5s..."
-    sleep 5
+    echo "ERROR: Failed to restart OpenClaw runtime; retrying in ${GW_BACKOFF}s..."
+    sleep "$GW_BACKOFF"
   else
     GW_IS_CHILD=true
+    GW_BOOT_START=$(date +%s)
+    GW_PREV_BOOT_ALIVE=1
     start_gw_relay
   fi
 done

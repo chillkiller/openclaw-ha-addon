@@ -39,8 +39,20 @@ configuration:
     description: Comma-separated extra Control UI origins to merge into gateway.controlUi.allowedOrigins in lan_https mode (example - https://ha.example.com:8443,capacitor://localhost)
 
   controlui_disable_device_auth:
-    name: Disable Control UI Device Pairing (lan_https)
-    description: "When ON (recommended), sets gateway.controlUi.dangerouslyDisableDeviceAuth=true to skip per-device approval and avoid error 1008 in LAN HTTPS mode. Keep ON for home/trusted LAN. Turn OFF only when you want strict per-device pairing prompts on every new browser/device."
+    name: Deprecated — no effect (pairing always device-flow)
+    description: "Deprecated option (kept for compatibility). Since OpenClaw 2026.9.8 the gateway.controlUi.dangerouslyDisableDeviceAuth flag is retired and ignored upstream, and the app no longer writes it to the gateway config. Control-UI browsers always pair through the normal device flow in every network mode; no manual terminal steps are required."
+  
+  abort_on_upgrade_backup_failure:
+    name: Abort on Upgrade-Backup Failure
+    description: "If ON (recommended), the app will not start a new OpenClaw version when the pre-upgrade state backup fails (e.g. full disk). Turn OFF only in emergencies; a rollback to the previous version may then be impossible."
+  
+  upgrade_backup_keep:
+    name: Upgrade Backups to Keep
+    description: "How many pre-upgrade state archives are kept before the oldest is pruned (default 3)."
+  
+  gateway_doctor_repair_max:
+    name: Doctor Repair Runs per Start
+    description: "Maximum automatic `openclaw doctor --fix` runs per app start after 2 consecutive failed gateway starts. 0 disables automatic repair."
 
   network_mode:
     name: Network Mode
