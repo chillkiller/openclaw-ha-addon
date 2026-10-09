@@ -12,3 +12,4 @@ __pycache__/
 REPAIR_STATUS.md
 # Windows-Redirect-Artefakt
 nul
+/agents/
