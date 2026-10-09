@@ -220,13 +220,18 @@ def install_acpx_npm_project() -> bool:
         except Exception:
             need_install = True
 
-    # Audit round 4: package.json alone says nothing about node_modules —
+    # Follow-up audit: package.json alone says nothing about node_modules —
     # a failed npm install wrote package.json first, so every later boot
     # took the "already up to date" path while node_modules stayed absent
-    # (harnesses silently broken until a version pin changed).
-    if not need_install and not (PROJECT_DIR / "node_modules" / "@openclaw" / "acpx").exists():
-        log("node_modules incomplete (acpx missing); reinstalling")
-        need_install = True
+    # (harnesses silently broken until a version pin changed). Check every
+    # pinned dependency landed in node_modules ("@openclaw/acpx" ->
+    # node_modules/@openclaw/acpx, "opencode-ai" -> node_modules/opencode-ai).
+    if not need_install:
+        for dep in desired_pkg["dependencies"]:
+            if not (PROJECT_DIR / "node_modules" / Path(dep)).exists():
+                log(f"node_modules incomplete ({dep} missing); reinstalling")
+                need_install = True
+                break
 
     if need_install:
         write_json(package_json, desired_pkg)

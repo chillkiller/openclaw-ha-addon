@@ -47,6 +47,15 @@ GATEWAY_MODE=$(jq -r '.gateway_mode // "local"' "$OPTIONS_FILE")
 GATEWAY_REMOTE_URL=$(jq -r '.gateway_remote_url // empty' "$OPTIONS_FILE")
 NETWORK_MODE=$(jq -r '.network_mode // "ingress_only"' "$OPTIONS_FILE")
 GATEWAY_PORT=$(jq -r '.gateway_port // 18789' "$OPTIONS_FILE")
+# Validate at the boundary (follow-up audit): downstream users rely on a
+# numeric port — bash arithmetic ($((GATEWAY_PORT + 1))), render_nginx.py
+# and the openclaw.json bootstrap all run before/without re-checks.
+if [[ "$GATEWAY_PORT" =~ ^[0-9]+$ ]] && [ "$GATEWAY_PORT" -ge 1024 ] && [ "$GATEWAY_PORT" -le 65535 ]; then
+  :
+else
+  echo "ERROR: Invalid gateway_port '$GATEWAY_PORT'. Must be numeric 1024-65535. Using default 18789."
+  GATEWAY_PORT="18789"
+fi
 ENABLE_OPENAI_API=$(jq -r '.enable_openai_api // false' "$OPTIONS_FILE")
 GATEWAY_TRUSTED_PROXIES=$(jq -r '.gateway_trusted_proxies // empty' "$OPTIONS_FILE")
 GATEWAY_ADDITIONAL_ALLOWED_ORIGINS=$(jq -r '.gateway_additional_allowed_origins // empty' "$OPTIONS_FILE")
@@ -889,17 +898,23 @@ SANEOF
     fi
     rm -f "$CERT_DIR/gateway.csr" "$CERT_DIR/_san.ext" "$CERT_DIR/ca.srl"
     chmod 600 "$CERT_DIR/gateway.key"
-    if [ -f "$CERT_DIR/gateway.crt" ]; then
+    # Follow-up audit: openssl may leave a TRUNCATED gateway.crt behind when
+    # the -out file was opened but signing failed (disk full, CA/key errors)
+    # — `-f` alone passes for an empty file. Parse the cert for a real
+    # success gate; anything unparsable is deleted so the next boot
+    # regenerates and nginx fails loud instead of serving a broken cert.
+    if [ -f "$CERT_DIR/gateway.crt" ] \
+       && openssl x509 -in "$CERT_DIR/gateway.crt" -noout >/dev/null 2>&1; then
       printf '%s' "$LAN_IP" > "$CERT_DIR/.cert_ip"
       printf '%s' "$EXTRA_SANS" > "$CERT_DIR/.cert_extra_sans"
       touch "$CERT_DIR/.cert_ext"
       echo "INFO: Server TLS certificate generated (SAN: IP:${LAN_IP:-127.0.0.1}${EXTRA_SANS:+,${EXTRA_SANS}}, X.509v3 extensions present)"
     else
-      # Audit: markers and the success INFO only after the cert actually
-      # exists — a failed generation must not be masked; without the
-      # .cert_ext marker the next boot regenerates instead of trusting the
-      # broken state. nginx will fail on the absent ssl_certificate.
-      echo "ERROR: No server certificate in $CERT_DIR — lan_https cannot start. Check gateway_additional_allowed_origins/gateway_public_url and restart."
+      rm -f "$CERT_DIR/gateway.crt"
+      # Failed generation is not masked: the removed marker files and the
+      # missing gateway.crt force regeneration on the next boot; without a
+      # cert, lan_https cannot start this boot.
+      echo "ERROR: Server certificate generation failed (no valid cert in $CERT_DIR) — lan_https cannot start this boot. Check gateway_additional_allowed_origins/gateway_public_url and restart."
     fi
   else
     echo "INFO: Reusing existing TLS certificate (IP: $STORED_IP)"

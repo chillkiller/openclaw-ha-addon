@@ -72,12 +72,6 @@ def main():
     disk_pct = os.environ.get('DISK_PCT', '')
     nginx_log_level = os.environ.get('NGINX_LOG_LEVEL', 'minimal')
 
-    # Internal gateway port exposed to the landing page JS so it can probe
-    # the OpenClaw health endpoint for a deeper readiness indication.
-    # Reuse the VALIDATED variable (audit round 4): a second, unvalidated
-    # env read could drift past the port check above.
-    gateway_internal_port = internal_gw_port
-
     # Token comes from environment (best-effort CLI query in run.sh)
     token = os.environ.get('GW_TOKEN', '')
     # Audit: a token containing nginx metacharacters (quotes, semicolons,
@@ -195,8 +189,10 @@ def main():
     landing = landing.replace('__DISK_USED__', disk_used)
     landing = landing.replace('__DISK_AVAIL__', disk_avail)
     landing = landing.replace('__DISK_PCT__', disk_pct)
-    # Internal gateway port so the landing page can probe /healthz or /startupz
-    landing = landing.replace('__GATEWAY_INTERNAL_PORT__', gateway_internal_port)
+    # Internal gateway port so the landing page can probe /healthz or /startupz.
+    # Uses the VALIDATED variable (same value as the base conf substitution,
+    # line 115) — one name for one value, per audit.
+    landing = landing.replace('__GATEWAY_INTERNAL_PORT__', internal_gw_port)
 
     out_dir = Path('/etc/nginx/html')
     out_dir.mkdir(parents=True, exist_ok=True)
