@@ -151,6 +151,11 @@ Release-facing summary. Detailed per-release engineering notes: [openclaw_ha_add
 
 ## 0.7.10.21
 - Fix OpenClaw ControlUI asset loading inside HA Ingress when X-Ingress-Path header is missing by rewriting asset links to relative URLs (with absolute fallback when the header is present).
+## [0.7.14] - 2026-10-09
+
+### Changed
+- **ACP harness modernization (B9):** removed all custom ACP wrappers — acpx passthrough wrappers + ambient env routing instead. Claude Code, Codex and OpenCode reach the local Ollama backend with zero wrapper files; role-differentiated model defaults (audit: `kimi-k2.7-code:cloud`, forge: `glm-5.3-flash:cloud`), env-overridable. New config templates deploy to the acpx inheritance source (fixes recurring codex config clobber). Proven by 4 live audit runs through the real gateway.
+
 ## [0.7.9.24] - 2026-08-23
 
 ### Changed

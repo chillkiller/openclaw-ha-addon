@@ -1,3 +1,13 @@
+## [0.7.14] - 2026-10-09
+
+### Changed
+- **ACP harness modernization (B9):** removed all three custom ACP wrappers (`claude/codex/opencode-acp-wrapper.mjs`) plus `oc_provider_env.mjs` — the acpx plugin generates passthrough wrappers at gateway start and custom wrappers cannot survive that regeneration (they were repeatedly clobbered at 18:04/earlier). Provider routing now flows through ambient environment exports and config templates:
+  - `run.sh` exports `ANTHROPIC_BASE_URL` / `ANTHROPIC_AUTH_TOKEN` / `ANTHROPIC_MODEL` (default `glm-5.3-flash:cloud`, override via `OLLAMA_ACP_MODEL`) when no real `ANTHROPIC_API_KEY` is present — Claude Code reaches the local Ollama backend with zero wrapper or key files (proven end-to-end: `end_turn` against Ollama, 17.4k tokens).
+  - New template `acpx/.codex-source/config.toml`: codex provider routing to Ollama (`garon_ollama`, `wire_api = "responses"`, `requires_openai_auth = true` reading `auth.json`), `sandbox_mode = "workspace-write"`, trusted project entries. TOML model ids carry **no** `ollama/` prefix; opencode JSONC refs keep the prefix. Placeholders only — real endpoints live in runtime env, never committed.
+  - New template `acpx/opencode.jsonc`: OpenCode provider via OpenAI-compatible `baseURL` with role model token.
+  - `oc_acpx_helper.py`: role-differentiated model deployment (`__CODEX_MODEL__` for codex/audit, `__OPENCODE_MODEL__` for opencode/forge), env-overridable via `OLLAMA_CODEX_MODEL` / `OLLAMA_OPENCODE_MODEL`; harness config deploy now targets the acpx inheritance source (`/config/.codex`) instead of the regenerated `codex-home` (fixes recurring config-clobber root cause); dead code removed (`make_executable`, `find_installed_acp_binary`) per audit run.
+  - Verified by 4 live audit runs through the real gateway (codex harness on `kimi-k2.7-code:cloud`): sandbox/trust gating fixed (sandbox_mode + trusted project entries are runtime gates in the operative codex config), one real defect found and fixed (dead code), template/placeholder consistency re-audited clean (run 4: zero findings).
+
 ## [0.7.13.1] - 2026-10-09
 
 ### Fixed
