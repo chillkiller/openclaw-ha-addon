@@ -29,10 +29,17 @@
 
 ## RAM Configuration
 
-The gateway runs with a fixed 4 GB Node.js heap (`--max-old-space-size=4096`, hardcoded default in `run.sh`).
+The Node.js heap is **RAM-adaptive** since v0.7.12.4 (`--max-old-space-size` set from host RAM in `run.sh`):
+
+| System RAM | Heap |
+|---|---|
+| ≥ 24 GB | 8192 MB |
+| ≥ 12 GB | 6144 MB |
+| ≥ 8 GB | 4096 MB |
+| < 8 GB | 2048 MB |
 
 - **8 GB+ system RAM**: works with defaults
-- **Less than 8 GB**: reduce the heap for a stable system — e.g. `docker exec` into the container or use the app terminal to set `NODE_OPTIONS=--max-old-space-size=2048` for testing, and for persistence use the `gateway_env_vars` mechanism with care (Node options are reserved keys; the supported path is editing `run.sh` for custom builds)
+- **Less than 8 GB**: the app already selects a 2048 MB heap automatically; reduce further only for special cases — e.g. `docker exec` into the container or use the app terminal to set `NODE_OPTIONS=--max-old-space-size=2048` for testing, and for persistence use the `gateway_env_vars` mechanism with care (Node options are reserved keys; the supported path is editing `run.sh` for custom builds)
 
 ## Port Safety
 

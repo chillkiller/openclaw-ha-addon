@@ -40,34 +40,39 @@ OpenClaw is an **agentic AI assistant** — it can plan, reason, and execute act
 
 ### 2. Network Exposure
 
-When `gateway_bind_mode` is set to `lan`, the gateway is accessible to **all devices on your local network**. When exposed to the internet (via port forwarding or reverse proxy), it becomes accessible to **anyone**.
+Exposure is controlled by the **`network_mode`** option. Presets (see also `config.yaml`):
 
-When `gateway_bind_mode` is set to `tailnet`, the gateway is exposed only on your Tailscale network. This significantly reduces exposure compared with `lan`, but all authenticated tailnet peers can still reach it.
+| Preset | Gateway bind | TLS | Typical use |
+|---|---|---|---|
+| `ingress_only` | loopback | no | Default. Access only via the HA sidebar (Ingress) and the app terminal |
+| `lan_http` | LAN | no | Direct LAN access over plain HTTP — token sent unencrypted |
+| `lan_https` | loopback + local-CA HTTPS proxy | yes | Direct LAN access with a self-signed, local-CA-issued certificate |
+| `tailnet_serve` | loopback | yes | Reachable only from your Tailscale network |
+| `tailnet_funnel` | loopback | yes | Reachable from the public internet **through Tailscale's funnel** |
+| `reverse_proxy` | loopback | your proxy | You terminate TLS/identity in your own reverse proxy |
 
 **Risks**:
 - Unauthorized users could interact with your AI agent
-- API tokens could be intercepted over plain HTTP
+- With `lan_http`, tokens can be intercepted over plain HTTP
+- With `tailnet_funnel`, anyone holding the URL can reach the gateway's token gate
 - The gateway endpoint could be discovered by network scanners
 
 **Mitigations**:
-- Use HTTPS whenever possible (reverse proxy with TLS)
-- Never expose the gateway port directly to the internet without authentication and encryption
-- Use `gateway_bind_mode: loopback` if you only need local access
-- Prefer `gateway_bind_mode: tailnet` over `lan` when you need remote/private-network access
+- Use HTTPS whenever possible (`lan_https` or your own reverse proxy)
+- Prefer `lan_https`/`tailnet` over `lan_http` for remote/private-network access
+- Keep the default `ingress_only` mode if you only need local/sidebar access
 - Keep your gateway auth token secret
 
-### 3. Plain HTTP Authentication (`allow_insecure_auth`)
+### 3. Token Authentication
 
-Enabling `allow_insecure_auth` transmits authentication tokens over **unencrypted HTTP**. On a trusted home network this is generally acceptable, but:
+In most network modes the gateway authenticates via **token** (`gateway.auth.mode=token`). The app generates a random per-install token and injects it server-side into the Ingress proxy.
 
 **Risks**:
-- Anyone on your network can intercept the token
-- If your Wi-Fi is compromised, the token is exposed
+- If your LAN is compromised (e.g. open Wi-Fi) while using `lan_http`, the token can be intercepted
 - The token grants full access to the gateway
 
 **Mitigations**:
-- Only enable on trusted networks
-- Never enable when the gateway is exposed to the internet
+- Only enable `lan_http` on trusted networks; prefer `lan_https` or `tailnet` modes
 - Rotate your gateway token periodically: `openclaw config set gateway.auth.token <new-token>`
 
 ### 4. Home Assistant Token
@@ -135,9 +140,9 @@ AI agents that process external content (web pages, documents, emails) are vulne
 
 | Practice | Priority |
 |---|---|
-| Use HTTPS for remote access | High |
-| Keep `gateway_bind_mode: loopback` unless network access is needed | High |
-| Prefer `gateway_bind_mode: tailnet` over `lan` for remote/private access | High |
+| Use HTTPS for remote access (`lan_https`, `tailnet_*`, or your own reverse proxy) | High |
+| Keep the default `network_mode: ingress_only` unless direct network access is needed | High |
+| Prefer `tailnet_*` over `lan_http` for remote/private access | High |
 | Only install skills from trusted sources | High |
 | Review exposed entities in Assist pipeline | High |
 | Keep the app updated | High |
@@ -145,6 +150,15 @@ AI agents that process external content (web pages, documents, emails) are vulne
 | Monitor app logs regularly | Medium |
 | Rotate gateway tokens periodically | Medium |
 | Back up your configuration regularly | Low |
+
+## Supported Versions
+
+Security fixes are only published for the latest release. Earlier releases (including patch-level hotfixes of the same minor line) should be treated as unsupported.
+
+| Version line | Supported |
+|---|---|
+| latest release (see `openclaw_ha_addon/config.yaml` / `CHANGELOG.md`) | ✅ |
+| older releases | ❌ — update first |
 
 ---
 
