@@ -1,7 +1,7 @@
-# OpenClaw Home Assistant App v0.7.13.4 Configuration
+# OpenClaw Home Assistant App v0.7.13.5 Configuration
 # OpenClaw 2026.9.9 — failed-update recovery, session archive repairs, Docker upgrade-loop fix
 name: OpenClaw Assistant
-version: "0.7.13.4"
+version: "0.7.13.5"
 slug: openclaw_ha_addon
 description: Agentic AI assistant for Home Assistant — full OpenClaw runtime with Ingress Web UI, web terminal, Assist pipeline and MCP integration
 url: https://github.com/chillkiller/openclaw-ha-addon
@@ -170,6 +170,20 @@ options:
   # gateway_env_vars, this URL is ignored for the corresponding provider.
   ollama_base_url: "http://localhost:11434"
 
+  # Optional: Override the model the Codex (audit) harness uses via the local
+  # Ollama backend. Default: kimi-k2.7-code:cloud
+  ollama_acp_codex_model: ""
+
+  # Optional: Override the model the OpenCode (forge) harness uses via the
+  # local Ollama backend. Default: glm-5.3-flash:cloud
+  ollama_acp_opencode_model: ""
+
+  # Optional: Comma-separated additional ACP harness names to allow besides
+  # the built-in claude/codex/opencode/openclaw (e.g. "pi,colibri,gemini").
+  # Custom agents must also exist in the OpenClaw agent roster with
+  # runtime.type=acp pointing at a harness adapter.
+  acp_additional_allowed_agents: ""
+
   # Optional: Space-separated list of apt packages to install at container startup.
   # Packages are reinstalled on each restart (not persistent in image).
   # Example: "ffmpeg postgresql-client"
@@ -218,6 +232,9 @@ schema:
   auto_configure_mcp: bool?
   acpx_enabled: bool?
   ollama_base_url: str?
+  ollama_acp_codex_model: str?
+  ollama_acp_opencode_model: str?
+  acp_additional_allowed_agents: str?
   runtime_apt_packages: str?
   custom_init_script: str?
   blocked_hostnames: str?

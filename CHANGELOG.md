@@ -168,6 +168,10 @@ Release-facing summary. Detailed per-release engineering notes: [openclaw_ha_add
 
 ## 0.7.10.21
 - Fix OpenClaw ControlUI asset loading inside HA Ingress when X-Ingress-Path header is missing by rewriting asset links to relative URLs (with absolute fallback when the header is present).
+## [0.7.13.5] - 2026-10-10
+
+### Added
+- **Custom ACP harness support (generic):** options for harness model overrides + additional allowed harness agents; new bundled plugin `acp-dashboard-binding` auto-binds Control-UI dashboard sessions at configured ACP harness agents (dynamic roster).
 ## [0.7.9.24] - 2026-08-23
 
 ### Changed

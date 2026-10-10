@@ -1,3 +1,14 @@
+## [0.7.13.5] - 2026-10-10
+
+### Added
+- **Custom ACP harness support (generic, user-independent):**
+  - New options `ollama_acp_codex_model` / `ollama_acp_opencode_model` (harness model overrides, previously env-only) and `acp_additional_allowed_agents` (CSV of extra harness names beside claude/codex/opencode/openclaw).
+  - `oc_acpx_helper.py`: `acp.allowedAgents` no longer overwrites user sets — union of built-ins + user extras (`or`-defaults for empty option values); new `deploy_plugin()` (sha256-manifest per file, copy only on change, prune node_modules, registers `plugins.entries` user-preserving).
+  - New bundled plugin `acp-dashboard-binding`: webchat `SessionBindingAdapter` that routes Control-UI dashboard sessions at configured ACP harness agents automatically (dynamic roster read from `agents.entries.*.runtime.acp` — no hardcoded agent list; `main` never matched; empty roster = safe no-op). Resolves the last manual step (`/acp spawn --bind here`) for harness chats in the Control UI.
+
+### Verified
+- 9 live ACP-harness pipeline runs (recherche/build/review/fix/generalization): codex + claude + opencode harnesses against local Ollama; 56/56 plugin tests, tsc strict clean, py/bash/yaml checks green; independent codex re-review: READY FOR PHASE 3.
+
 ## [0.7.13.4] - 2026-10-09
 
 ### Security

@@ -1,0 +1,20 @@
+{
+  "id": "acp-dashboard-binding",
+  "channels": ["acp-dashboard-binding"],
+  "name": "ACP Dashboard Binding",
+  "description": "SessionBindingAdapter for the internal webchat channel: resolves agent-qualified dashboard conversation keys to ACP harness session targets (codex/claude/opencode).",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {}
+  },
+  "channelConfigs": {
+    "acp-dashboard-binding": {
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      }
+    }
+  }
+}

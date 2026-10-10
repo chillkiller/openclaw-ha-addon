@@ -22,6 +22,7 @@ All operations are idempotent and safe to run on every app restart.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
@@ -36,6 +37,14 @@ ACPX_DIR = CONFIG_DIR / "acpx"
 WRAPPER_SRC_DIR = Path("/openclaw_ha_addon/acpx")
 PROJECT_DIR = ACPX_DIR / ".node_project"
 OPENCODE_GLOBAL_DIR = Path("/config/opencode")
+# Bundled plugin payloads shipped in the add-on image (copied to
+# CONFIG_DIR/plugins/<name> at start; never copied recursively from the
+# running acpx project dir, which has live node_modules).
+PLUGIN_SRC_DIR = WRAPPER_SRC_DIR.parent / "plugins"
+PLUGIN_NAME = "acp-dashboard-binding"
+# Target-owned directories that a copytree from the pristine source must
+# never clobber (npm-managed or VCS-managed payload added at runtime).
+PRUNED_PLUGIN_DIRS = {"node_modules", ".git", "__pycache__"}
 CODEX_SOURCE_HOME = Path("/config/.codex")
 
 # npm package versions (bump when the app image is rebuilt)
@@ -44,12 +53,14 @@ OPENCLAW_CODEX_VERSION = os.environ.get("OPENCLAW_CODEX_VERSION", "2026.7.1-1")
 OPENCODE_VERSION = os.environ.get("OPENCODE_VERSION", "latest")
 OPENCODE_PACKAGE = os.environ.get("OPENCODE_PACKAGE", "opencode-ai")
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
-# Role-differentiated harness models (verified 2026-10-09, GaRoN decision):
-#   codex = coding-review (Audit)  -> kimi-k2.7-code:cloud
-#   opencode = coding-main (Forge) -> glm-5.3:cloud
-# gemma4 was only ever a placeholder; never use it for audits.
-OLLAMA_CODEX_MODEL = os.environ.get("OLLAMA_CODEX_MODEL", "kimi-k2.7-code:cloud")
-OLLAMA_OPENCODE_MODEL = os.environ.get("OLLAMA_OPENCODE_MODEL", "glm-5.3-flash:cloud")
+# Harness model defaults. Generic app rule (GaRoN 2026-10-10): the add-on must
+# work user-independent — these are only DEFAULTS; real overrides come from
+# add-on options (run.sh forwards them as env: ollama_acp_*_model).
+#   acp codex models  : OLLAMA_CODEX_MODEL  (add-on option: ollama_acp_codex_model)
+#   acp opencode models: OLLAMA_OPENCODE_MODEL (add-on option: ollama_acp_opencode_model)
+# gemma4 was only ever a budget-emergency placeholder; never ship it as default.
+OLLAMA_CODEX_MODEL = os.environ.get("OLLAMA_CODEX_MODEL") or "kimi-k2.7-code:cloud"
+OLLAMA_OPENCODE_MODEL = os.environ.get("OLLAMA_OPENCODE_MODEL") or "glm-5.3-flash:cloud"
 
 # Template tokens that must never be committed as real infra data (AGENTS.md
 # security hygiene: LAN addresses stay out of the repository).
@@ -185,6 +196,90 @@ def prepare_opencode_home() -> None:
         log("Replaced legacy opencode config.toml placeholder")
 
 
+def plugin_source_manifest(src: Path) -> dict[str, str]:
+    """sha256 manifest of the pristine plugin source (relative path -> hex)."""
+    manifest: dict[str, str] = {}
+    for path in sorted(src.rglob("*")):
+        if path.is_dir():
+            continue
+        rel = path.relative_to(src).as_posix()
+        if any(part in PRUNED_PLUGIN_DIRS for part in path.relative_to(src).parts):
+            continue
+        manifest[rel] = hashlib.sha256(path.read_bytes()).hexdigest()
+    return manifest
+
+
+def deploy_plugin() -> bool:
+    """Idempotently deploy the bundled ACP dashboard binding plugin.
+
+    Copies PLUGIN_SRC_DIR/<PLUGIN_NAME> (TS sources + openclaw.plugin.json
+    manifest + package.json, NO node_modules — npm layout is plugin-local)
+    into CONFIG_DIR/plugins/<PLUGIN_NAME> so the gateway can load it from
+    its user-owned plugin root, and registers
+    plugins.entries['<PLUGIN_NAME>'] = {enabled: true} in openclaw.json
+    (agents and user plugin entries preserved — same patch pattern as
+    patch_openclaw_config). The copy fires only when the source actually
+    differs from the target (sha256 comparison per file), so unchanged
+    restarts stay read-only.
+    """
+    src = PLUGIN_SRC_DIR / PLUGIN_NAME
+    dst = CONFIG_DIR / "plugins" / PLUGIN_NAME
+
+    if not (src / "openclaw.plugin.json").exists():
+        log(f"WARNING: plugin source not found (no manifest): {src}")
+        return False
+
+    desired = plugin_source_manifest(src)
+
+    needs_copy = False
+    for rel, digest in desired.items():
+        target = dst / rel
+        try:
+            current = hashlib.sha256(target.read_bytes()).hexdigest()
+        except (OSError, FileNotFoundError):
+            needs_copy = True
+            break
+        if current != digest:
+            needs_copy = True
+            break
+
+    if not needs_copy:
+        log(f"Plugin {PLUGIN_NAME} already up to date at {dst}")
+    else:
+        dst.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(
+            src,
+            dst,
+            dirs_exist_ok=True,
+            ignore=shutil.ignore_patterns(*PRUNED_PLUGIN_DIRS),
+        )
+        log(f"Deployed plugin {PLUGIN_NAME} -> {dst}")
+
+    # Register the plugin as enabled. Only touch entries we own: if the user
+    # has a plugins.entries entry for this plugin, flip enabled to true but
+    # leave their remaining fields intact.
+    config_path = CONFIG_DIR / "openclaw.json"
+    try:
+        if not config_path.exists():
+            log(f"INFO: {config_path} does not exist; skipping plugin registration")
+            return True
+        cfg = read_json(config_path)
+        plugins = cfg.setdefault("plugins", {})
+        entries = plugins.setdefault("entries", {})
+        entry = entries.setdefault(PLUGIN_NAME, {})
+        if not isinstance(entry, dict):
+            log(f"WARN: plugins.entries.{PLUGIN_NAME} is not an object; leaving it untouched")
+            return True
+        if entry.get("enabled") is not True:
+            entry["enabled"] = True
+            write_json(config_path, cfg)
+            log(f"Registered plugins.entries.{PLUGIN_NAME}.enabled=true in openclaw.json")
+        return True
+    except Exception as e:
+        log(f"ERROR: plugin registration failed: {e}")
+        return False
+
+
 def install_acpx_npm_project() -> bool:
     """Ensure a managed npm project exists with the required ACP packages.
 
@@ -309,10 +404,16 @@ def patch_openclaw_config() -> bool:
         changed = True
 
     allowed = set(acp.get("allowedAgents", []) or [])
-    required_allowed = {"claude", "codex", "opencode", "openclaw"}
-    missing = required_allowed - allowed
+    # Generic app rule (GaRoN 2026-10-10): never overwrite a user-owned
+    # allowedAgents list. We only union in the built-in harness names plus
+    # user extras (add-on option acp_additional_allowed_agents, forwarded
+    # by run.sh as ACP_ADDITIONAL_ALLOWED_AGENTS env; CSV).
+    base_allowed = {"claude", "codex", "opencode", "openclaw"}
+    extra_raw = os.environ.get("ACP_ADDITIONAL_ALLOWED_AGENTS", "")
+    extra_allowed = {a.strip() for a in extra_raw.split(",") if a.strip()}
+    missing = (base_allowed | extra_allowed) - allowed
     if missing:
-        acp["allowedAgents"] = sorted(allowed | required_allowed)
+        acp["allowedAgents"] = sorted(allowed | base_allowed | extra_allowed)
         changed = True
 
     if changed:
@@ -330,7 +431,8 @@ def patch_openclaw_config() -> bool:
 def main() -> int:
     log("Initializing local-model ACP harnesses (Codex, Claude, OpenCode)")
     deploy_harness_configs()
-    ok = install_acpx_npm_project()
+    ok = deploy_plugin()
+    ok = install_acpx_npm_project() and ok
     ok = patch_openclaw_config() and ok
     if ok:
         log("ACPX initialization complete")

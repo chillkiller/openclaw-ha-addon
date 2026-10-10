@@ -81,6 +81,11 @@ TRACE_LOG_TO_CONSOLE=$(jq -r '.trace_log_to_console // false' "$OPTIONS_FILE")
 # claude / codex / opencode harnesses can talk to a remote Ollama instance.
 OLLAMA_BASE_URL=$(jq -r '.ollama_base_url // "http://localhost:11434"' "$OPTIONS_FILE")
 export OLLAMA_BASE_URL
+# Harness model overrides + user-owned allowed agent extras (generic app rule,
+# GaRoN 2026-10-10): forwarded as env for oc_acpx_helper.py + acpx templates.
+export OLLAMA_CODEX_MODEL=$(jq -r '.ollama_acp_codex_model // empty' "$OPTIONS_FILE")
+export OLLAMA_OPENCODE_MODEL=$(jq -r '.ollama_acp_opencode_model // empty' "$OPTIONS_FILE")
+export ACP_ADDITIONAL_ALLOWED_AGENTS=$(jq -r '.acp_additional_allowed_agents // empty' "$OPTIONS_FILE")
 
 # Local-model provider routing for ACP harnesses (verified 2026-10-09):
 # The acpx generated codex/claude wrappers passthrough this ambient env, so

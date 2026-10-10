@@ -359,6 +359,10 @@ All options are set via **Settings → Apps → OpenClaw Assistant → Configura
 | `mdns_host_name` | string | `openclaw` | Hostname to advertise (without `.local`) |
 | `acpx_enabled` | bool | `true` | Install the managed ACPX npm project and wrapper launchers so OpenClaw can run coding agents (Claude Code, Codex, OpenCode) through the local ACPX backend. Existing user-configured agents are preserved |
 | `ollama_base_url` | string | `http://localhost:11434` | Ollama endpoint used by the ACPX wrappers when no real `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` is set (ignored per provider once real keys exist in `gateway_env_vars`) |
+| `ollama_acp_codex_model` | string | *(empty)* | Override the model the Codex (audit) harness uses against the local Ollama backend (default `kimi-k2.7-code:cloud`). Empty = built-in default |
+| `ollama_acp_opencode_model` | string | *(empty)* | Override the model the OpenCode (forge) harness uses against the local Ollama backend (default `glm-5.3-flash:cloud`). Empty = built-in default |
+| `acp_additional_allowed_agents` | string | *(empty)* | Comma-separated extra ACP harness names to allow besides the built-in `claude`/`codex`/`opencode`/`openclaw` (see [Custom ACP harnesses](#6f-custom-acp-harnesses-advanced)) |
+
 ---
 
 ## 6. Use Case Guides
@@ -704,6 +708,41 @@ For users who prefer not to host their own models, commercial APIs (like OpenAI)
 - **Pros:** Highest quality embeddings, zero local resource usage.
 
 ---
+
+### 6f. Custom ACP harnesses (advanced)
+
+The ACP backend ships with four built-in harnesses: `claude`, `codex`, `opencode` and `openclaw`. You can point additional harnesses at your own models through two mechanisms.
+
+#### Model overrides for the built-in harnesses
+
+By default the Codex harness (audit role) talks to Ollama with `kimi-k2.7-code:cloud` and the OpenCode harness (forge role) with `glm-5.3-flash:cloud`. Two app options override these models without touching any config file:
+
+- **Codex model override:** `ollama_acp_codex_model`
+- **OpenCode model override:** `ollama_acp_opencode_model`
+
+Leave them empty to keep the built-in defaults. They only take effect while the harness actually uses the local Ollama backend (see `ollama_base_url` in the [Configuration Reference](#5-configuration-reference)).
+
+#### Additional allowed agents
+
+`acp_additional_allowed_agents` accepts a comma-separated list of additional harness names (e.g. `pi,gemini`). These are unioned into the `acp.allowedAgents` list in `openclaw.json` alongside the four built-ins.
+
+This list is **user-owned**: the app never truncates or rewrites an existing `acp.allowedAgents` value — it only unions in entries that are missing. You can freely add or remove names in `openclaw.json` yourself; the app will restore the built-in four plus your option extras on the next start, and leave everything else untouched.
+
+Each allowed agent also needs a matching agent in the OpenClaw roster with `runtime.type: "acp"` in `agents.entries`. The roster is fully dynamic: any `agents.entries.<id>` whose runtime type is `acp` is dispatchable through the harness backend (`main` is never rostered). Set `runtime.acp.agent` to the harness name you allowed, e.g.:
+
+```json
+"agents": {
+  "entries": {
+    "gemini-review": {
+      "runtime": { "type": "acp", "acp": { "agent": "gemini", "mode": "persistent" } }
+    }
+  }
+}
+```
+
+#### Dashboard binding for custom agents
+
+The bundled `acp-dashboard-binding` plugin (deployed to `/config/.openclaw/plugins/` on app start, enabled automatically as `plugins.entries['acp-dashboard-binding']`) binds the dashboard webchat channel to ACP harness sessions. It reads the agent roster dynamically, so agents you add via the mechanism above become dashboard-bindable automatically — no plugin reconfiguration is required.
 
 ---
 
