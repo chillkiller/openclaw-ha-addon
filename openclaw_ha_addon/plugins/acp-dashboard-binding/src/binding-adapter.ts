@@ -16,8 +16,14 @@
  * - `get-reply` retargets the session only when the record is NOT
  *   plugin-owned (`isPluginOwnedSessionBindingRecord` requires
  *   `metadata.pluginBindingOwner === "plugin"` with pluginId + pluginRoot).
- *   We deliberately do NOT set that metadata, so both dispatch paths accept
- *   our ACP target and retarget away from the built-in dashboard session.
+ *   Since Phase 2.20 (F4 reply-delivery gap) the derive DOES set that metadata
+ *   on purpose: host retarget is skipped and the turn routes through the
+ *   plugin-bound claim path (`inbound_claim` in src/reply-claim.ts), which runs
+ *   the harness turn via the gateway (`sessions.send` + `agent.wait`) and hands
+ *   the reply to the host for delivery into the dashboard conversation.
+ *   When no plugin root is registered yet (e.g. bare unit tests),
+ *   `buildPluginOwnedBindingMetadata()` returns null and the record stays
+ *   retarget-based (legacy Phase-2.18b behavior).
  * - This module stays import-free of SDK VALUES (types only, erased at
  *   runtime) so channel.test.ts can run without the host runtime present.
  *   Registering the adapter with the host happens in src/channel.ts; the one
@@ -57,12 +63,12 @@ import {
   BINDING_CHANNEL,
   BINDING_ID_PREFIX,
   BINDING_SOURCE_LABEL,
-  buildAcpBindingSessionKey,
   buildBindingId,
   buildChannelAccountKey,
+  buildPluginOwnedBindingMetadata,
   parseAgentIdFromConversationId,
   resolveHarnessAgentSpec,
-  resolveHarnessSessionTargetKey,
+  resolveHarnessTargetOrigin,
   type HarnessAgentSpec,
   isAcpShapedSessionKey,
   normalizeAccountId,
@@ -193,14 +199,6 @@ function deriveBindingRecord(ref: BindingConversationRef, options: DashboardBind
   const spec: HarnessAgentSpec | null = resolveHarnessAgentSpec(options.getConfig?.(), agentId);
   if (!spec) return null;
 
-  // Phase 2.18b (F3 Weg A): the gate-ladder above decides WHO binds and is
-  // untouched — only the TARGET changes here. A validated
-  // `config.harnessSessions` entry (a real, explicitly spawned persistent ACP
-  // session key, ACP-shaped, not an orchestrator target) replaces the
-  // synthetic key; unset/invalid entries keep the previous synthetic target.
-  // Metadata below stays informative either way.
-  const configuredTargetKey: string | null = resolveHarnessSessionTargetKey(options.getConfig?.(), spec);
-
   const conversation: BindingConversationRef = {
     channel,
     accountId,
@@ -210,22 +208,40 @@ function deriveBindingRecord(ref: BindingConversationRef, options: DashboardBind
       : {}
   };
 
+  // Phase 2.18b (F3 Weg A) → Phase 2.21: the gate-ladder above decides WHO
+  // binds and is untouched — only the TARGET changes here. One shared cascade
+  // (agent-map resolveHarnessTargetOrigin): validated `config.harnessSessions`
+  // entry (manual override) > auto-provisioned per-agent persistent session
+  // (fire-and-forget ensure through the host's official spawn contract) >
+  // the pre-2.21 synthetic per-conversation key.
+  const target = resolveHarnessTargetOrigin(options.getConfig?.(), spec, conversation);
+
   const metadata: Record<string, unknown> = {
+    // F4: plugin-owned ownership fields win — spread LAST would let callers
+    // override the host predicate fields, so they are merged after the
+    // informative fields below but with ownership never overridable.
     source: BINDING_SOURCE_LABEL,
     mode: spec.mode,
     agentId: spec.agentId
   };
+  if (target.origin === "provisioned") metadata.provisioned = true;
   if (spec.harness) metadata.acpAgentId = spec.harness;
   if (spec.cwd) metadata.cwd = spec.cwd;
   if (spec.backend) metadata.backend = spec.backend;
+  // F4: claim-path ownership markers (host runs the plugin-bound dispatch for
+  // such records instead of retargeting). Null when no plugin root registered.
+  const pluginOwned = buildPluginOwnedBindingMetadata();
+  if (pluginOwned) Object.assign(metadata, pluginOwned);
 
   return {
     bindingId: buildBindingId({ channel, accountId, conversationId, kind: "derived" }),
     // buildConfiguredAcpSessionKey-equivalent target; `agent:codex:acp:...`
     // makes host isAcpSessionKey true -> resolveSessionDispatchKind === "acp".
     // With a validated harnessSessions entry the target is the REAL spawned
-    // session key instead (which actually carries an acp_sessions row — F3).
-    targetSessionKey: configuredTargetKey ?? derivedTargetSessionKey(conversation, spec.agentId),
+    // session key (F3); with auto-provisioning active it is the deterministic
+    // per-agent harness session, ensured through the host's official spawn
+    // contract (Phase 2.21).
+    targetSessionKey: target.targetKey,
     targetKind: "session",
     conversation,
     status: "active",
@@ -234,6 +250,18 @@ function deriveBindingRecord(ref: BindingConversationRef, options: DashboardBind
     boundAt: 0,
     metadata
   };
+}
+
+/**
+ * Public derive mirror for reply-claim.ts: the adapter's own Turn-1 synthesis
+ * against a caller-provided config (same cascade the adapter resolves with on
+ * a §4.2/bridge row-miss).
+ */
+export function deriveDashboardBindingRecord(
+  ref: BindingConversationRef,
+  cfg: unknown,
+): DashboardBindingRecord | null {
+  return deriveBindingRecord(ref, { getConfig: () => cfg });
 }
 
 /** Ref projection for the §4.2 delegation into dashboard-bridge. */
@@ -269,17 +297,6 @@ function bridgedRecord(
     roster: createConfigHarnessRoster(options.getConfig?.()),
   });
   return bridged ? (bridged as unknown as DashboardBindingRecord) : null;
-}
-
-function derivedTargetSessionKey(conversation: BindingConversationRef, agentId: string): string {
-  // buildConfiguredAcpSessionKey-equivalent construction (host dist
-  // persistent-bindings.types-DWbrbd8R.mjs); one consistent builder in agent-map.
-  return buildAcpBindingSessionKey({
-    channel: conversation.channel,
-    accountId: conversation.accountId,
-    conversationId: conversation.conversationId,
-    agentId
-  });
 }
 
 function sameConversation(a: BindingConversationRef, b: BindingConversationRef): boolean {

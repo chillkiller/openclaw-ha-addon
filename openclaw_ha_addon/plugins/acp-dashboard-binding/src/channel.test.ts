@@ -1,15 +1,23 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import {
   BINDING_CHANNEL,
   CHANNEL_ID,
   DEFAULT_CWD_PREFIX,
   buildAcpBindingSessionKey,
+  buildHarnessProvisionedSessionKey,
+  ensureDashboardHarnessProvisioning,
+  isHarnessProvisionedSessionKey,
   parseAgentIdFromConversationId,
+  pendingDashboardHarnessProvisioning,
+  resetDashboardBindingProvisionerForTest,
+  resolveAutoProvisionEnabled,
   resolveHarnessAgentSpec,
   resolveHarnessAgentSpecs,
-  resolveHarnessSessionTargetKey
+  resolveHarnessSessionTargetKey,
+  setDashboardBindingProvisioner,
+  type DashboardHarnessProvisioner
 } from "./agent-map.js";
 import { createDashboardBindingAdapter } from "./binding-adapter.js";
 import {
@@ -425,6 +433,138 @@ describe("Phase 2.19 Turn-1-Race (Bridge noch nicht aktiv)", () => {
 
   it("mit undefined-Config bleibt die Lücke null (Safe-Default unverändert)", async () => {
     expect(await createDashboardBindingAdapter({ getConfig: () => undefined }).resolveByConversationAsync!(DASHBOARD_REF)).toBeNull();
+  });
+});
+
+// --- Phase 2.21: Workspace-Konvention + Auto-Provisioning (GaRoN 11:59/12:30)
+describe("Phase 2.21: Workspace-Konvention + Auto-Provisioning", () => {
+  // Module-scoped provisioner state — never leak between suites/tests.
+  afterEach(() => {
+    resetDashboardBindingProvisionerForTest();
+  });
+
+  it("DEFAULT_CWD_PREFIX liegt auf der Agent-Konvention /config/clawd/agents/", () => {
+    expect(DEFAULT_CWD_PREFIX).toBe("/config/clawd/agents/");
+    const cfg = { agents: { entries: { codex: { runtime: { type: "acp" } } } } };
+    expect(resolveHarnessAgentSpec(cfg, "codex")?.cwd).toBe("/config/clawd/agents/codex");
+    // entry-cfg cwd winzt weiterhin (Plugin liest echte Pfade aus agents.entries).
+    expect(resolveHarnessAgentSpec(HARNESS_CFG, "claude")?.cwd).toBe("/share/temp/claude-ws");
+  });
+
+  it("autoProvision: default true; nur explizites boolean false deaktiviert", () => {
+    expect(resolveAutoProvisionEnabled(undefined)).toBe(true);
+    expect(resolveAutoProvisionEnabled({})).toBe(true);
+    for (const autoProvision of [true, "false", 0, null]) {
+      expect(resolveAutoProvisionEnabled({ plugins: { entries: { [CHANNEL_ID]: { config: { autoProvision } } } } })).toBe(true);
+    }
+    expect(resolveAutoProvisionEnabled({ plugins: { entries: { [CHANNEL_ID]: { config: { autoProvision: false } } } } })).toBe(false);
+  });
+
+  it("provisionierter Key ist deterministisch pro Agent und host-grammar-gültig", () => {
+    const key = buildHarnessProvisionedSessionKey({ agentId: "codex" });
+    const expected = buildAcpBindingSessionKey({
+      channel: "webchat",
+      accountId: "default",
+      conversationId: "harness:codex",
+      agentId: "codex"
+    });
+    expect(key).toBe(expected);
+    expect(key).toBe(`agent:codex:acp:binding:webchat:default:${expectedHostHash("webchat", "default", "harness:codex")}`);
+    expect(key.startsWith("agent:codex:acp:binding:webchat:default:")).toBe(true);
+    expect(isHarnessProvisionedSessionKey("codex", key)).toBe(true);
+    expect(isHarnessProvisionedSessionKey("codex", buildHarnessProvisionedSessionKey({ agentId: "claude" }))).toBe(false);
+    expect(buildHarnessProvisionedSessionKey({ agentId: "codex" })).toBe(key); // deterministisch
+  });
+
+  function provisionAdapter() {
+    return createDashboardBindingAdapter({ getConfig: () => HARNESS_CFG });
+  }
+
+  it("Target-Kaskade: harnessSessions > provisioniert > synthetisch", async () => {
+    // 1. Kein Provisioner registriert → synthetisch (Verhalten 2.18b unverändert).
+    const synth = await provisionAdapter().resolveByConversationAsync!(DASHBOARD_REF);
+    expect(synth?.targetSessionKey).toBe(
+      buildAcpBindingSessionKey({ channel: "webchat", accountId: "default", conversationId: DASHBOARD_KEY, agentId: "codex" })
+    );
+    expect(synth?.metadata?.provisioned).toBeUndefined();
+
+    // 2. Provisioner registriert, kein harnessSessions → provisionierter Key.
+    const kicks: Array<[string, string]> = [];
+    const provisioner: DashboardHarnessProvisioner = async (spec, targetSessionKey) => {
+      kicks.push([spec.agentId, targetSessionKey]);
+    };
+    setDashboardBindingProvisioner(provisioner);
+    const provisioned = await provisionAdapter().resolveByConversationAsync!(DASHBOARD_REF);
+    const provKey = buildHarnessProvisionedSessionKey({ agentId: "codex" });
+    expect(provisioned?.targetSessionKey).toBe(provKey);
+    expect(provisioned?.metadata?.provisioned).toBe(true);
+    // Dedupe: wiederholte Resolves starten keinen zweiten Ensure
+    // (Signature-Cache nach Erfolg bzw. In-flight-Join).
+    expect(await provisionAdapter().resolveByConversationAsync!(DASHBOARD_REF)).toEqual(provisioned);
+    expect(kicks).toHaveLength(1);
+
+    // 3. harnessSessions (manueller Override) gewinnt ÜBER den Provisioner.
+    const cfgConfigured = withHarnessSessions({ codex: REAL_CODEX_SESSION_KEY });
+    const configured = await createDashboardBindingAdapter({ getConfig: () => cfgConfigured })
+      .resolveByConversationAsync!(DASHBOARD_REF);
+    expect(configured?.targetSessionKey).toBe(REAL_CODEX_SESSION_KEY);
+    expect(configured?.metadata?.provisioned).toBeUndefined();
+
+    // 4. autoProvision:false → wieder synthetisch, kein Kick.
+    resetDashboardBindingProvisionerForTest();
+    setDashboardBindingProvisioner(provisioner);
+    const off = await createDashboardBindingAdapter({
+      getConfig: () => ({ ...HARNESS_CFG, plugins: { entries: { [CHANNEL_ID]: { config: { autoProvision: false } } } } })
+    }).resolveByConversationAsync!(DASHBOARD_REF);
+    expect(off?.targetSessionKey).toBe(synth?.targetSessionKey);
+    expect(off?.metadata?.provisioned).toBeUndefined();
+    expect(kicks).toHaveLength(1);
+  });
+
+  it("Ensure-Dedupe: Erfolg mit gleichem Spec wird übersprungen, Spec-Änderung re-ensured, Fehler retried", async () => {
+    const ensureCalls: string[] = [];
+    let fail = true;
+    setDashboardBindingProvisioner(async (spec) => {
+      ensureCalls.push(`${spec.agentId}:${spec.cwd ?? "-"}`);
+      await new Promise<void>((resolve) => setTimeout(resolve, 0)); // bleibt in-flight
+      if (fail) throw new Error("backend down");
+    });
+    const spec = resolveHarnessAgentSpec(HARNESS_CFG, "codex")!;
+    // Fehler: kein Signature-Cache → nächster Consult retried.
+    await (ensureDashboardHarnessProvisioning(HARNESS_CFG, spec) ?? Promise.resolve(false));
+    await (ensureDashboardHarnessProvisioning(HARNESS_CFG, spec) ?? Promise.resolve(false));
+    expect(ensureCalls).toHaveLength(2);
+
+    fail = false;
+    await (ensureDashboardHarnessProvisioning(HARNESS_CFG, spec) ?? Promise.resolve(false));
+    expect(ensureCalls).toHaveLength(3);
+    // Erfolg mit identischem Spec → Skip (null), KEIN vierter Ensure.
+    expect(ensureDashboardHarnessProvisioning(HARNESS_CFG, spec)).toBeNull();
+    // Anderer Spec (cwd) → Re-Ensure (In-flight-Schutz: pro Agent läuft max. EINS).
+    const changed = { ...spec, cwd: "/config/clawd/agents/codex" };
+    await (ensureDashboardHarnessProvisioning(HARNESS_CFG, changed) ?? Promise.resolve(false));
+    expect(ensureCalls).toHaveLength(4);
+    // In-flight wird gejoint, nicht verdoppelt.
+    const pending = ensureDashboardHarnessProvisioning(HARNESS_CFG, { ...spec, cwd: "/other/ws" });
+    expect(pending).not.toBeNull();
+    expect(ensureDashboardHarnessProvisioning(HARNESS_CFG, { ...spec, cwd: "/other/ws" })).toBe(pending);
+    expect(ensureCalls).toHaveLength(5);
+    await pending ?? 0;
+  });
+
+  it("pendingDashboardHarnessProvisioning zeigt den laufenden Ensure (Reply-Claim-Barrier-Seam)", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    setDashboardBindingProvisioner(async () => {
+      await gate;
+    });
+    const spec = resolveHarnessAgentSpec(HARNESS_CFG, "codex")!;
+    const run = ensureDashboardHarnessProvisioning(HARNESS_CFG, spec);
+    expect(pendingDashboardHarnessProvisioning("codex")).toBe(run);
+    expect(pendingDashboardHarnessProvisioning("claude")).toBeNull();
+    release();
+    await run;
+    expect(pendingDashboardHarnessProvisioning("codex")).toBeNull();
   });
 });
 

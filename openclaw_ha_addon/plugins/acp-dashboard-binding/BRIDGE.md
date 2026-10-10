@@ -460,6 +460,175 @@ harness-id gewinnt bei Kollision, agent id deckt Entries ohne `acp.agent` ab.
   werden ignoriert (Fallback synthetisch) statt die ganze Bindung abzulehnen.
 
 **Weg B — host-seitiger ensure-Pfad (Materialisierung der `acp_sessions`-Row host-seitig)**
-bleibt Upstream-Issue gegen OpenClaw (§7 unten: „Option A host-seitiger ensure" bzw.
-Turn-1-Fehler-UX). So lange gibt es für NICHT eingetragene Harnesses keinen Weg, eine
-synthetische binding-key-Session zu initialisieren.
+ist seit Phase 2.21 überflüssig geworden: der Plugin nutzt den offiziellen
+`ensureConfiguredAcpBindingReady`-Contract (plugin-sdk `acp-binding-runtime`) SELBST —
+siehe §11.1 (synthetische Keys bleiben unbeinitialisierbar, aber provisionierte Keys sind
+echt gespawned und ready).
+
+## 10. Reply-Delivery-Claim (Phase 2.20 F4 → Phase 3.1 Fix 2.0, Weg A: Agent-Spawn)
+
+**Problem (F4):** Webchat-UI-Delivery ist Transcript-Projektion auf die ORIGIN-Konversation
+(dispatch-from-config ~1926 scannt per runId-Match); retargetete Dispatches schreiben den Reply
+NUR ins TARGET-Transcript, und `resolveReplyRoutingDecision` (:2926) liefert webchat→webchat immer
+false → der Harness-Reply stirbt im Target. Der Host-eigene Pfad für plugin-owned Bindings claimt
+stattdessen den Turn: plugin-owned Records (`pluginBindingOwner:"plugin"` + pluginId + pluginRoot,
+gesetz seit Phase 2.20 in derive/synthesize/hydrate; adapter-bind bleibt marker-frei) →
+`resolveBoundAcpDispatchSessionKey` SKIP Retarget (:191) → `hookRunner.runInboundClaimForPluginOutcome`
+→ case `handled`: `persistPluginBindingUserTurn` + `deliverBindingPayload(reply,"terminal",owner)` →
+Mirror-Append (TARGET) + `broadcastChatTerminal` (LIVE ORIGIN).
+
+**Phase 2.20-Seam (verworfen):** der Claim-Handler startete den Turn via
+`api.runtime.gateway.request("sessions.send" → ack.runId → "agent.wait" → terminalReply)`.
+LIVE-BEFUND 12:09:58: `Gateway requests are only available to bundled or trusted official
+plugins. Plugin "acp-dashboard-binding"` — `dispatchTrustedPluginGatewayMethod`
+(server-plugins-CzOpf53P.mjs:369) verlangt `canTrustedOfficialPluginRequestScopes` (offizielle
+Katalog-Provenienz + Integrität; Source-Path-Plugin erreicht das NIE, kein Config-Flag).
+
+**Phase 3.1 Weg A (implementiert, src/reply-claim.ts):** Turn-Start über `api.runtime.subagent`:
+- `subagent.run({sessionKey: target, message})` dispatcht den `agent`-Gateway-Method **in-process**
+  (`dispatchGatewayMethodInProcess`, `agentRunTracking:"plugin_subagent"`, synthetischer
+  system-Operator-Client) — OHNE den trusted-official-Gate (Beleg:
+  `createGatewayPluginRuntimeBindings` binde `subagent` unangetastet neben `gateway`
+  (package-update-activation-recovery.mjs:1308663); `createGatewaySubagentRuntime.run` ruft
+  `dispatchGatewayMethodInProcess("agent", …)` direkt, server-plugins-CzOpf53P.mjs).
+  Doc: docs/plugins/sdk-runtime/background-work.md#api-runtime-subagent.
+- `subagent.waitForRun({runId, timeoutMs})` → kanonisches Wait-Result (`AgentWaitResult`,
+  run-wait.types.d.ts) mit `terminalReply {disposition:"visible", text}`; Status auch `pending`
+  (in-process, kein Client-Timeout-Grace nötig; Timeout cancelt NICHT den Run).
+- `api.runtime.hooks.dispatchHookAgentTurn` ist explizit trust-gated + `hook:`-key-gebunden —
+  NICHT verwendbar; subagent ist der Architektur-korrekte Agent-Spawn-Weg.
+- Delivery bleibt Claim-Result-basiert: `{handled:true, reply:{text}}` → Host `deliverBindingPayload`
+  (kein eigener Session-Write — alle Write-Seams ohne Gateway wären Trust-gesichert).
+- Fallback-Vertrag unverändert: `handled:false` NUR vor Turn-Start (run wirft/kein runId/keine
+  subagent-Surface/gateway unavailable → Host-Notice + Normal-Processing); NACH Turn-Start immer
+  `handled:true` (Wait-Failure-Notice bei waitForRun-Throw), sonst Doppel-Processing.
+- Option `harnessReplyWaitMs` (default 120s, clamp 1s–15min) bounds waitForRun.
+
+## 11. Phase 2.21 — Auto-Provisioning + Workspace-Konvention (GaRoN 11:59/12:30)
+
+### 11.1 Auto-Provisioning (harnessSessions wird optional)
+
+**RE-Befund (dist-verifiziert, 2026-10-10):** Es gibt einen un-gegateten OFFIZIELLEN
+Spawn-Contract in der Plugin-SDK: `openclaw/plugin-sdk/acp-binding-runtime` exportiert
+`ensureConfiguredAcpBindingReady` (dist/persistent-bindings.lifecycle-DU_YBswY.mjs:
+`ensureConfiguredAcpBindingSession`) → `acpManager.resolveSessionAsync` (Struktur-Check) →
+`acpManager.initializeSession` (manager-DsPnlciX.mjs:1041 `runManagerInitializeSession`) →
+`runtime.ensureSession` (ECHTER Backend-Spawn, cwd/model/thinking through runtimeOptions) →
+Session-Meta-Write (`writeSessionMeta`/`upsertAcpSessionMetaRow`, state "idle"). Danach
+antwortet `resolveStoredAcpSession` `kind:"ready"` — d. h. **die §9-Lücke
+(synthetische Keys können nie initialisiert werden) ist für keys, die der Plugin selbst
+via diesem Contract initialisiert, geschlossen.** Kein Trust-Gate auf diesem Weg (anders
+als `api.runtime.gateway.request`, siehe §10).
+
+**Implementierung:**
+- Neue Config-Option `plugins.entries['acp-dashboard-binding'].config.autoProvision`
+  (default **true**; nur explizites `false` deaktiviert). `harnessSessions` bleibt als
+  manueller Override und ist keine PFLICHT mehr.
+- **Target-Kaskade** (eine Herleitung, geteilt von Adapter-Derive UND Bridge-Decision —
+  `resolveHarnessTargetOrigin`/`HarnessRoster.harnessProvisionedTargetKey` in agent-map.ts):
+  1. `harnessSessions` (validiert, wie §9) → configured target.
+  2. Auto-Provision (autoProvision aktiv + Provisioner registriert) → deterministischer
+     Key pro Agent, Ensure fire-and-forget gekickt.
+  3. Synthetischer per-Conversation-Key (Pre-2.21-Fallback, §9-Lücke bleibt dokumentiert).
+- **Deterministischer Keys statt random Mint:** `agent:<agentId>:acp:binding:webchat:default:<sha16("webchat:default:harness:<agentId>")>`
+  (buildHarnessProvisionedSessionKey — exakt `buildConfiguredAcpSessionKey`-Grammatik,
+  conversationId ist das Pseudo-Ergebnis `harness:<agentId>`). Vorteile: Derive bleibt
+  synchron/deterministisch (Resolve→Touch→Re-Resolve-Stabilität, §4.2/§10-Vertrag bricht
+  nicht), Restart-regenerierbar, ein Key pro Agent.
+- **Dedupe/Lifecycle (agent-map):** Ensure-Dedupe pro Agent (in-flight Join), Spec-Signatur-
+  Cache nach Erfolg (gleiche spec → Skip), Spec-Änderung → Re-Ensure (ensure contract
+  selbst schließt/neuspawnt bei Struktur-Mismatch), Fehler → kein Cache, nächster Consult
+  retried. Provisioner-Registrierung: setDashboardBindingProvisioner (index.ts, registerFull),
+  Dispose cleared via eigenem RuntimeLifecycle (`acp-dashboard-binding.auto-provision`).
+- **Barrier:** resolved Records handen den Key IMMER sofort aus (fire-and-forget) — der
+  erste echte Dispatch wartet im Reply-Claim (src/reply-claim.ts) auf den in-flight Ensure
+  (`pendingDashboardHarnessProvisioning`), NUR für provisionierte Targets. Ein
+  fehlgeschlagener Ensure blockiert den Claim nicht: der Turn startet trotzdem und der
+  Host surfact die ACP-Init-Fehlermeldung als Reply (`handled:true`, sonst Doppel-Processing).
+- **Metadata-Parität:** provisionierte Records (Derive UND Bridge-Synthese) tragen
+  `metadata.provisioned: true` (informativ); configured/synthetisch nicht.
+
+### 11.2 Workspace-Konvention
+
+Persistente Harness-Workspaces leben auf der AGENT-KONVENTION:
+`/config/clawd/agents/<agentId>/` (codex, claude, opencode, …). `DEFAULT_CWD_PREFIX`
+(agent-map.ts) ist jetzt `/config/clawd/agents/`; das Plugin liest die eigentlichen
+Workspace-Pfade ohnehin aus `agents.entries` cfg (Präzedenz `runtime.acp.cwd` >
+`entry.cwd` > `entry.workspace` > Default-Prefix). Die `/share/temp/acpx-workspace/`-Welt
+ist ab jetzt NUR noch Pipeline-Run-Scratch (sessions_spawn mit cwd-Isolation je run).
+
+### 11.3 Alt-Last (Bereinigung = Trash-Go des Operators, der Plugin löscht NICHTS)
+
+Die Harness-Workspaces `/share/temp/acpx-workspace/{codex,claude}` tragen GaRoN-Test-
+Verunreinigungen (codex: `memory/2026-10-10-1101.md`, claude: `memory/dreaming/`) +
+geseedete Identitätsdateien (AGENTS/SOUL/IDENTITY/USER + avatars; BOOTSTRAP.md in opencode)
+aus dem alten Workflow. Der neue Workflow legt Identität+Workspace am
+`/config/clawd/agents/<id>/` an; die alten Dateien sind Alt-Last und können vom Operator
+separat bereinigt werden (der neue Workflow referenziert sie nicht mehr).
+
+## 12. Phase 3.5 — Transcript-Mirror-Fehlt (GaRoN 12:23 — Forensik + Fix, 2026-10-10)
+
+### 12.1 Befund
+
+Test 5 (Session cbaa0035 @ 12:23, live): der Turn WURDE sauber geroutet — der Target-Session
+26b6335a erhielt `human_direct_message` + `run_completed` ✓, `state_heads` aktualisiert ✓ —
+ABER GaRoN sah die Antwort in seinem UI-Chat (cbaa0035) nicht.
+
+### 12.2 Verifizierte Mirror-Mechanik (dist, 2026.9.9)
+
+- **Claim-Delivery-Kette:** `deliverBindingPayload(reply, "terminal", transcriptOwner)`
+  (dispatch-from-config-BG9rT_X3.mjs:3077-3094) baut
+  `sourceReplyTranscriptMirror: transcriptOwner` in das Reply-Payload; falls
+  `routeReplyOperationToOriginating` null liefert (webchat→webchat: `routeReplyRuntime`
+  :2967 ist für interne Webchat-Turns nie geladen) → `turnLedger`-Fallback → projektierter
+  Chat-Dispatcher → `finalizeChatSendDispatchedReplies`
+  (chat-send-handler-CxoF4cDR.mjs:2297): Assistant-Append an den MIRROR-OWNER (kind
+  "owner", `expectedSessionId` erfüllt) ODER Skip (kind "blocked", Recorder hat den
+  Turn bereits persistiert) + immer `broadcastChatTerminal({sessionKey: ORIGIN})` (:2491)
+  als LIVE-Delivery.
+- **Mirror-Owner ist IMMER das TARGET:** `persistPluginBindingUserTurn`
+  (dispatch-from-config:2603-2645, :2601) nimmt `pluginBindingSessionKey =
+  pluginOwnedBindingRecord.targetSessionKey` und persistiert den User-Turn (approved)
+  in die TARGET-Session — `resolveTranscriptMirrorOwner` (chat-send-handler:2266) löst
+  also auf `record.targetSessionKey` auf. Der ORIGIN-Transcript erhält in der
+  Claim-Pipeline NIE eine Assistant-Zeile — per Host-Code (empirisch bestätigt:
+  codex-DB Target-Window 8c5d21fa seq15 = Mirror-Append der Notice mit
+  `idem ph35-mirror-test-0001`; Origin-Window fd0f1d7d steht ohne Reply).
+- **Unsere Row kann daran nichts ändern** (alle drei Host-Design-Pfade void):
+  (a) `deliverBindingPayload` liest KEINE Binding-Row-Metadata für den Mirror
+  (Owner ist Recorder/host-hergeleitet);
+  (b) `session_upstream_links` ist eine EXTERNAL-Catalog-Watcher-Tabelle
+  (join mit session_watch_cursors nötig; dist-Datei ist reine Watcher-Verwaltung) —
+  KEIN Reply-Mirror-Mechanismus; live leer;
+  (c) direkte Origin-Transcript-Writes via `sessions.*`/Transcript-Append sind für
+  Source-Path-Plugins trust-gegatet (§10: `dispatchTrustedPluginGatewayMethod`).
+- **Alternativer Host-Modus (warum kein Patch):** die designed acpx-Thread-Lage
+  (🤖-Threads, z. B. 79ce1bb3→claude ad83e8ed) hat KEINEN Origin-Transcript-Window
+  überhaupt — das Control-UI liest die Historie aus der gebundenen TARGET-Session.
+  Plugin-owned Records sind aber vom Reply/Historie-Retarget-Pfad ausgeschlossen
+  (`isPluginOwnedSessionBindingRecord`, get-reply-eZY--4sq.mjs) — für einen
+  Origin-Chat, der die Target-Historie anzeigt, müsste das Record-Marker-Prädikat
+  des Hosts einen zweiten Ausschluss-Zweck bekommen bzw. das Control-UI müsste
+  gebundene Chats auf die Target-Session-Lese-Pfad legen. Beides ist Host-(Upstream-)Sache.
+
+### 12.3 Sichtbarkeit = Live-Broadcast + Target-Historie
+
+In der Phase-3.1-Architektur ist die Antwort in GaRoN's Chat daher BY HOST DESIGN
+LIVE-only sichtbar (`broadcastChatTerminal`, chat-send-handler:2414/:2491 — solange die
+UI-Verbindung steht). Vollständige Historie (User+Assistant) ist im TARGET/Harness-
+Session-Transcript persistiert (dorthin spiegelte der Host), nicht im Origin-Chat.
+Nach einem Reload der Origin-Chat-Ansicht fehlen die Antworten bis zum Upstream-Fix.
+Fix-Weg (Upstream-Issue, nicht Plugin): Origin-Transcript-Mirror für plugin-owned
+Bindings in `persistPluginBindingUserTurn`/`sourceReplyTranscriptMirror` ergänzen
+(Owner-Berechnung um `originSessionKey` erweitern) — dokumentiert als der gewählte
+"kein Host-Patch"-Pfad.
+
+### 12.4 MVP-Fix im Rahmen (Race-Hardening)
+
+Neuer Live-Bug aus Phase 3.5: `subagent.run` ackt den runId BEVOR der Gateway den Run
+registriert (audit `agent.run.started` ~200 ms nach dem Ack) — der sofortige
+`waitForRun` warf und degradierte zur "waiting failed"-Notice (traf BEIDE Live-Tests).
+`settleRunWait` (src/reply-claim.ts) retried jetzt schnelle Wait-Failures mit kurzem
+Backoff [100,250,500,750] ms (Optionen `waitRetryDelaysMs`/`waitRetryCallBudgetMs`
+für Tests); langsame Throws gehen direkt zur Notice (echter API-Fehler). 123 Tests,
+tsc 0; MVP==Repo==/config/.openclaw/plugins bit-identisch.

@@ -27,15 +27,18 @@ import {
   type SessionBindingRuntimeModule,
   type SessionBindingServiceLike,
 } from "./dashboard-bridge.js";
-import { createDashboardBindingAdapter } from "./binding-adapter.js";
+import { createDashboardBindingAdapter, deriveDashboardBindingRecord } from "./binding-adapter.js";
 import {
   ORCHESTRATOR_AGENT_IDS,
+  buildHarnessProvisionedSessionKey,
   isOrchestratorAgentId,
   isRosterEligibleAgentId,
+  resetDashboardBindingProvisionerForTest,
   resolveBoundAgentAllowlist,
   resolveExcludedAgentIds,
   resolveHarnessAgentSpec,
   resolveHarnessAgentSpecs,
+  setDashboardBindingProvisioner,
 } from "./agent-map.js";
 
 const DASHBOARD_UUID = "123e4567-e89b-12d3-a456-426614174000";
@@ -1184,5 +1187,105 @@ describe("dashboard-bridge: Phase 2.18b harnessSessions (F3, Weg A) — bridge r
       expect(viaBridgeAdapter?.targetSessionKey).toBe(REAL_CODEX_KEY);
     }
     handle.dispose();
+  });
+});
+
+// --- Phase 2.21: Auto-Provisioning (GaRoN 11:59/12:30) — bridge roster path
+describe("dashboard-bridge: Phase 2.21 auto-provisioning — bridge roster path", () => {
+  const ref = {
+    channel: "webchat" as const,
+    accountId: "default",
+    conversationId: CODEX_DASHBOARD_KEY,
+  };
+
+  function harnessRosterConfig(): unknown {
+    return {
+      agents: {
+        entries: {
+          codex: {
+            runtime: { type: "acp", acp: { mode: "persistent", backend: "acpx", cwd: "/share/temp/codex" } },
+          },
+        },
+      },
+    };
+  }
+
+  function harnessSessionsRoster(harnessSessions: unknown): HarnessRoster {
+    return createConfigHarnessRoster({
+      ...harnessRosterConfig(),
+      plugins: { entries: { [CHANNEL_ID]: { config: { harnessSessions } } } },
+    } as never);
+  }
+
+  afterEach(() => {
+    resetDashboardBindingProvisionerForTest();
+  });
+
+  it("roster ohne Provisioner: harnessProvisionedTargetKey null, targetOrigin synthetisch", () => {
+    const roster = harnessRoster();
+    expect(roster.harnessProvisionedTargetKey?.("codex")).toBeNull();
+    const decision = resolveDashboardBindingDecision(ref, roster);
+    expect(decision?.targetOrigin).toBe("synthetic");
+    expect(decision?.targetSessionKey).toBe(buildDashboardAcpTargetSessionKey({
+      agentId: "codex",
+      conversationId: CODEX_DASHBOARD_KEY,
+    }));
+    expect(synthesizeDashboardBindingRecord(decision!)?.metadata?.provisioned).toBeUndefined();
+  });
+
+  it("roster mit Provisioner: deterministischer per-agent Key, Kick gefeuert (deduped), targetOrigin provisioniert", () => {
+    const kicks: string[] = [];
+    setDashboardBindingProvisioner(async () => {
+      kicks.push("ensure");
+    });
+    const roster = harnessRoster();
+    const provisionedKey = buildHarnessProvisionedSessionKey({ agentId: "codex" });
+    expect(roster.harnessProvisionedTargetKey?.("codex")).toBe(provisionedKey);
+    // Deterministisch + Kick deduped (Signature-Cache nach Erfolg).
+    expect(roster.harnessProvisionedTargetKey?.("codex")).toBe(provisionedKey);
+    expect(kicks).toHaveLength(1);
+
+    const decision = resolveDashboardBindingDecision(ref, roster);
+    expect(decision?.targetOrigin).toBe("provisioned");
+    expect(decision?.targetSessionKey).toBe(provisionedKey);
+    const record = synthesizeDashboardBindingRecord(decision!);
+    expect(record.metadata?.provisioned).toBe(true);
+    // Stabilität: resolve → re-resolve identisch (host stability check).
+    expect(resolveDashboardBinding(ref, { roster })).toEqual(record);
+  });
+
+  it("autoProvision:false oder de-rostered Agent: kein Kick, kein provisioniertes Target", () => {
+    const kicks: string[] = [];
+    setDashboardBindingProvisioner(async () => {
+      kicks.push("ensure");
+    });
+    const offRoster = createConfigHarnessRoster({
+      agents: { entries: { codex: { runtime: { type: "acp" } } } },
+      plugins: { entries: { [CHANNEL_ID]: { config: { autoProvision: false } } } },
+    });
+    expect(offRoster.harnessProvisionedTargetKey?.("codex")).toBeNull();
+    expect(resolveDashboardBindingDecision(ref, offRoster)?.targetOrigin).toBe("synthetic");
+    // main bleibt de-rostered (Safe-Default) — kein Provisioning für Orchestratoren.
+    expect(harnessRoster().harnessProvisionedTargetKey?.("main")).toBeNull();
+    expect(kicks).toHaveLength(0);
+  });
+
+  it("Kaskaden-Prezedenz: harnessSessions (configured) schlägt provisioniert", () => {
+    const REAL_CODEX_KEY = "agent:codex:acp:session:2c1a5fa9-9d31-4b3e-a7d1-4f9d0d1f2b7e";
+    setDashboardBindingProvisioner(async () => {});
+    const roster = harnessSessionsRoster({ codex: REAL_CODEX_KEY });
+    const decision = resolveDashboardBindingDecision(ref, roster);
+    expect(decision?.targetOrigin).toBe("configured");
+    expect(decision?.targetSessionKey).toBe(REAL_CODEX_KEY);
+  });
+
+  it("§4.2-Parität: Bridge-Resolver UND Adapter-Derive handen denselben provisionierten Key aus", async () => {
+    setDashboardBindingProvisioner(async () => {});
+    const roster = harnessRoster();
+    const shared = resolveDashboardBinding(ref, { roster });
+    const derived = deriveDashboardBindingRecord(ref, harnessRosterConfig());
+    expect(derived?.targetSessionKey).toBe(shared?.targetSessionKey);
+    expect(derived?.metadata?.provisioned).toBe(true);
+    expect(shared?.targetSessionKey).toBe(buildHarnessProvisionedSessionKey({ agentId: "codex" }));
   });
 });

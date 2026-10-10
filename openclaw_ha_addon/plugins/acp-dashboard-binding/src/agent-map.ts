@@ -43,8 +43,18 @@ export function isOrchestratorAgentId(agentId: unknown): boolean {
 /** Default binding mode when the agent entry does not configure one. */
 export const BINDING_MODE = "persistent";
 
-/** Workspace root for the auto-detected ACP cwd fallback. */
-export const DEFAULT_CWD_PREFIX = "/share/temp/acpx-workspace/";
+/**
+ * Workspace root for the auto-detected ACP cwd fallback (Phase 2.21 workspace
+ * convention): persistent harness workspaces live on the agent convention
+ * `/config/clawd/agents/<agentId>/` — NOT the `/share/temp/acpx-workspace/`
+ * scratch world (which is reserved for pipeline-run scratch sessions only and
+ * holds legacy GaRoN-turn debris; its files are operator-cleanup territory,
+ * the plugin never read-writes them as a workspace root anymore). Real
+ * workspace paths come from `agents.entries` cfg anyway (cwd precedence in
+ * specFromEntry); this prefix is only the fallback when an entry carries no
+ * cwd/workspace at all.
+ */
+export const DEFAULT_CWD_PREFIX = "/config/clawd/agents/";
 
 /** Plugin id (package + manifest + channel plugin object). */
 export const CHANNEL_ID = "acp-dashboard-binding";
@@ -67,6 +77,66 @@ export const BINDING_ID_PREFIX = "plugin-binding:";
 
 /** Label stored in binding record metadata; never use the reserved source "config". */
 export const BINDING_SOURCE_LABEL = "plugin:acp-dashboard-binding";
+
+/**
+ * Phase 2.20 (F4 reply-delivery gap): plugin-owned binding ownership markers
+ * matching the host predicate `isPluginOwnedBindingMetadata`
+ * (dist/conversation-binding-metadata-CFOhDjMh.mjs): metadata is plugin-owned
+ * iff `pluginBindingOwner === "plugin" && typeof pluginId === "string" &&
+ * typeof pluginRoot === "string"`. Records carrying this metadata dispatch
+ * through the host's plugin-bound claim path — the dispatch stays in the ORIGIN
+ * webchat conversation (no retarget, dispatch-from-config:191), the host calls
+ * our `inbound_claim` hook, and a `{handled: true, reply}` result is delivered
+ * back into the dashboard conversation by the host itself
+ * (dispatch-from-config ~3493-3530 → deliverBindingPayload → chat-send
+ * finalization + live broadcast).
+ */
+export const PLUGIN_BINDING_OWNER = "plugin";
+
+/** Human plugin name stored in binding metadata (info field of the host's own buildBindingMetadata). */
+export const PLUGIN_NAME = "ACP Dashboard Binding";
+
+/**
+ * Plugin root (package dir) used in binding metadata. A string with `typeof
+ * === "string"` is REQUIRED by the host predicate — resolve once at plugin
+ * registration from `api.rootDir` (OpenClawPluginApi.rootDir, the record's
+ * rootDir). Registered in index.ts before any binding is synthesized.
+ */
+let pluginRootValue: string | undefined;
+
+/** Registers the plugin root used for plugin-owned binding metadata (idempotent; first call wins). */
+export function setDashboardBindingPluginRoot(value: unknown): void {
+  if (pluginRootValue !== undefined) return;
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (trimmed) pluginRootValue = trimmed;
+}
+
+/** The registered plugin root, or null while unset (records stay non-plugin-owned). */
+export function getDashboardBindingPluginRoot(): string | null {
+  return pluginRootValue ?? null;
+}
+
+/** Test reset for the module-scoped plugin root (vitest module isolation). */
+export function resetDashboardBindingPluginRootForTest(): void {
+  pluginRootValue = undefined;
+}
+
+/**
+ * Metadata fragment marking a binding record as plugin-owned. Returns only the
+ * ownership fields; callers merge their informative fields underneath. Returns
+ * null while no plugin root is registered — callers then emit records WITHOUT
+ * ownership metadata (legacy dispatch behavior).
+ */
+export function buildPluginOwnedBindingMetadata(): Record<string, unknown> | null {
+  const pluginRoot = getDashboardBindingPluginRoot();
+  if (!pluginRoot) return null;
+  return {
+    pluginName: PLUGIN_NAME,
+    pluginBindingOwner: PLUGIN_BINDING_OWNER,
+    pluginId: CHANNEL_ID,
+    pluginRoot
+  };
+}
 
 /** Canonical agent-id shape (mirrors host normalizeAgentId input validation). */
 const VALID_AGENT_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
@@ -427,4 +497,204 @@ export function isAcpShapedSessionKey(sessionKey: unknown): boolean {
   const parts = raw.split(":");
   if (parts[0] !== "agent") return false;
   return parts.slice(2).join(":").toLowerCase().startsWith("acp:");
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2.21 — auto-provisioning (GaRoN 11:59/12:30)
+//
+// harnessSessions (Phase 2.18b) stays as the manual override, but is no longer
+// REQUIRED: when no validated session is configured for a harness agent, the
+// plugin provisions ONE persistent ACP session per agent itself, through the
+// host's official configured-binding ensure contract —
+// `ensureConfiguredAcpBindingReady` (official plugin-sdk export
+// `openclaw/plugin-sdk/acp-binding-runtime`; no trust-gate, unlike
+// api.runtime.gateway.request) → `ensureConfiguredAcpBindingSession`
+// (dist/persistent-bindings.lifecycle-DU_YBswY.mjs) →
+// `acpManager.initializeSession` → `runtime.ensureSession` (real backend
+// spawn) + session-meta write (manager.utils: afterwards resolveStoredAcpSession
+// returns kind:"ready", so the synthetic-key ACP_SESSION_INIT_FAILED gap from
+// Phase 2.18b never happens for provisioned keys).
+//
+// Determinism: the provisioned key is DERIVED per agent (not minted randomly),
+// so the sync derives stay byte-stable across resolve → touch → re-resolve
+// (stability check) and regenerate identically after a restart.
+//
+// The SDK ensure call itself lives in index.ts (it needs api.config + the
+// dynamic SDK import); this module keeps the SDK-free plumbing: provisioner
+// registration, dedupe, spec-signature caching, and the target cascade.
+// ---------------------------------------------------------------------------
+
+/**
+ * conversationId under the webchat:default scope that names the persistent
+ * per-agent harness session (`harness:<agentId>`). Deliberately NOT a real
+ * dashboard conversation; only used to derive the stable session key.
+ */
+export function buildHarnessProvisionedConversationId(agentId: unknown): string {
+  return `harness:${sanitizeAgentId(agentId)}`;
+}
+
+/**
+ * Deterministic session key of the auto-provisioned per-agent harness session:
+ * `agent:<agentId>:acp:binding:webchat:default:<sha16("webchat:default:harness:<agentId>")>`
+ * — exact buildConfiguredAcpSessionKey grammar (same builder the host's
+ * ensure contract derives the key from), so host `isAcpSessionKey` is true and
+ * `parseConfiguredAcpSessionKey` reads it as a webchat:default configured
+ * binding. Deterministic per agent; regenerate-safe.
+ */
+export function buildHarnessProvisionedSessionKey(spec: Pick<HarnessAgentSpec, "agentId">): string {
+  return buildAcpBindingSessionKey({
+    channel: BINDING_CHANNEL,
+    accountId: BINDING_ACCOUNT_ID,
+    conversationId: buildHarnessProvisionedConversationId(spec.agentId),
+    agentId: spec.agentId
+  });
+}
+
+/** True when `sessionKey` is the auto-provisioned per-agent key of `agentId`. */
+export function isHarnessProvisionedSessionKey(agentId: unknown, sessionKey: unknown): boolean {
+  if (!agentId || typeof sessionKey !== "string") return false;
+  return sessionKey === buildHarnessProvisionedSessionKey({ agentId: sanitizeAgentId(agentId) });
+}
+
+/**
+ * `plugins.entries['<CHANNEL_ID>'].config.autoProvision` — Phase 2.21. Default
+ * is `true` (the plugin provisions persistent harness sessions itself); only
+ * an explicit boolean `false` opts out (then the cascade falls back to the
+ * synthetic per-conversation target, exactly the pre-2.21 behavior).
+ */
+export function resolveAutoProvisionEnabled(cfg: unknown): boolean {
+  const value = resolvePluginEntryConfig(cfg)?.autoProvision;
+  return value !== false;
+}
+
+/**
+ * The provisioning seam: async ensure callback (runs the SDK ensure contract
+ * for the agent's derived session key). Registered in index.ts at registerFull
+ * with the plugin-api-backed implementation; null clears it (dispose).
+ */
+export type DashboardHarnessProvisioner = (spec: HarnessAgentSpec, targetSessionKey: string) => Promise<unknown>;
+
+let harnessProvisioner: DashboardHarnessProvisioner | null = null;
+/** In-flight ensure promises per canonical agentId (dedupe of concurrent resolves). */
+const provisioningInFlight = new Map<string, Promise<boolean>>();
+/** Spec signature of the LAST SUCCESSFUL ensure per agentId (skip re-ensure). */
+const provisionedSignatures = new Map<string, string>();
+
+function harnessSpecSignature(spec: HarnessAgentSpec): string {
+  return JSON.stringify({
+    agentId: spec.agentId,
+    harness: spec.harness ?? null,
+    mode: spec.mode,
+    cwd: spec.cwd ?? null,
+    backend: spec.backend ?? null
+  });
+}
+
+/** Registers (or clears with null) the SDK-backed provisioner. Idempotent per call. */
+export function setDashboardBindingProvisioner(provisioner: DashboardHarnessProvisioner | null): void {
+  harnessProvisioner = provisioner;
+}
+
+/** Test reset for the whole provisioning state (vitest module isolation). */
+export function resetDashboardBindingProvisionerForTest(): void {
+  harnessProvisioner = null;
+  provisioningInFlight.clear();
+  provisionedSignatures.clear();
+}
+
+/** The registered provisioner, or null while unset (cascade stays synthetic). */
+export function getDashboardBindingProvisioner(): DashboardHarnessProvisioner | null {
+  return harnessProvisioner;
+}
+
+/**
+ * Kicks (or joins) the ensure for ONE agent's persistent session. Fire-and-
+ * forget by design — resolves answer with the deterministic key immediately.
+ * Returns the in-flight/settled status promise, or null when autoProvision is
+ * disabled, no provisioner is registered, or the agent was already ensured
+ * with the identical spec signature (skip).
+ */
+export function ensureDashboardHarnessProvisioning(cfg: unknown, spec: HarnessAgentSpec): Promise<boolean> | null {
+  if (!resolveAutoProvisionEnabled(cfg) || !harnessProvisioner) return null;
+  const agentId = sanitizeAgentId(spec.agentId);
+  const signature = harnessSpecSignature(spec);
+  const existing = provisioningInFlight.get(agentId);
+  if (existing) return existing;
+  // Last success with the same spec: nothing to (re)ensure.
+  if (provisionedSignatures.get(agentId) === signature) return null;
+  const provisioner = harnessProvisioner;
+  // Dedupe note: a second ensure while one is in flight ALWAYS joins the
+  // existing run (same agentId key), so at most one run per agentId exists at
+  // a time and the unconditional finally-delete cannot clobber a newer run.
+  const run = (async () => {
+    try {
+      await provisioner(spec, buildHarnessProvisionedSessionKey({ agentId }));
+      provisionedSignatures.set(agentId, signature);
+      return true;
+    } catch {
+      // No signature — the next consult retries; the deterministic target meanwhile
+      // surfaces the host's ACP init error to the conversation (handled there).
+      return false;
+    } finally {
+      provisioningInFlight.delete(agentId);
+    }
+  })();
+  provisioningInFlight.set(agentId, run);
+  return run;
+}
+
+/**
+ * The pending provision for `agentId` (null when none in flight). The reply-
+ * claim barrier awaits this BEFORE starting the harness turn, so the first
+ * dashboard message does not race the session initialization.
+ */
+export function pendingDashboardHarnessProvisioning(agentId: unknown): Promise<boolean> | null {
+  return provisioningInFlight.get(sanitizeAgentId(agentId)) ?? null;
+}
+
+export type HarnessTargetOrigin = "configured" | "provisioned" | "synthetic";
+
+/**
+ * Target cascade for harness agent conversations (Phase 2.21) — ONE derivation
+ * shared by the binding-adapter derive and the dashboard-bridge synthesis so
+ * both halves hand out the same session key:
+ *
+ *   1. `harnessSessions` (manual override, highest priority — unchanged 2.18b)
+ *   2. auto-provisioned per-agent session (fire-and-forget ensure + deterministic
+ *      key; skipped when `autoProvision: false` or no provisioner registered)
+ *   3. synthetic per-conversation key (pre-2.21 fallback, never initialized
+ *      host-side — documented Phase 2.18b limitation)
+ *
+ * The synthetic leg needs the conversation; the provisioned leg does not (the
+ * key is per agent on purpose: ONE persistent harness session per ACP agent).
+ */
+export function resolveHarnessTargetOrigin(
+  cfg: unknown,
+  spec: HarnessAgentSpec,
+  conversation: { channel: string; accountId: string; conversationId: string }
+): { targetKey: string; origin: HarnessTargetOrigin } {
+  const configured = resolveHarnessSessionTargetKey(cfg, spec);
+  if (configured) return { targetKey: configured, origin: "configured" };
+  if (resolveAutoProvisionEnabled(cfg) && harnessProvisioner) {
+    // Fire-and-forget: the resolve answer is deterministic regardless of when
+    // (or whether) the ensure completes — see the module comment above.
+    ensureDashboardHarnessProvisioning(cfg, spec);
+    return { targetKey: buildHarnessProvisionedSessionKey({ agentId: spec.agentId }), origin: "provisioned" };
+  }
+  return {
+    targetKey: buildAcpBindingSessionKey({
+      channel: conversation.channel,
+      accountId: conversation.accountId,
+      conversationId: conversation.conversationId,
+      agentId: spec.agentId
+    }),
+    origin: "synthetic"
+  };
+}
+
+/** Disposes the whole provisioning seam (plugin dispose / tests). */
+export function clearDashboardHarnessProvisions(): void {
+  setDashboardBindingProvisioner(null);
+  provisioningInFlight.clear();
+  provisionedSignatures.clear();
 }

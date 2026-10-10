@@ -10,7 +10,12 @@ import {
   BINDING_ID_PREFIX,
   BINDING_MODE,
   CHANNEL_ID,
+  buildHarnessProvisionedSessionKey,
+  buildPluginOwnedBindingMetadata,
+  ensureDashboardHarnessProvisioning,
+  getDashboardBindingProvisioner,
   isRosterEligibleAgentId,
+  resolveAutoProvisionEnabled,
   resolveBoundAgentAllowlist,
   resolveExcludedAgentIds,
   resolveHarnessAgentSpec,
@@ -86,6 +91,14 @@ export interface HarnessRoster {
    * keeping bridge and binding-adapter on one target derivation.
    */
   harnessSessionTargetKey?(agentId: string): string | null;
+  /**
+   * Phase 2.21: the auto-provisioned per-agent persistent session key, or null
+   * when auto-provisioning is off/no provisioner is registered/the provisioned
+   * key would not apply. Optional so custom rosters opt in; the config-backed
+   * roster answers from the shared agent-map cascade (same kick + key the
+   * binding-adapter derive uses — one target per agent everywhere).
+   */
+  harnessProvisionedTargetKey?(agentId: string): string | null;
 }
 
 export interface DashboardConversationKey {
@@ -100,6 +113,8 @@ export interface DashboardBindingDecision {
   readonly dashboardKey: DashboardConversationKey;
   readonly bindingId: string;
   readonly targetSessionKey: string;
+  /** Phase 2.21: which cascade leg produced the target (informative + metadata). */
+  readonly targetOrigin: "configured" | "provisioned" | "synthetic";
   readonly defaults: HarnessAgentDefaults;
 }
 
@@ -196,6 +211,22 @@ export function isPluginOwnedBindingMetadata(metadata: Record<string, unknown> |
   );
 }
 
+/**
+ * Phase 2.20 (F4): adds the plugin-owned ownership fields (host
+ * `isPluginOwnedBindingMetadata` shape) to a record this plugin synthesized.
+ * Informative fields stay underneath; ownership is not overridable by them.
+ * Records without a registered plugin root stay WITHOUT ownership markers and
+ * keep the legacy retarget dispatch (safe degraded mode).
+ */
+export function withPluginOwnedMetadata(
+  metadata: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...metadata };
+  const pluginOwned = buildPluginOwnedBindingMetadata();
+  if (pluginOwned) Object.assign(merged, pluginOwned);
+  return merged;
+}
+
 type AgentConfigEntryLike = {
   runtime?: {
     type?: string;
@@ -255,6 +286,16 @@ export function createConfigHarnessRoster(config: unknown): HarnessRoster {
       if (!spec) return null;
       return resolveHarnessSessionTargetKey(config, spec);
     },
+    // Phase 2.21: the auto-provisioning leg of the shared target cascade —
+    // deterministically derived per-agent key; the ensure itself is fired
+    // (deduped) as a side effect, the answer does not wait for it.
+    harnessProvisionedTargetKey(agentId: string): string | null {
+      const spec = resolveHarnessAgentSpec(config, agentId);
+      if (!spec) return null;
+      if (!resolveAutoProvisionEnabled(config) || !getDashboardBindingProvisioner()) return null;
+      ensureDashboardHarnessProvisioning(config, spec);
+      return buildHarnessProvisionedSessionKey({ agentId: spec.agentId });
+    },
   };
 }
 
@@ -284,21 +325,45 @@ export function resolveDashboardBindingDecision(
     ...(ref.parentConversationId ? { parentConversationId: ref.parentConversationId.trim() } : {}),
   };
   const defaults = roster.acpDefaults(dashboardKey.agentId) ?? { mode: BINDING_MODE };
-  // Phase 2.18b (F3 Weg A): a validated harnessSessions entry REPLACES the
-  // synthetic ACP target with the real spawned session key; unset/invalid
-  // keeps the §1.4 synthetic derivation. The roster gate is upstream of this
-  // point and unchanged.
+  // Phase 2.18b (F3 Weg A) → Phase 2.21 target cascade: a validated
+  // harnessSessions entry REPLACES the synthetic ACP target with the real
+  // spawned session key; without one, an auto-provisioned per-agent session
+  // key takes over (fire-and-forget ensure in the roster above); the §1.4
+  // synthetic derivation stays the fallback (autoProvision:false / no
+  // provisioner). The roster gate is upstream of this point and unchanged.
   const configuredTargetKey = roster.harnessSessionTargetKey?.(dashboardKey.agentId) ?? null;
+  if (configuredTargetKey) {
+    return {
+      conversation,
+      dashboardKey,
+      bindingId: buildBindingId(conversation),
+      targetSessionKey: configuredTargetKey,
+      targetOrigin: "configured",
+      defaults,
+    };
+  }
+  const provisionedTargetKey = roster.harnessProvisionedTargetKey?.(dashboardKey.agentId) ?? null;
+  if (provisionedTargetKey) {
+    return {
+      conversation,
+      dashboardKey,
+      bindingId: buildBindingId(conversation),
+      targetSessionKey: provisionedTargetKey,
+      targetOrigin: "provisioned",
+      defaults,
+    };
+  }
   return {
     conversation,
     dashboardKey,
     bindingId: buildBindingId(conversation),
-    targetSessionKey: configuredTargetKey ?? buildDashboardAcpTargetSessionKey({
+    targetSessionKey: buildDashboardAcpTargetSessionKey({
       agentId: dashboardKey.agentId,
       channel: conversation.channel,
       accountId: conversation.accountId,
       conversationId,
     }),
+    targetOrigin: "synthetic",
     defaults,
   };
 }
@@ -326,6 +391,14 @@ export function synthesizeDashboardBindingRecord(
       ...(decision.defaults.backend ? { backend: decision.defaults.backend } : {}),
       ...(decision.defaults.cwd ? { cwd: decision.defaults.cwd } : {}),
       ...(decision.defaults.label ? { label: decision.defaults.label } : {}),
+      // Phase 2.21: informative marker that the target is the auto-provisioned
+      // per-agent harness session (kept off configured/synthetic targets so
+      // records stay deterministic and legible).
+      ...(decision.targetOrigin === "provisioned" ? { provisioned: true } : {}),
+      // Phase 2.20 (F4): plugin-owned ownership markers — host dispatch stops
+      // retargeting such records and instead claims through our inbound_claim
+      // hook, whose reply reaches the dashboard conversation (see file head).
+      ...withPluginOwnedMetadata({}),
     },
   };
 }
@@ -615,6 +688,21 @@ class BridgeRowStore implements BridgeRowStoreLike {
       // Guards: in-memory rows already written (e.g. a bind during hydrate)
       // win, and a tombstone seen so far suppresses a stale persisted row.
       if (this.rows.has(bindingId) || this.tombstones.has(bindingId)) continue;
+      // Phase 2.20 (F4): rows persisted before the plugin-bound claim fix carry
+      // informative metadata only — upgrade OUR OWN rows (binding-id prefix +
+      // legacy source marker, and never a foreign plugin-owned record) so
+      // restarts do not flip those conversations back to the reply-loss
+      // retarget path. Fresh syntheses already carry the markers.
+      if (
+        bindingId.startsWith(BINDING_ID_PREFIX) &&
+        row.record.metadata?.source === "plugin" &&
+        !isPluginOwnedBindingMetadata(row.record.metadata)
+      ) {
+        this.rows.set(bindingId, {
+          record: { ...row.record, metadata: withPluginOwnedMetadata(row.record.metadata) },
+        });
+        continue;
+      }
       this.rows.set(bindingId, row);
     }
   }
