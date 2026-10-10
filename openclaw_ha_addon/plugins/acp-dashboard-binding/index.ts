@@ -41,7 +41,9 @@ function dashboardBridgeApi(api: OpenClawPluginApi): DashboardBridgeApiLike {
     },
     runtime: {
       state: {
-        openKeyedStore: <T,>(options: Record<string, unknown>) =>
+        // Phase 2.12 F1: dist contract is {namespace, maxEntries}
+        // (OpenKeyedStoreOptions, agent-harness-runtime-R8dTs5zl.d.ts).
+        openKeyedStore: <T,>(options: { namespace: string; maxEntries: number }) =>
           api.runtime.state.openKeyedStore<T>(options as never),
       },
     },

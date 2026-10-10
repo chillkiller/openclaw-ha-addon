@@ -86,6 +86,10 @@ export OLLAMA_BASE_URL
 export OLLAMA_CODEX_MODEL=$(jq -r '.ollama_acp_codex_model // empty' "$OPTIONS_FILE")
 export OLLAMA_OPENCODE_MODEL=$(jq -r '.ollama_acp_opencode_model // empty' "$OPTIONS_FILE")
 export ACP_ADDITIONAL_ALLOWED_AGENTS=$(jq -r '.acp_additional_allowed_agents // empty' "$OPTIONS_FILE")
+# Phase 2.15 (GaRoN): plugin deploy is opt-in — same env-forwarding pattern as
+# ACP_ADDITIONAL_ALLOWED_AGENTS. Default (unset/false) = acp-dashboard-binding
+# is NOT deployed to openclaw.json.
+export ACP_DASHBOARD_BINDING_ENABLED=$(jq -r '.acp_dashboard_binding_enabled // empty' "$OPTIONS_FILE" 2>/dev/null)
 
 # Local-model provider routing for ACP harnesses (verified 2026-10-09):
 # The acpx generated codex/claude wrappers passthrough this ambient env, so

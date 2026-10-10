@@ -146,11 +146,20 @@ ausführen — INBOUND-PATH.md:67/70); `message_received` wirkt nicht auf die Se
    `agents.entries.<id>.runtime` mit `runtime.type === "acp"` → `{mode, backend, cwd, label}`
    (Doku-Beleg: docs/gateway/config-agents/entries-and-multi-agent.md:40-56/86). Harness-Gate = `HARNESS_AGENT_IDS` ∩
    config-Eintrag (TODO: Import der geteilten Konstanten aus `src/agent-map.ts`, s. §5).
-3. **Eigenes Row-Store (nur für bind/unbind/Tombstones):** `api.runtime.state.openKeyedStore<T>({name: `${CHANNEL_ID}.dashboard-bridge`, …})`
-   (plugin-entry-DYuWNw2N.d.ts:44932, `PluginStateKeyedStoreBase` :43917-43957), best-effort mit In-Memory-Fallback;
-   Keys: `row:<conversationRef-canonical>` / `tombstone:<…>`. Konsult-Synthese nutzt den Store **nicht** als Quelle,
-   sondern nur für `bind()`-Rows (Spawn-Flows) und `unbind()`-Tombstones (`/acp close`/`/session unbind` soll
-   eine Dashboard-Session dauerhaft freischalten können — Synthese respektiert Tombstones).
+3. **Eigenes Row-Store (nur für bind/unbind/Tombstones):** `api.runtime.state.openKeyedStore<T>({namespace: 'webchat.dashboard-bridge.rows', maxEntries: 1000})`
+   bzw. `{namespace: 'webchat.dashboard-bridge.tombstones', maxEntries: 1000}` (plugin-entry-DYuWNw2N.d.ts:44932,
+   `OpenKeyedStoreOptions` agent-harness-runtime-R8dTs5zl.d.ts:27590-27597, Usage-Beleg bot-native-command-menu-hfLaQk2g.mjs:307),
+   best-effort mit In-Memory-Fallback; Keys: `row:<conversationRef-canonical>` / `tombstone:<…>`.
+   Konsult-Synthese nutzt den Store **nicht** als Quelle, sondern nur für `bind()`-Rows (Spawn-Flows) und
+   `unbind()`-Tombstones (`/acp close`/`/session unbind` soll eine Dashboard-Session dauerhaft freischalten können —
+   Synthese respektiert Tombstones). **Phase 2.12 F1:** der vorherige `{name: …}`-Optionsname war falsch (der Host
+   hat ihn stillschweigend verworfen) — der dist-Vertrag ist `{namespace, maxEntries}`.
+   **Phase 2.12 F2 Boot-Hydration:** `BridgeRowStore.hydrate()` lädt beim `createDashboardBridge` persistierte
+   `entries()` in die Memory-Maps (Rows/Tombstones), idempotent, niemals rejectend — In-Memory-Writes während der
+   Hydration gewinnen (live Row > persistierter Row > persistierter Tombstone). Resilienz: alle async Store-Consumer
+   (`resolveByConversationAsync`/`inspectByConversationAsync`/`touchAsync` des Adapters, `handle.resolveDashboardBindingAsync`,
+   exported `resolveDashboardBindingAsync`) awaiten `store.whenReady()`, so dass kein Read gegen die halb geladene
+   Hydration läuft; bei Store-Fehlern läuft es memory-only weiter (Warnlog).
 
 ### 3.2 Webchat-Adapter (`createWebchatDashboardBindingAdapter`)
 
@@ -254,3 +263,55 @@ export function createDashboardBridge(args: DashboardBridgeArgs): DashboardBridg
 - Verifizieren, dass Turn-1-Retarget auch über `get-reply:5196/:5201`-Session-Init konsistent läuft (prepared-route-Assertions).
 - Entscheidung/Delegation in binding-adapter.ts (§4.2) — Integrationstest mit claude-Dateien.
 - Tombstone-/unbind-UX (`/acp close` auf webchat) End-to-End.
+
+---
+
+## 7. F3: ACP-Session-Init für binding-keys (Phase 2.12 — NUR DESIGN-DOKUMENTATION)
+
+**Status: Implementierung ausdrücklich NICHT Teil von Phase 2.12. Die Design-Entscheidung trifft der
+Orchestrator/GaRoN.** Dieses Kapitel dokumentiert die beiden Kandidaten-Optionen und ihre Trade-offs, damit
+die Entscheidung auf belegtem Grund getroffen wird.
+
+**Problem (Marvin-Bugreport Punkt 3):** Die ACP-Session-Init-Phase eines Dashboard-Turns konsultiert das
+Binding-System erneut, während der Turn läuft. Der dist-Resolve-Pfad vergleicht resolve → `touchAsync` →
+Re-resolve **strikt** über `bindingId/boundAt/targetSessionKey/targetKind/conversation`
+(package-update-activation-recovery.mjs:1223266-1223272). Trifft die Init auf einen **synthetisierten**
+Record (`boundAt: 0`, Konsult-Zeit-Synthese §2/Primärweg) während parallel ein materialisierter Record
+(`boundAt: Date.now()`) ins Spiel kommt — oder umgekehrt — divergiert der Vergleich und das Risiko eines
+`SessionWorkStartChangedError` (package-update:1222930-1222944, siehe §3.3) bzw. eines stillen Retargets
+steigt exakt in dem Moment, in dem der ACP-Session-Key erstmals hart gebunden werden soll.
+
+### Option A — Host-seitiger ensure-Pfad (Materialisierung vor Turn 1)
+
+Idee: Der Record wird **vor** der ACP-Session-Init materialisiert, so dass alle Consults einen echten
+Row (`boundAt > 0`) sehen und der strict-Vergleich deterministisch besteht.
+
+- Mechanismen-Kandidaten: `message_received`/`before_dispatch`-Hook ruft auch bei Bridge-Owner-Adapter
+  `service.bind` (heute bewusst No-op, §3.3, um `boundAt`-Wackeln zu vermeiden) — oder ein separater
+  ensure-Aufruf beim Dashboard-Session-Create.
+- **Pro:** Turn 1 sieht konsistent materialisierte Rows; kein Synthese-/Materialisierungs-Mismatch in der
+  Init; `boundAt` stabil über alle Consults.
+- **Contra:** Reaktiviert genau das `boundAt`-Wackeln zwischen Consult und Re-Consult, das das heutige
+  No-op-Design vermeiden will (§3.3); Hook-Timing hängt an fire-and-forget (`message_received`, §2-Punkt 5)
+  bzw. awaited `before_dispatch` (Punkt 4) — Blinde Flecken, wenn Hooks für den ersten Turn nicht feuern;
+  Zuständigkeits-Verschmelzung von Bridge-Adapter und Host-Service.
+
+### Option B — Turn-1-Fehler-UX (kein ensure, Fehler explizit machen)
+
+Idee: Am Mechanismus wird nichts geändert (Konsult-Zeit-Synthese bleibt primär, §2). Falls die ACP-Session-Init
+auf den Synthese-/Materialisierungs-Mismatch läuft (`SessionWorkStartChangedError` oder abweichendes Re-resolve),
+wird das nicht still weggeschluckt, sondern in eine sichtbare Turn-1-Fehler-UX übersetzt (Fehlernachricht an den
+User + Retry-Hinweis; der Retry läuft dann auf materialisierten Rows und geht durch).
+
+- **Pro:** Minimale invasive Änderung; das bewährte deterministische Synthese-Design bleibt unangetastet;
+  Fehler-UX macht ein ansonsten schwer diagnostizierbares Timing-Problem beobachtbar (Logs/Telemetrie).
+- **Contra:** Erster Turn einer Kalt eröffneten Dashboard-Session kann erkennbar fehlschlagen (Negativ-Erlebnis);
+  UX-Pfad liegt außerhalb der Brücke (Control-UI/webchat-Fehlerdarstellung) und muss vom Host mitgetragen werden.
+
+### Offene Punkte für die Entscheidung
+
+1. Kann der Host einen ensure-Pfad anbieten, der garantiert **vor** der Session-Init-Consult läuft
+   (§2-Punkte 0-2 laufen vor allen Hooks — sonst braucht es einen Punkt vor dem Gateway-Admission-Window)?
+2. Wie verhält sich der strict-Vergleich konkret, wenn beide Seiten deterministisch `boundAt: 0` liefern
+   (Konfig-Variante, §1.4 Record-Präzedenz) — ist der Mismatch reale oder theoretische Gefahr?
+3. Wer gehört die Fehler-UX (Plugin vs. Host), falls Option B gewählt wird?

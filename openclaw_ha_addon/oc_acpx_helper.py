@@ -254,7 +254,23 @@ def deploy_plugin() -> bool:
     patch_openclaw_config). The copy fires only when the source actually
     differs from the target (sha256 comparison per file), so unchanged
     restarts stay read-only.
+
+    Phase 2.15 (GaRoN): deploying/registering the plugin is OPT-IN — the
+    add-on option acp_dashboard_binding_enabled (run.sh forwards it as env
+    ACP_DASHBOARD_BINDING_ENABLED) defaults to OFF, so the default add-on
+    boots WITHOUT the dashboard binding feature. When the option is absent
+    or unset/false the deploy is skipped entirely and nothing is written to
+    openclaw.json; when true, deploy + register + load.paths all run.
     """
+    # Everything addon-config steerable, nothing hardcoded (GaRoN): the
+    # option is checked here, BEFORE any payload or openclaw.json is touched.
+    # Intentional skip is success for callers, not a failure.
+    if os.environ.get("ACP_DASHBOARD_BINDING_ENABLED", "").strip().lower() not in \
+            ("1", "true", "yes", "on"):
+        log(f"INFO: plugin {PLUGIN_NAME} deploy disabled by option "
+            "(acp_dashboard_binding_enabled=false)")
+        return True
+
     src_dir = resolve_plugin_src_dir()
     src = (src_dir / PLUGIN_NAME) if src_dir else None
     dst = CONFIG_DIR / "plugins" / PLUGIN_NAME

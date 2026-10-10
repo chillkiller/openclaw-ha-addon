@@ -184,6 +184,12 @@ options:
   # runtime.type=acp pointing at a harness adapter.
   acp_additional_allowed_agents: ""
 
+  # Optional (Phase 2.15, GaRoN): deploy + register the bundled
+  # acp-dashboard-binding plugin in OpenClaw (resolves dashboard/webchat
+  # conversations to ACP harness sessions). Default is false — the add-on
+  # runs WITHOUT this feature unless explicitly enabled here.
+  acp_dashboard_binding_enabled: false
+
   # Optional: Space-separated list of apt packages to install at container startup.
   # Packages are reinstalled on each restart (not persistent in image).
   # Example: "ffmpeg postgresql-client"
@@ -235,6 +241,7 @@ schema:
   ollama_acp_codex_model: str?
   ollama_acp_opencode_model: str?
   acp_additional_allowed_agents: str?
+  acp_dashboard_binding_enabled: bool?
   runtime_apt_packages: str?
   custom_init_script: str?
   blocked_hostnames: str?

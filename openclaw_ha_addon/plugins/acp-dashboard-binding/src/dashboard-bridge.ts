@@ -10,6 +10,8 @@ import {
   BINDING_ID_PREFIX,
   BINDING_MODE,
   CHANNEL_ID,
+  isOrchestratorAgentId,
+  resolveBoundAgentAllowlist,
 } from "./agent-map.js";
 
 // Bridge public surface keeps exporting the shared constants (tests/plugins
@@ -22,9 +24,16 @@ export {
   BINDING_MODE,
   CHANNEL_ID,
   DEFAULT_CWD_PREFIX,
+  ORCHESTRATOR_AGENT_IDS,
+  isOrchestratorAgentId,
+  resolveBoundAgentAllowlist,
 } from "./agent-map.js";
 
 const WEBCHAT_ADAPTER_KEY = `${BINDING_CHANNEL}:${BINDING_ACCOUNT_ID}`;
+// Phase 2.12 F1: keyed-store contracts for the bridge's own rows/tombstones.
+const ROWS_STORE_NAMESPACE = "webchat.dashboard-bridge.rows";
+const TOMBSTONES_STORE_NAMESPACE = "webchat.dashboard-bridge.tombstones";
+const ROW_STORE_MAX_ENTRIES = 1000;
 const CONVERSATION_KEY_SEPARATOR = "\u241f";
 const DEFAULT_AGENT_ID = "main";
 
@@ -189,12 +198,22 @@ export function createConfigHarnessRoster(config: unknown): HarnessRoster {
   return {
     isHarnessAgent(agentId: string): boolean {
       // Phase 2.7: the roster is fully config-derived — an entry is a harness
-      // agent iff runtime.type === "acp" (no fixed id list). `main` never
-      // rosters: the built-in main agent stays untouched.
+      // agent iff runtime.type === "acp" (no fixed id list). Orchestrator ids
+      // (Phase 2.15, codex-R1: main/coding-main/coding-review) NEVER roster,
+      // even when their entry carries runtime.acp.
       const canonical = normalizeAgentId(agentId);
       if (canonical === DEFAULT_AGENT_ID) return false;
+      if (isOrchestratorAgentId(canonical)) return false;
       const entry = agentsConfig?.entries?.[canonical] ?? agentsConfig?.entries?.[agentId];
-      return entry?.runtime?.type === "acp";
+      if (entry?.runtime?.type !== "acp") return false;
+      // Phase 2.15 R1 (dynamic part): when
+      // plugins.entries[CHANNEL_ID].config.boundAgents is explicitly set, ONLY
+      // its ids roster (positive list; an explicitly EMPTY list rosters
+      // nothing); when absent, every runtime.acp entry does. The exclusion
+      // above still wins over the positive list.
+      const allowlist = resolveBoundAgentAllowlist(config);
+      if (allowlist !== null && !allowlist.includes(canonical)) return false;
+      return true;
     },
     acpDefaults(agentId: string): HarnessAgentDefaults | null {
       if (!this.isHarnessAgent(agentId)) return null;
@@ -341,6 +360,9 @@ export function resolveDashboardBinding(
 export async function resolveDashboardBindingAsync(
   ref: DashboardBindingRefLike,
 ): Promise<SessionBindingRecordLike | null> {
+  // Phase 2.12 F2: wait out the active bridge's startup hydration so the async
+  // mirror never diverges from the (post-hydrate) sync core.
+  await activeBridgeResolution?.store.whenReady();
   return resolveDashboardBinding(ref);
 }
 
@@ -348,6 +370,14 @@ export interface KeyedStoreLike<T> {
   registerIfAbsent(key: string, value: T): Promise<boolean>;
   lookup(key: string): Promise<T | undefined>;
   delete(key: string): Promise<boolean>;
+  /** Live-entry read (host PluginStateKeyedStore.entries); optional so test fakes stay minimal. */
+  entries?: () => Promise<Array<{ key: string; value: T }>>;
+}
+
+/** Dist contract for openKeyedStore (OpenKeyedStoreOptions, agent-harness-runtime-R8dTs5zl.d.ts:27590). */
+export interface OpenKeyedStoreOptionsLike {
+  namespace: string;
+  maxEntries: number;
 }
 
 export interface SessionBindingServiceLike {
@@ -411,7 +441,7 @@ export interface DashboardBridgeApiLike {
   ) => void;
   runtime?: {
     state?: {
-      openKeyedStore?: <T>(options: Record<string, unknown>) => KeyedStoreLike<T>;
+      openKeyedStore?: <T>(options: OpenKeyedStoreOptionsLike) => KeyedStoreLike<T>;
     };
   };
 }
@@ -443,23 +473,111 @@ export interface BridgeRowStoreLike {
   upsertRow(record: SessionBindingRecordLike): void;
   removeRow(bindingId: string): SessionBindingRecordLike | null;
   listBySession(targetSessionKey: string): SessionBindingRecordLike[];
+  /** Phase 2.12 F2: loads persisted rows/tombstones once; first call wins, never rejects. */
+  hydrate(): Promise<void>;
+  /** Resolves once startup hydration (F2) finished — always resolves, never rejects. */
+  whenReady(): Promise<void>;
+}
+
+export interface BridgeRowStoreOptions {
+  /** Called when hydrating a persisted store failed — memory-only rows continue. */
+  onHydrateError?: (error: unknown) => void;
 }
 
 export function createBridgeRowStore(
   persistedRows?: KeyedStoreLike<BridgeRow> | null,
   persistedTombstones?: KeyedStoreLike<true> | null,
+  options?: BridgeRowStoreOptions,
 ): BridgeRowStoreLike {
-  return new BridgeRowStore(persistedRows, persistedTombstones);
+  return new BridgeRowStore(persistedRows, persistedTombstones, options);
+}
+
+const ROW_KEY_PREFIX = "row:";
+const TOMBSTONE_KEY_PREFIX = "tombstone:";
+
+function isBridgeRowValue(value: unknown): value is BridgeRow {
+  return (
+    !!value &&
+    typeof value === "object" &&
+    typeof (value as BridgeRow).record?.bindingId === "string"
+  );
 }
 
 class BridgeRowStore implements BridgeRowStoreLike {
   private readonly rows = new Map<string, BridgeRow>();
   private readonly tombstones = new Set<string>();
+  private hydratePromise: Promise<void> | null = null;
 
   constructor(
     private readonly persistedRows?: KeyedStoreLike<BridgeRow> | null,
     private readonly persistedTombstones?: KeyedStoreLike<true> | null,
+    private readonly options?: BridgeRowStoreOptions,
   ) {}
+
+  /**
+   * Phase 2.12 F2 boot hydration: loads persisted rows + tombstones from the
+   * host keyed store into the memory maps so a fresh process resolves
+   * materialized binds and unbind tombstones from before the restart.
+   * Idempotent (first call wins); never rejects — per-store failures are
+   * swallowed after reporting, execution continues memory-only. In-memory
+   * writes that happened during hydrate always win over persisted entries.
+   */
+  async hydrate(): Promise<void> {
+    if (!this.hydratePromise) {
+      this.hydratePromise = this.hydrateOnce().catch((error) => {
+        this.options?.onHydrateError?.(error);
+      });
+    }
+    return await this.hydratePromise;
+  }
+
+  whenReady(): Promise<void> {
+    return this.hydratePromise ?? Promise.resolve();
+  }
+
+  private async hydrateOnce(): Promise<void> {
+    try {
+      await this.hydrateRows();
+    } finally {
+      try {
+        await this.hydrateTombstones();
+      } catch (error) {
+        this.options?.onHydrateError?.(error);
+      }
+    }
+  }
+
+  private async hydrateRows(): Promise<void> {
+    const persisted = this.persistedRows;
+    if (!persisted?.entries) return;
+    const entries = await persisted.entries();
+    for (const entry of entries) {
+      const bindingId = typeof entry?.key === "string" && entry.key.startsWith(ROW_KEY_PREFIX)
+        ? entry.key.slice(ROW_KEY_PREFIX.length)
+        : "";
+      if (!bindingId) continue;
+      const row = entry.value;
+      if (!isBridgeRowValue(row)) continue;
+      // Guards: in-memory rows already written (e.g. a bind during hydrate)
+      // win, and a tombstone seen so far suppresses a stale persisted row.
+      if (this.rows.has(bindingId) || this.tombstones.has(bindingId)) continue;
+      this.rows.set(bindingId, row);
+    }
+  }
+
+  private async hydrateTombstones(): Promise<void> {
+    const persisted = this.persistedTombstones;
+    if (!persisted?.entries) return;
+    const entries = await persisted.entries();
+    for (const entry of entries) {
+      const bindingId = typeof entry?.key === "string" && entry.key.startsWith(TOMBSTONE_KEY_PREFIX)
+        ? entry.key.slice(TOMBSTONE_KEY_PREFIX.length)
+        : "";
+      if (!bindingId) continue;
+      // A live in-memory row revived the binding — the row must win.
+      if (!this.rows.has(bindingId)) this.tombstones.add(bindingId);
+    }
+  }
 
   row(bindingId: string): SessionBindingRecordLike | null {
     if (this.tombstones.has(bindingId)) return null;
@@ -474,7 +592,7 @@ class BridgeRowStore implements BridgeRowStoreLike {
     this.tombstones.delete(record.bindingId);
     const row: BridgeRow = { record };
     this.rows.set(record.bindingId, row);
-    void this.persistedRows?.registerIfAbsent(`row:${record.bindingId}`, row).catch(() => undefined);
+    void this.persistedRows?.registerIfAbsent(`${ROW_KEY_PREFIX}${record.bindingId}`, row).catch(() => undefined);
   }
 
   removeRow(bindingId: string): SessionBindingRecordLike | null {
@@ -482,8 +600,8 @@ class BridgeRowStore implements BridgeRowStoreLike {
     if (!row) return null;
     this.rows.delete(bindingId);
     this.tombstones.add(bindingId);
-    void this.persistedRows?.delete(`row:${bindingId}`).catch(() => undefined);
-    void this.persistedTombstones?.registerIfAbsent(`tombstone:${bindingId}`, true).catch(() => undefined);
+    void this.persistedRows?.delete(`${ROW_KEY_PREFIX}${bindingId}`).catch(() => undefined);
+    void this.persistedTombstones?.registerIfAbsent(`${TOMBSTONE_KEY_PREFIX}${bindingId}`, true).catch(() => undefined);
     return row.record;
   }
 
@@ -525,12 +643,16 @@ export function createWebchatDashboardBindingAdapter(args: {
       return resolveSync(ref);
     },
     async resolveByConversationAsync(ref: ConversationRefLike): Promise<SessionBindingRecordLike | null> {
+      // Phase 2.12 F2: never answer from a half-hydrated store.
+      await args.store.whenReady();
       return resolveSync(ref);
     },
     async inspectByConversationAsync(ref: ConversationRefLike): Promise<SessionBindingRecordLike | null> {
+      await args.store.whenReady();
       return resolveSync(ref);
     },
     async touchAsync(bindingId: string, at?: number): Promise<void> {
+      await args.store.whenReady();
       const row = args.store.row(bindingId);
       if (!row) return;
       args.store.upsertRow({
@@ -637,11 +759,17 @@ export async function createDashboardBridge(args: DashboardBridgeArgs): Promise<
   let openPersistedTombstones: KeyedStoreLike<true> | null = null;
   try {
     if (api.runtime?.state?.openKeyedStore) {
+      // Phase 2.12 F1: the dist contract (OpenKeyedStoreOptions,
+      // agent-harness-runtime-R8dTs5zl.d.ts:27590-27597; usage evidence
+      // bot-native-command-menu-hfLaQk2g.mjs:307) is {namespace, maxEntries} —
+      // the previous {name: …} shape was silently dropped by the host.
       openPersistedRows = api.runtime.state.openKeyedStore<BridgeRow>({
-        name: `${CHANNEL_ID}.dashboard-bridge.rows`,
+        namespace: ROWS_STORE_NAMESPACE,
+        maxEntries: ROW_STORE_MAX_ENTRIES,
       });
       openPersistedTombstones = api.runtime.state.openKeyedStore<true>({
-        name: `${CHANNEL_ID}.dashboard-bridge.tombstones`,
+        namespace: TOMBSTONES_STORE_NAMESPACE,
+        maxEntries: ROW_STORE_MAX_ENTRIES,
       });
     }
   } catch (error) {
@@ -649,7 +777,14 @@ export async function createDashboardBridge(args: DashboardBridgeArgs): Promise<
     openPersistedTombstones = null;
     logger.warn?.(`[${CHANNEL_ID}] persisted bridge state unavailable; memory-only rows`, error);
   }
-  const store = new BridgeRowStore(openPersistedRows, openPersistedTombstones);
+  const store = new BridgeRowStore(openPersistedRows, openPersistedTombstones, {
+    onHydrateError: (error) => {
+      logger.warn?.(`[${CHANNEL_ID}] bridge store hydration failed; starting from memory-only rows`, error);
+    },
+  });
+  // Phase 2.12 F2: hydrate persisted rows/tombstones in the background; every
+  // async store consumer awaits store.ready below, so no read races the load.
+  void store.hydrate();
 
   // Publish this bridge's resolution state to the §4.2 delegation resolvers
   // while the bridge is alive (cleared in dispose).
@@ -746,7 +881,9 @@ export async function createDashboardBridge(args: DashboardBridgeArgs): Promise<
     registeredWebchatAdapterKeys: registeredAdapterKeys,
     async resolveDashboardBindingAsync(ref) {
       // Shares the §4.2 core (rows → tombstones → Turn-1 synthesis) so this
-      // handle and the exported delegation resolvers always agree.
+      // handle and the exported delegation resolvers always agree. Awaiting
+      // the store keeps the F2 boot hydration from being read half-loaded.
+      await store.whenReady();
       return resolveDashboardBinding(ref, { roster, store });
     },
     async ensureDashboardBindingAsync(event) {

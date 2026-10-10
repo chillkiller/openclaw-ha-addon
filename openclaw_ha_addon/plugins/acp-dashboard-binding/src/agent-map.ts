@@ -13,8 +13,30 @@ import { createHash } from "node:crypto";
  * Reserved agent id that is NEVER rostered as a harness agent: `main` is the
  * host's built-in main agent and keeps its built-in dashboard session even
  * when its config entry carries runtime.acp (Phase 2.7 dynamic-roster rule).
+ * Superseded by ORCHESTRATOR_AGENT_IDS (Phase 2.15) — kept as an export for
+ * API compatibility; it is the first entry of the orchestrator list.
  */
 export const RESERVED_HARNESS_AGENT_ID = "main";
+
+/**
+ * Orchestrator agent ids that are NEVER rostered as harness agents even when
+ * their config entry carries `runtime.type: "acp"` (Phase 2.15, codex-R1):
+ * these are the host's own coordinating agents. A dashboard conversation for
+ * one of them always keeps its built-in (main-style) dispatch — nothing must
+ * be able to route them through the ACP binding, regardless of config.
+ */
+export const ORCHESTRATOR_AGENT_IDS: readonly string[] = [
+  RESERVED_HARNESS_AGENT_ID,
+  "coding-main",
+  "coding-review",
+];
+
+const ORCHESTRATOR_AGENT_ID_SET = new Set<string>(ORCHESTRATOR_AGENT_IDS);
+
+/** True when `agentId` canonicalizes to an orchestrator id (never rostered). */
+export function isOrchestratorAgentId(agentId: unknown): boolean {
+  return ORCHESTRATOR_AGENT_ID_SET.has(sanitizeAgentId(agentId));
+}
 
 /** Default binding mode when the agent entry does not configure one. */
 export const BINDING_MODE = "persistent";
@@ -155,13 +177,54 @@ function specFromEntry(agentId: string, entry: AgentEntryLike | undefined): Harn
   };
 }
 
+type PluginEntryLike = {
+  config?: {
+    boundAgents?: unknown;
+  };
+};
+
+/**
+ * Explicit positive list of harness agent ids read from
+ * `plugins.entries['<CHANNEL_ID>'].config.boundAgents` (Phase 2.15, codex-R1
+ * dynamic part — nothing hardcoded, everything addon-config steerable).
+ *
+ * Returns null when the option is NOT set (no allowlist: every runtime.acp
+ * entry matches). When set (Array — including an explicitly EMPTY array),
+ * only the listed canonical ids match. Orchestrator ids inside the list
+ * still never match (exclusion wins). Invalid strings are canonicalized like
+ * agent ids (sanitizeAgentId); non-strings are ignored.
+ */
+export function resolveBoundAgentAllowlist(cfg: unknown): string[] | null {
+  const pluginEntries = (cfg as { plugins?: { entries?: Record<string, PluginEntryLike | undefined> } } | undefined)?.plugins?.entries;
+  if (!pluginEntries) return null;
+  const bound = pluginEntries[CHANNEL_ID]?.config?.boundAgents;
+  if (!Array.isArray(bound)) return null;
+  const ids = new Set<string>();
+  for (const raw of bound) {
+    if (typeof raw !== "string") continue;
+    ids.add(sanitizeAgentId(raw));
+  }
+  return [...ids];
+}
+
+/** Exclusion + positive-list filter shared by both resolvers (codex-R1). */
+function passesRosterGates(cfg: unknown, agentId: string, spec: HarnessAgentSpec | null): HarnessAgentSpec | null {
+  if (!spec) return null;
+  if (ORCHESTRATOR_AGENT_ID_SET.has(agentId)) return null;
+  const allowlist = resolveBoundAgentAllowlist(cfg);
+  if (allowlist !== null && !allowlist.includes(agentId)) return null;
+  return spec;
+}
+
 /**
  * Dynamic harness roster (Phase 2.7, GaRoN: the project must work
  * user-independently): the OpenClaw config is the single source of truth —
  * every `agents.entries.<id>` whose `runtime.type === "acp"` is a harness
  * agent, with `runtime.acp.agent` as its harness id. There is NO fixed id
- * list anymore. `main` is never rostered (built-in main agent stays
- * untouched), and an absent/empty config yields an EMPTY roster (safe
+ * list anymore. Orchestrator ids (Phase 2.15: main/coding-main/coding-review)
+ * are ALWAYS excluded even with runtime.acp, and when
+ * `plugins.entries.<CHANNEL_ID>.config.boundAgents` is set it is the ONLY
+ * positive list. An absent/empty config yields an EMPTY roster (safe
  * default: no match, no derive).
  */
 export function resolveHarnessAgentSpecs(cfg: unknown): HarnessAgentSpec[] {
@@ -171,8 +234,7 @@ export function resolveHarnessAgentSpecs(cfg: unknown): HarnessAgentSpec[] {
   for (const [rawId, entry] of Object.entries(entries)) {
     if (entry === undefined || entry === null) continue;
     const agentId = sanitizeAgentId(rawId);
-    if (agentId === RESERVED_HARNESS_AGENT_ID) continue;
-    const spec = specFromEntry(agentId, entry);
+    const spec = passesRosterGates(cfg, agentId, specFromEntry(agentId, entry));
     if (spec) specs.push(spec);
   }
   return specs;
@@ -183,16 +245,17 @@ export function resolveHarnessAgentSpecs(cfg: unknown): HarnessAgentSpec[] {
  * runtime settings? The caller passes its LIVE config on every resolve
  * (binding-adapter: `options.getConfig?.()`), so config changes are visible
  * within the adapter generation without any cache. Returns null for
- * main/unknown/non-acp agents — those keep their untouched dispatch
+ * orchestrator/unknown/non-acp agents (and for ids outside an explicitly set
+ * `boundAgents` positive list) — those keep their untouched dispatch
  * (acceptance criterion #4).
  */
 export function resolveHarnessAgentSpec(cfg: unknown, agentId: unknown): HarnessAgentSpec | null {
   const normalized = sanitizeAgentId(agentId);
-  if (normalized === RESERVED_HARNESS_AGENT_ID) return null;
+  if (ORCHESTRATOR_AGENT_ID_SET.has(normalized)) return null;
 
   const entries = (cfg as { agents?: { entries?: Record<string, AgentEntryLike | undefined> } } | undefined)?.agents?.entries;
   if (!entries?.[normalized]) return null;
-  return specFromEntry(normalized, entries[normalized]);
+  return passesRosterGates(cfg, normalized, specFromEntry(normalized, entries[normalized]));
 }
 
 /** First `length` hex chars of sha256(host normalization of `channel:accountId:conversationId`). */
