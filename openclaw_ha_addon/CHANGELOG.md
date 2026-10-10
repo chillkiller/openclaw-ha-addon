@@ -1,3 +1,12 @@
+## [0.7.13.9] - 2026-10-10
+
+### Changed
+- **Binding selection philosophy (GaRoN 09:29):** replaced the hard Orchestrator block with a prioritized gate — `boundAgents` (explicit allowlist, may bind anything including orchestrator agents) > `excludedAgents` (replaces the default exclusion entirely) > safe-default exclusion (`main`/`coding-main`/`coding-review`). No ban without an escape hatch: the customer gets what they want.
+- **Python unit tests for the deploy option gate** (tests/test_oc_acpx_helper_deploy_plugin.py, 5 cases: unset/false/true/case/idempotent).
+- Docs: BRIDGE.md §8 documents the priority ladder + test matrix.
+
+### Verified
+- claude fix-run + independent codex final review (RELEASE-READY); 73/73 plugin tests, tsc strict; MVP == repo == live config bit-identical.
 ## [0.7.13.8] - 2026-10-10
 
 ### Fixed

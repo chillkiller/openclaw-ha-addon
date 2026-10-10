@@ -315,3 +315,55 @@ User + Retry-Hinweis; der Retry läuft dann auf materialisierten Rows und geht d
 2. Wie verhält sich der strict-Vergleich konkret, wenn beide Seiten deterministisch `boundAt: 0` liefern
    (Konfig-Variante, §1.4 Record-Präzedenz) — ist der Mismatch reale oder theoretische Gefahr?
 3. Wer gehört die Fehler-UX (Plugin vs. Host), falls Option B gewählt wird?
+---
+
+## 8. Binding-Auswahl-Philosophie (GaRoN 09:29 — Phase 2.17)
+
+**Ausgangspunkt (Argument 09:29):** „Der Kunde bekommt, was er will, nicht was wir ihm
+geben." KEINE Verbote ohne Escape-Hatch — aber auch KEIN Selbstschuss ohne Safe-Default
+(Argument 08:14). Beides gilt gleichzeitig; die Prioritätenspur folgt daraus.
+
+### 8.1 Die Prioritätenleiter (`isRosterEligibleAgentId`, agent-map.ts)
+
+Welche `agents.entries.<id>`-Agenten landen im Harness-Roster (und damit als Bindungsziele
+für Dashboard-Konversationen), entscheidet DIREKTE Priorität:
+
+1. **`plugins.entries['acp-dashboard-binding'].config.boundAgents`** *(gesetzt — höchste
+   Priorität)*: Positive-Liste und damit das „Kunde bekommt was er will"-Hebel. Sie
+   GEWINNT über JEDE Exclusion — sie kann sogar `main`/`coding-main`/`coding-review`
+   explizit aufnehmen, die werden dann gebunden (dokumentierter Escape-Hatch). Semantik:
+   Nur die gelisteten (kanonisierten) ids rosteren; **explizit leeres Array = „nichts
+   binden"** (ebenfalls dokumentierte Semantik, kein Fallback auf Defaults).
+2. **`config.excludedAgents`** *(nur wenn `boundAgents` NICHT gesetzt)*: Ersetzt die
+   Default-Exclusion KOMPLETT — akzeptiert eine CSV (`"main,coding-main"`) oder eine
+   Liste. Erklärung: Der User entscheidet, was „gefährlich" ist; sein Wert schlägt unsere
+   hardcoded Liste.
+3. **Safe-Default-Exclusion** *(nur wenn beides fehlt)*: `ORCHESTRATOR_AGENT_IDS`
+   (`main`, `coding-main`, `coding-review`) rosteren nicht, auch wenn ihre Entries
+   `runtime.acp` tragen — verhindert das Selbstschuss-Szenario von 08:14 ohne User-Konfig.
+
+Die Leiter gilt **einzeln über beide Pfade** identisch: Adapter-Ableitung
+(`resolveHarnessAgentSpec`/`resolveHarnessAgentSpecs` in agent-map.ts) UND Roster-Frage
+(`createConfigHarnessRoster().isHarnessAgent` in dashboard-bridge.ts) rufen dieselbe
+Gate-Funktion. Konfig-Änderungen wirken live (kein Cache — pro resolve frisch gelesen).
+
+### 8.2 Warum boundAgents vor Exclusion gewinnt (Begründung)
+
+Eine Exclusion, die sich nicht überschreiben lässt, ist ein Verbot — und Verbote ohne
+Escape-Hatch widersprechen der GaRoN-Regel. Deshalb ist die hardcoded
+Orchestrator-Exclusion ab Phase 2.17 KEINE Konstante mehr im Entscheidungsweg, sondern
+nur noch der DEFAULT-Knoten der Leiter (Stufe 3). Der Safe-Default existiert für den
+Fall „kein Bewusstsein über das Feature" (08:14: Haupt-Orchestrator darf nie versehentlich
+durch das ACP-Binding laufen), nicht als Mauer gegen bewusste Konfiguration.
+
+### 8.3 Test-Matrix (Phase 2.17, dashboard-bridge.test.ts)
+
+| Konfig | Ergebnis |
+| --- | --- |
+| nichts gesetzt | Coding-Main/Coding-Review/Main ausgeschlossen, `runtime.acp`-Rest rostert (Safe-Default) |
+| `boundAgents: ["coding-main","codex"]` | beide gebunden — Exclusion überschrieben (Escape-Hatch) |
+| `boundAgents: []` | gar nichts gebunden (dokumentierte Semantik) |
+| `excludedAgents: "codex"` | Default-Exclusion ersetzt: Coding-Main rostert, Codex nicht |
+| `excludedAgents: []` | gar nichts ausgeschlossen (dokumentierte Semantik) |
+| `boundAgents` + `excludedAgents` kombiniert | `boundAgents` gewinnt (Stufe 1 > Stufe 2) |
+| Live-Reload | Gate liest Config pro Resolve frisch — Adapter-Generation ohne Cache |

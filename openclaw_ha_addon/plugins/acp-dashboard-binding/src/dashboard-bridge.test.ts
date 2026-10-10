@@ -31,7 +31,9 @@ import { createDashboardBindingAdapter } from "./binding-adapter.js";
 import {
   ORCHESTRATOR_AGENT_IDS,
   isOrchestratorAgentId,
+  isRosterEligibleAgentId,
   resolveBoundAgentAllowlist,
+  resolveExcludedAgentIds,
   resolveHarnessAgentSpec,
   resolveHarnessAgentSpecs,
 } from "./agent-map.js";
@@ -950,7 +952,7 @@ describe("dashboard-bridge: orchestrator exclusion + boundAgents allowlist (Phas
     expect(createConfigHarnessRoster(emptyListConfig).isHarnessAgent("codex")).toBe(false);
   });
 
-  it("boundAgents entry that names an orchestrator is still excluded (exclusion wins)", () => {
+  it("boundAgents entry that names an orchestrator BINDS it (positive list wins, GaRoN escape hatch)", () => {
     const allowOrchestratorConfig = {
       ...orchestratorConfig,
       plugins: {
@@ -960,9 +962,81 @@ describe("dashboard-bridge: orchestrator exclusion + boundAgents allowlist (Phas
       },
     };
     const specs = resolveHarnessAgentSpecs(allowOrchestratorConfig);
+    expect(specs.map((spec) => spec.agentId)).toEqual(["coding-main", "codex"]);
+    expect(resolveHarnessAgentSpec(allowOrchestratorConfig, "coding-main")).not.toBeNull();
+    expect(createConfigHarnessRoster(allowOrchestratorConfig).isHarnessAgent("coding-main")).toBe(true);
+    // Adapter derive path: a coding-main dashboard conversation now maps to
+    // an ACP binding (the "customer gets what they want" hatch).
+    const adapter = createDashboardBindingAdapter({ getConfig: () => allowOrchestratorConfig });
+    expect(adapter.resolveByConversation({ channel: "webchat", accountId: "default", conversationId: CODING_MAIN_KEY })).not.toBeNull();
+  });
+
+  it("excludedAgents replaces the DEFAULT exclusion list (CSV string, escape hatch #2)", () => {
+    const excludedAgentsConfig = {
+      ...orchestratorConfig,
+      plugins: {
+        entries: {
+          [CHANNEL_ID]: { config: { excludedAgents: "codex" } },
+        },
+      },
+    };
+    expect(resolveExcludedAgentIds(excludedAgentsConfig)).toEqual(["codex"]);
+    const specs = resolveHarnessAgentSpecs(excludedAgentsConfig);
+    expect(specs.map((spec) => spec.agentId)).toEqual(["coding-main", "coding-review"]);
+    expect(resolveHarnessAgentSpec(excludedAgentsConfig, "codex")).toBeNull();
+    const roster = createConfigHarnessRoster(excludedAgentsConfig);
+    expect(roster.isHarnessAgent("coding-main")).toBe(true);
+    expect(roster.isHarnessAgent("codex")).toBe(false);
+  });
+
+  it("excludedAgents as array; empty replacement excludes nothing by itself", () => {
+    const emptyExclusionConfig = {
+      ...orchestratorConfig,
+      plugins: {
+        entries: {
+          [CHANNEL_ID]: { config: { excludedAgents: [] } },
+        },
+      },
+    };
+    expect(resolveExcludedAgentIds(emptyExclusionConfig)).toEqual([]);
+    expect(resolveHarnessAgentSpecs(emptyExclusionConfig).map((spec) => spec.agentId)).toEqual([
+      "coding-main",
+      "coding-review",
+      "codex",
+    ]);
+    // Array form canonicalizes exactly like the CSV form.
+    expect(resolveExcludedAgentIds({
+      plugins: { entries: { [CHANNEL_ID]: { config: { excludedAgents: ["Codex", "  claude  "].concat([]) } } } },
+    })).toEqual(["codex", "claude"]);
+    expect(isRosterEligibleAgentId(emptyExclusionConfig, "main")).toBe(true);
+    expect(isRosterEligibleAgentId(emptyExclusionConfig, "codex")).toBe(true);
+  });
+
+  it("boundAgents wins over excludedAgents combined (positive list = highest priority)", () => {
+    const combinedConfig = {
+      ...orchestratorConfig,
+      plugins: {
+        entries: {
+          [CHANNEL_ID]: { config: { boundAgents: ["codex"], excludedAgents: ["codex", "coding-main"] } },
+        },
+      },
+    };
+    const specs = resolveHarnessAgentSpecs(combinedConfig);
     expect(specs.map((spec) => spec.agentId)).toEqual(["codex"]);
-    expect(resolveHarnessAgentSpec(allowOrchestratorConfig, "coding-main")).toBeNull();
-    expect(createConfigHarnessRoster(allowOrchestratorConfig).isHarnessAgent("coding-main")).toBe(false);
+    expect(resolveHarnessAgentSpec(combinedConfig, "codex")).not.toBeNull();
+    expect(resolveHarnessAgentSpec(combinedConfig, "coding-main")).toBeNull();
+  });
+
+  it("excludedAgents NOT set: safe-default exclusion unchanged (no config → no escape hatch)", () => {
+    expect(resolveExcludedAgentIds(orchestratorConfig)).toBeNull();
+    expect(resolveExcludedAgentIds(undefined)).toBeNull();
+    // Non-string/non-array shapes: not set → default exclusion applies.
+    expect(resolveExcludedAgentIds({
+      plugins: { entries: { [CHANNEL_ID]: { config: { excludedAgents: 42 } } } },
+    })).toBeNull();
+    const specs = resolveHarnessAgentSpecs(orchestratorConfig);
+    expect(specs.map((spec) => spec.agentId)).toEqual(["codex"]);
+    expect(createConfigHarnessRoster(orchestratorConfig).isHarnessAgent("coding-main")).toBe(false);
   });
 
   it("boundAgents allowlist applies live through the adapter getConfig (no cache)", () => {

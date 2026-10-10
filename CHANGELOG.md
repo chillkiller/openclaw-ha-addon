@@ -171,6 +171,10 @@ Release-facing summary. Detailed per-release engineering notes: [openclaw_ha_add
 
 ## 0.7.10.21
 - Fix OpenClaw ControlUI asset loading inside HA Ingress when X-Ingress-Path header is missing by rewriting asset links to relative URLs (with absolute fallback when the header is present).
+## [0.7.13.9] - 2026-10-10
+
+### Changed
+- **Binding selection ladder:** `boundAgents` > `excludedAgents` > safe-default exclusion — no ban without escape hatch; plugin deploy tests added.
 ## [0.7.13.7] - 2026-10-10
 
 ### Fixed

@@ -10,8 +10,9 @@ import {
   BINDING_ID_PREFIX,
   BINDING_MODE,
   CHANNEL_ID,
-  isOrchestratorAgentId,
+  isRosterEligibleAgentId,
   resolveBoundAgentAllowlist,
+  resolveExcludedAgentIds,
 } from "./agent-map.js";
 
 // Bridge public surface keeps exporting the shared constants (tests/plugins
@@ -26,7 +27,9 @@ export {
   DEFAULT_CWD_PREFIX,
   ORCHESTRATOR_AGENT_IDS,
   isOrchestratorAgentId,
+  isRosterEligibleAgentId,
   resolveBoundAgentAllowlist,
+  resolveExcludedAgentIds,
 } from "./agent-map.js";
 
 const WEBCHAT_ADAPTER_KEY = `${BINDING_CHANNEL}:${BINDING_ACCOUNT_ID}`;
@@ -198,21 +201,16 @@ export function createConfigHarnessRoster(config: unknown): HarnessRoster {
   return {
     isHarnessAgent(agentId: string): boolean {
       // Phase 2.7: the roster is fully config-derived — an entry is a harness
-      // agent iff runtime.type === "acp" (no fixed id list). Orchestrator ids
-      // (Phase 2.15, codex-R1: main/coding-main/coding-review) NEVER roster,
-      // even when their entry carries runtime.acp.
+      // agent iff runtime.type === "acp" (no fixed id list). Eligibility is
+      // the Phase 2.17 precedence ladder shared with agent-map
+      // (isRosterEligibleAgentId): boundAgents positive list (highest
+      // priority, may even bind orchestrator ids) > excludedAgents (replaces
+      // the default exclusion) > safe-default exclusion
+      // (main/coding-main/coding-review) that applies only without both.
       const canonical = normalizeAgentId(agentId);
-      if (canonical === DEFAULT_AGENT_ID) return false;
-      if (isOrchestratorAgentId(canonical)) return false;
+      if (!isRosterEligibleAgentId(config, canonical)) return false;
       const entry = agentsConfig?.entries?.[canonical] ?? agentsConfig?.entries?.[agentId];
       if (entry?.runtime?.type !== "acp") return false;
-      // Phase 2.15 R1 (dynamic part): when
-      // plugins.entries[CHANNEL_ID].config.boundAgents is explicitly set, ONLY
-      // its ids roster (positive list; an explicitly EMPTY list rosters
-      // nothing); when absent, every runtime.acp entry does. The exclusion
-      // above still wins over the positive list.
-      const allowlist = resolveBoundAgentAllowlist(config);
-      if (allowlist !== null && !allowlist.includes(canonical)) return false;
       return true;
     },
     acpDefaults(agentId: string): HarnessAgentDefaults | null {

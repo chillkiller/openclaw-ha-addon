@@ -19,11 +19,13 @@ import { createHash } from "node:crypto";
 export const RESERVED_HARNESS_AGENT_ID = "main";
 
 /**
- * Orchestrator agent ids that are NEVER rostered as harness agents even when
- * their config entry carries `runtime.type: "acp"` (Phase 2.15, codex-R1):
- * these are the host's own coordinating agents. A dashboard conversation for
- * one of them always keeps its built-in (main-style) dispatch — nothing must
- * be able to route them through the ACP binding, regardless of config.
+ * Safe-default exclusion list (Phase 2.15 codex-R1 → Phase 2.17 GaRoN
+ * "Bound-Auswahl-Philosophie"): these are the host's own coordinating agents.
+ * They are excluded from the harness roster ONLY when no explicit plugin
+ * config says otherwise — `boundAgents` (positive list) and `excludedAgents`
+ * (default-exclusion replacement) are both escape hatches that override this
+ * default. A dashboard conversation excluded by the default keeps its
+ * built-in (main-style) dispatch.
  */
 export const ORCHESTRATOR_AGENT_IDS: readonly string[] = [
   RESERVED_HARNESS_AGENT_ID,
@@ -33,7 +35,7 @@ export const ORCHESTRATOR_AGENT_IDS: readonly string[] = [
 
 const ORCHESTRATOR_AGENT_ID_SET = new Set<string>(ORCHESTRATOR_AGENT_IDS);
 
-/** True when `agentId` canonicalizes to an orchestrator id (never rostered). */
+/** True when `agentId` canonicalizes to an id on the safe-default exclusion list. */
 export function isOrchestratorAgentId(agentId: unknown): boolean {
   return ORCHESTRATOR_AGENT_ID_SET.has(sanitizeAgentId(agentId));
 }
@@ -180,40 +182,96 @@ function specFromEntry(agentId: string, entry: AgentEntryLike | undefined): Harn
 type PluginEntryLike = {
   config?: {
     boundAgents?: unknown;
+    excludedAgents?: unknown;
   };
 };
+
+function resolvePluginEntryConfig(cfg: unknown): Record<string, unknown> | null {
+  const entry = (cfg as { plugins?: { entries?: Record<string, PluginEntryLike | undefined> } } | undefined)?.plugins?.entries?.[CHANNEL_ID];
+  return entry?.config && typeof entry.config === "object" ? (entry.config as Record<string, unknown>) : null;
+}
+
+function sanitizedIdList(values: readonly unknown[]): string[] {
+  const ids = new Set<string>();
+  for (const raw of values) {
+    if (typeof raw !== "string") continue;
+    if (!raw.trim()) continue;
+    ids.add(sanitizeAgentId(raw));
+  }
+  return [...ids];
+}
 
 /**
  * Explicit positive list of harness agent ids read from
  * `plugins.entries['<CHANNEL_ID>'].config.boundAgents` (Phase 2.15, codex-R1
  * dynamic part — nothing hardcoded, everything addon-config steerable).
  *
- * Returns null when the option is NOT set (no allowlist: every runtime.acp
- * entry matches). When set (Array — including an explicitly EMPTY array),
- * only the listed canonical ids match. Orchestrator ids inside the list
- * still never match (exclusion wins). Invalid strings are canonicalized like
- * agent ids (sanitizeAgentId); non-strings are ignored.
+ * Phase 2.17 precedence (GaRoN "Der Kunde bekommt, was er will"): the
+ * positive list is the HIGHEST-priority lever — it wins over the orchestrator
+ * exclusion (and over `excludedAgents`), so explicitly listing
+ * main/coding-main/coding-review binds them (documented escape hatch).
+ *
+ * Returns null when the option is NOT set (no allowlist: the exclusion gates
+ * decide alone). When set (Array — including an explicitly EMPTY array),
+ * ONLY the listed canonical ids match; `[]` is the documented "bind nothing"
+ * semantics. Invalid strings are canonicalized like agent ids
+ * (sanitizeAgentId); non-strings are ignored.
  */
 export function resolveBoundAgentAllowlist(cfg: unknown): string[] | null {
-  const pluginEntries = (cfg as { plugins?: { entries?: Record<string, PluginEntryLike | undefined> } } | undefined)?.plugins?.entries;
-  if (!pluginEntries) return null;
-  const bound = pluginEntries[CHANNEL_ID]?.config?.boundAgents;
+  const config = resolvePluginEntryConfig(cfg);
+  if (!config) return null;
+  const bound = config.boundAgents;
   if (!Array.isArray(bound)) return null;
-  const ids = new Set<string>();
-  for (const raw of bound) {
-    if (typeof raw !== "string") continue;
-    ids.add(sanitizeAgentId(raw));
-  }
-  return [...ids];
+  return sanitizedIdList(bound);
+}
+
+/**
+ * Replacement for the safe-default exclusion list, read from
+ * `plugins.entries['<CHANNEL_ID>'].config.excludedAgents` (Phase 2.17, GaRoN
+ * escape hatch #2 — keine Verbote ohne Override).
+ *
+ * Accepted shapes: an Array of agent-id strings, or a single CSV string
+ * (`"main,coding-main"`). Both are validated/canonicalized like agent ids
+ * (sanitizeAgentId); non-strings, empty entries and empty CSV fragments are
+ * ignored. An explicitly EMPTY value (`[]` or `""`) means "nothing is
+ * excluded by default" — that is the documented semantics, not a fallback.
+ *
+ * Returns null when the option is NOT set (the safe-default exclusion list
+ * `ORCHESTRATOR_AGENT_IDS` applies).
+ */
+export function resolveExcludedAgentIds(cfg: unknown): string[] | null {
+  const config = resolvePluginEntryConfig(cfg);
+  if (!config) return null;
+  const excluded = config.excludedAgents;
+  if (typeof excluded === "string") return sanitizedIdList(excluded.split(","));
+  if (Array.isArray(excluded)) return sanitizedIdList(excluded);
+  return null;
+}
+
+/**
+ * Roster gate shared by all resolvers (Phase 2.17 precedence ladder):
+ *
+ *   1. `boundAgents` set  → positive list wins over ANY exclusion
+ *      (highest priority; includes orchestrator ids — the "customer gets
+ *      what they want" escape hatch; `[]` binds nothing).
+ *   2. otherwise `excludedAgents` set → it REPLACES the safe-default
+ *      exclusion list entirely.
+ *   3. otherwise → safe-default exclusion (ORCHESTRATOR_AGENT_IDS) applies:
+ *      main/coding-main/coding-review never roster without explicit config,
+ *      preventing the 08:14 self-shot scenario out of the box.
+ */
+export function isRosterEligibleAgentId(cfg: unknown, agentId: string): boolean {
+  const allowlist = resolveBoundAgentAllowlist(cfg);
+  if (allowlist !== null) return allowlist.includes(agentId);
+  const excluded = resolveExcludedAgentIds(cfg);
+  if (excluded !== null) return !excluded.includes(agentId);
+  return !ORCHESTRATOR_AGENT_ID_SET.has(agentId);
 }
 
 /** Exclusion + positive-list filter shared by both resolvers (codex-R1). */
 function passesRosterGates(cfg: unknown, agentId: string, spec: HarnessAgentSpec | null): HarnessAgentSpec | null {
   if (!spec) return null;
-  if (ORCHESTRATOR_AGENT_ID_SET.has(agentId)) return null;
-  const allowlist = resolveBoundAgentAllowlist(cfg);
-  if (allowlist !== null && !allowlist.includes(agentId)) return null;
-  return spec;
+  return isRosterEligibleAgentId(cfg, agentId) ? spec : null;
 }
 
 /**
@@ -221,11 +279,11 @@ function passesRosterGates(cfg: unknown, agentId: string, spec: HarnessAgentSpec
  * user-independently): the OpenClaw config is the single source of truth —
  * every `agents.entries.<id>` whose `runtime.type === "acp"` is a harness
  * agent, with `runtime.acp.agent` as its harness id. There is NO fixed id
- * list anymore. Orchestrator ids (Phase 2.15: main/coding-main/coding-review)
- * are ALWAYS excluded even with runtime.acp, and when
- * `plugins.entries.<CHANNEL_ID>.config.boundAgents` is set it is the ONLY
- * positive list. An absent/empty config yields an EMPTY roster (safe
- * default: no match, no derive).
+ * list anymore. The roster gate is the Phase 2.17 precedence ladder:
+ * `boundAgents` (positive list, highest priority — may even bind
+ * orchestrator ids) > `excludedAgents` (replaces the default exclusion) >
+ * safe-default exclusion (main/coding-main/coding-review). An absent/empty
+ * config yields an EMPTY roster (safe default: no match, no derive).
  */
 export function resolveHarnessAgentSpecs(cfg: unknown): HarnessAgentSpec[] {
   const entries = (cfg as { agents?: { entries?: Record<string, AgentEntryLike | undefined> } } | undefined)?.agents?.entries;
@@ -244,15 +302,14 @@ export function resolveHarnessAgentSpecs(cfg: unknown): HarnessAgentSpec[] {
  * Roster lookup: is `agentId` a harness agent per `cfg`, and what are its ACP
  * runtime settings? The caller passes its LIVE config on every resolve
  * (binding-adapter: `options.getConfig?.()`), so config changes are visible
- * within the adapter generation without any cache. Returns null for
- * orchestrator/unknown/non-acp agents (and for ids outside an explicitly set
- * `boundAgents` positive list) — those keep their untouched dispatch
+ * within the adapter generation without any cache. Returns null for ids that
+ * fail the Phase 2.17 roster gate (`isRosterEligibleAgentId` — precedence
+ * ladder `boundAgents` > `excludedAgents` > safe-default exclusion) and for
+ * unknown/non-acp agents — those keep their untouched dispatch
  * (acceptance criterion #4).
  */
 export function resolveHarnessAgentSpec(cfg: unknown, agentId: unknown): HarnessAgentSpec | null {
   const normalized = sanitizeAgentId(agentId);
-  if (ORCHESTRATOR_AGENT_ID_SET.has(normalized)) return null;
-
   const entries = (cfg as { agents?: { entries?: Record<string, AgentEntryLike | undefined> } } | undefined)?.agents?.entries;
   if (!entries?.[normalized]) return null;
   return passesRosterGates(cfg, normalized, specFromEntry(normalized, entries[normalized]));
