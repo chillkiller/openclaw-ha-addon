@@ -6,7 +6,23 @@
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
-    "properties": {}
+    "properties": {
+      "boundAgents": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Explicit allowlist of agent ids that may be auto-bound. Overrides the orchestrator safe-default exclusion."
+      },
+      "excludedAgents": {
+        "type": "array",
+        "items": { "type": "string" },
+        "description": "Replaces the default orchestrator exclusion when boundAgents is unset."
+      },
+      "harnessSessions": {
+        "type": "object",
+        "additionalProperties": { "type": "string" },
+        "description": "Per-harness mapping to a real persistent ACP session key (created by /acp spawn). Dashboard conversations route to these instead of synthetic binding keys."
+      }
+    }
   },
   "channelConfigs": {
     "acp-dashboard-binding": {

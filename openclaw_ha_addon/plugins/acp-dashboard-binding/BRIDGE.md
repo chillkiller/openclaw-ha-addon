@@ -266,11 +266,23 @@ export function createDashboardBridge(args: DashboardBridgeArgs): DashboardBridg
 
 ---
 
-## 7. F3: ACP-Session-Init für binding-keys (Phase 2.12 — NUR DESIGN-DOKUMENTATION)
+## 7. F3: ACP-Session-Init für binding-keys (Phase 2.12 Design-Doku → Phase 2.18b ENTSCHEIDUNG)
 
-**Status: Implementierung ausdrücklich NICHT Teil von Phase 2.12. Die Design-Entscheidung trifft der
-Orchestrator/GaRoN.** Dieses Kapitel dokumentiert die beiden Kandidaten-Optionen und ihre Trade-offs, damit
-die Entscheidung auf belegtem Grund getroffen wird.
+**Status-Update Phase 2.18b (Orchestrator-Entscheidung, RE-besätigt):** Die nachstehende
+Dist-Analyse der synthetischen Record-Timing-Gefahr bleibt gültig; die ENTSCHEIDUNG ist aber
+gefallen und implementiert (Weg A, Plugin-seitig, §9): `config.harnessSessions` liefert für
+ausdrücklich gespawnte persistente Harness-Sessions den ECHTEN Session-Key als Target, so dass
+der strict resolve→touch→re-resolve-Vergleich und die ACP-Session-Init auf einen Key treffen,
+hinter dem eine echte `acp_sessions`-Row liegt. **Weg B (host-seitiger ensure-Pfad inkl.
+Turn-1-Fehler-UX) bleibt Upstream-Issue** gegen OpenClaw — so lange bleibt der synthetische
+Fallback-Pfad in seiner unten dokumentierten Einschränkung bestehen (brauchbar erst nach
+einer host-seitigen `/acp spawn`-Initialisierung, die es nicht gibt).
+
+---
+**Original-Design-Dokumentation Phase 2.12 (Implementierung damals ausdrücklich NICHT Teil;
+die Design-Entscheidung traf der Orchestrator/GaRoN):** dieses Kapitel dokumentiert die beiden
+Kandidaten-Optionen und ihre Trade-offs, damit die Entscheidung auf belegtem Grund getroffen
+wird.
 
 **Problem (Marvin-Bugreport Punkt 3):** Die ACP-Session-Init-Phase eines Dashboard-Turns konsultiert das
 Binding-System erneut, während der Turn läuft. Der dist-Resolve-Pfad vergleicht resolve → `touchAsync` →
@@ -367,3 +379,42 @@ durch das ACP-Binding laufen), nicht als Mauer gegen bewusste Konfiguration.
 | `excludedAgents: []` | gar nichts ausgeschlossen (dokumentierte Semantik) |
 | `boundAgents` + `excludedAgents` kombiniert | `boundAgents` gewinnt (Stufe 1 > Stufe 2) |
 | Live-Reload | Gate liest Config pro Resolve frisch — Adapter-Generation ohne Cache |
+
+---
+
+## 9. Phase 2.18b — `harnessSessions` (F3, Weg A: real gespawnte Session-Keys)
+
+**RE-Befund (Orchestrator, dist-verifiziert):** `manager.utils-Cu8bbvjj.mjs`
+`resolveStoredAcpSession()` antwortet `kind:"stale"` + `ACP_SESSION_INIT_FAILED`, wenn der
+Key ACP-geformt ist (`isAcpSessionKey`), aber KEINE `acp_sessions`-Row mit `stored.acp`
+existiert. `upsertAcpSessionMetaRow` (package-update-activation-recovery.mjs:431990) schreibt
+solche Rows **nur beim echten Harness-Spawn** (Felder: `session_id`, `backend`, `agent`,
+`mode`, `cwd`, …) — **synthetische binding-keys können deshalb NIE initialisiert werden.**
+
+**Weg A (Plugin-seitig, implementiert):** neue Config-Option
+`plugins.entries['acp-dashboard-binding'].config.harnessSessions` — Mapping harness-id →
+der ECHTE persistente Session-Key, den der User nach einem einmaligen `/acp spawn <harness>`
+einträgt. Lookup-Key: `runtime.acp.agent` (harness-id) ODER der kanonische agent id —
+harness-id gewinnt bei Kollision, agent id deckt Entries ohne `acp.agent` ab.
+
+- **Gate-Ladder bleibt** (`boundAgents` > `excludedAgents` > Safe-Default, §8.1): sie
+  entscheidet unverändert, WER bindet. NUR das TARGET ändert sich: gesetzt + gültig →
+  `targetSessionKey` = der echte Key; NICHT gesetzt oder ungültig → wie bisher synthetisch
+  (dokumentiert: brauchbar erst nach `/acp spawn`-Initialisierung, siehe §7).
+- **Validierung:** Target-Key muss ACP-geformt sein (Host-`isAcpSessionKey`-Shape,
+  `isAcpShapedSessionKey`) und DARF NICHT auf einen Orchestrator zielen
+  (`agent:main:acp:…`/`agent:coding-main:…` werden abgelehnt → Eintrag ignoriert, synthetisch).
+  Metadata (`mode`/`cwd`/`backend`/`acpAgentId`) bleibt informativ.
+- **Beide Pfade teilen eine Herleitung** (`resolveHarnessSessionTargetKey` in agent-map.ts):
+  Adapter-`deriveBindingRecord` UND Bridge-`resolveDashboardBindingDecision` (via
+  `HarnessRoster.harnessSessionTargetKey`) liefern denselben Target — Pflicht, weil in der
+  MVP-Komposition die Brücke aktiv ist (hooks-only nach Adapter-Registrierung) und die
+  §4.2-Row-Miss-Delegation vor der Adapter-Synthese antwortet; unterschiedliche Targets
+  hier würden das Fix im Produktbetrieb tot stellen.
+- **Resilienz:** ungültige Einträge (not-ACP-shaped, Orchestrator-Target, Array-/Nicht-Objekt-Shape)
+  werden ignoriert (Fallback synthetisch) statt die ganze Bindung abzulehnen.
+
+**Weg B — host-seitiger ensure-Pfad (Materialisierung der `acp_sessions`-Row host-seitig)**
+bleibt Upstream-Issue gegen OpenClaw (§7 unten: „Option A host-seitiger ensure" bzw.
+Turn-1-Fehler-UX). So lange gibt es für NICHT eingetragene Harnesses keinen Weg, eine
+synthetische binding-key-Session zu initialisieren.

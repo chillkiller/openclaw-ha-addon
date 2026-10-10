@@ -1055,3 +1055,100 @@ describe("dashboard-bridge: orchestrator exclusion + boundAgents allowlist (Phas
     expect(adapter.resolveByConversation(ref)).toBeNull();
   });
 });
+
+describe("dashboard-bridge: Phase 2.18b harnessSessions (F3, Weg A) — bridge roster path", () => {
+  const REAL_CODEX_KEY = "agent:codex:acp:session:2c1a5fa9-9d31-4b3e-a7d1-4f9d0d1f2b7e";
+  const REAL_CLAUDE_KEY = "acp:claude:07f3c2b1-8b2a-4c4e-9f8a-1d2e3f4a5b6c";
+  const ref = {
+    channel: "webchat" as const,
+    accountId: "default",
+    conversationId: CODEX_DASHBOARD_KEY,
+  };
+
+  function harnessSessionsRoster(harnessSessions: unknown): HarnessRoster {
+    return createConfigHarnessRoster({
+      agents: {
+        entries: {
+          codex: { runtime: { type: "acp", acp: { backend: "acpx" } } },
+        },
+      },
+      plugins: {
+        entries: {
+          [CHANNEL_ID]: { config: { harnessSessions } },
+        },
+      },
+    });
+  }
+
+  it("harnessSessions gesetzt: bridge-decision/-resolve liefert den ECHTEN key statt synthetisch", () => {
+    const roster = harnessSessionsRoster({ codex: REAL_CODEX_KEY });
+    const a = resolveDashboardBinding(ref, { roster: harnessSessionsRoster({ codex: REAL_CODEX_KEY }) });
+    const b = resolveDashboardBinding(ref, { roster: harnessSessionsRoster({ codex: REAL_CODEX_KEY }) });
+    expect(a).toEqual(b);
+    expect(a?.targetSessionKey).toBe(REAL_CODEX_KEY);
+    expect(a?.boundAt).toBe(0);
+    expect(roster.harnessSessionTargetKey?.("codex")).toBe(REAL_CODEX_KEY);
+    expect(roster.harnessSessionTargetKey?.("unknown")).toBeNull();
+  });
+
+  it("harnessSessions NICHT gesetzt: synthetisches Target (bestehendes Verhalten)", () => {
+    const roster = harnessRoster();
+    const record = resolveDashboardBinding(ref, { roster });
+    expect(record?.targetSessionKey).toBe(buildDashboardAcpTargetSessionKey({
+      agentId: "codex",
+      conversationId: CODEX_DASHBOARD_KEY,
+    }));
+    expect(roster.harnessSessionTargetKey?.("codex")).toBeNull();
+  });
+
+  it("orchestrator-target wird abgelehnt: Eintrag ignoriert, synthetisches Target bleibt", () => {
+    const roster = harnessSessionsRoster({ codex: `agent:main:acp:session:${REAL_CODEX_KEY.split(":").at(-1)}` });
+    const record = resolveDashboardBinding(ref, { roster });
+    expect(record?.targetSessionKey).not.toContain("agent:main:");
+    expect(record?.targetSessionKey).toBe(buildDashboardAcpTargetSessionKey({
+      agentId: "codex",
+      conversationId: CODEX_DASHBOARD_KEY,
+    }));
+  });
+
+  it("bare acp:-gültige Keys und agent-id-Lookup ohne acp.agent werden durchgereicht", () => {
+    const claudeRoster = createConfigHarnessRoster({
+      agents: {
+        entries: { claude: { runtime: { type: "acp", acp: {} } } },
+        ...({} as never),
+      },
+      plugins: { entries: { [CHANNEL_ID]: { config: { harnessSessions: { claude: REAL_CLAUDE_KEY } } } } },
+    });
+    expect(claudeRoster.harnessSessionTargetKey?.("claude")).toBe(REAL_CLAUDE_KEY);
+  });
+
+  it("§4.2-Delegation: claude's binding-adapter bekommt den echten key über die AKTIVE Brücke", async () => {
+    let registeredAdapter: ReturnType<typeof createWebchatDashboardBindingAdapter> | null = null;
+    const api = makeApi({
+      config: {
+        agents: { entries: { codex: { runtime: { type: "acp", acp: { backend: "acpx" } } } } },
+        plugins: { entries: { [CHANNEL_ID]: { config: { harnessSessions: { codex: REAL_CODEX_KEY } } } } },
+      },
+    });
+    const runtime: SessionBindingRuntimeModule = {
+      testing: { getRegisteredAdapterKeys: () => ["webchat:default"] }, // bridge → hooks-only, aber aktiv
+      getSessionBindingService: () => ({}) as SessionBindingServiceLike,
+      registerSessionBindingAdapter: (adapter: unknown) => {
+        registeredAdapter = adapter as ReturnType<typeof createWebchatDashboardBindingAdapter>;
+      },
+    };
+    const handle = await createDashboardBridge({ api, sessionBindingRuntime: runtime });
+    expect(handle.ownsWebchatAdapter).toBe(false);
+    // Adapter ohne eigenes getConfig: die Antwort kommt aus der §4.2-Delegation
+    // (roster → harnessSessionTargetKey), NICHT aus seiner eigenen Synthese.
+    const adapter = createDashboardBindingAdapter({ getConfig: () => undefined });
+    const viaAdapter = await adapter.resolveByConversationAsync!(ref);
+    expect(viaAdapter?.targetSessionKey).toBe(REAL_CODEX_KEY);
+    // Und die Bridge-Adapter-Synthese selbst (falls die Brücke doch Owner wird).
+    if (registeredAdapter) {
+      const viaBridgeAdapter = await registeredAdapter!.resolveByConversationAsync!(ref);
+      expect(viaBridgeAdapter?.targetSessionKey).toBe(REAL_CODEX_KEY);
+    }
+    handle.dispose();
+  });
+});

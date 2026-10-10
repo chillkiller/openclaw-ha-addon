@@ -315,6 +315,61 @@ export function resolveHarnessAgentSpec(cfg: unknown, agentId: unknown): Harness
   return passesRosterGates(cfg, normalized, specFromEntry(normalized, entries[normalized]));
 }
 
+/**
+ * Extracts the agent id embedded in an `agent:<agentId>:<rest>` session key
+ * (same grammar `isAcpShapedSessionKey` mirrors); null for bare `acp:…` keys
+ * and anything else without an agent segment.
+ */
+function agentIdFromSessionKey(sessionKey: string): string | null {
+  const parts = sessionKey.split(":");
+  if (parts[0] !== "agent" || parts.length < 3) return null;
+  return sanitizeAgentId(parts[1] ?? "") || null;
+}
+
+/**
+ * `plugins.entries['<CHANNEL_ID>'].config.harnessSessions` — Phase 2.18b F3
+ * fix (RE-confirmed, "Weg A, plugin-side"). Maps a harness id to the REAL,
+ * explicitly spawned persistent ACP session key of that harness
+ * (`{codex: "<session-key>", claude: "…", opencode: "…"}`); the user pastes
+ * the keys after a one-time `/acp spawn <harness>`, because only the real
+ * spawn creates the `acp_sessions` row the host's `resolveStoredAcpSession`
+ * needs (synthetic binding keys can NEVER be initialized host-side).
+ *
+ * The roster gate-ladder is UNTOUCHED (boundAgents > excludedAgents >
+ * safe-default decides WHO binds); this option only changes the TARGET:
+ * when set + valid, the derived binding record targets the real key instead
+ * of the synthetic `agent:<id>:acp:binding:webchat:default:<hash>` one.
+ *
+ * Validation per value: must be an ACP-shaped session key (the host
+ * `isAcpSessionKey` shape, mirrored by `isAcpShapedSessionKey`) and its
+ * embedded agent id must NOT be an orchestrator id (no self-shot through a
+ * target like `agent:main:acp:…`). Invalid entries are IGNORED (fall back to
+ * the previous synthetic target — same behavior as an unset option) instead
+ * of rejecting the whole binding, so a typo degrades to the documented
+ * synthetic mode rather than silently binding to a wrong target. Returns
+ * null when the option is absent or no validated entry matches the spec.
+ *
+ * Lookup order per spec: `runtime.acp.agent` (the harness id) first, then
+ * the canonical agent id — both keys are accepted so the user may key the
+ * map either way; the harness-id entry wins when both are present.
+ */
+export function resolveHarnessSessionTargetKey(cfg: unknown, spec: HarnessAgentSpec): string | null {
+  const config = resolvePluginEntryConfig(cfg);
+  const map = config?.harnessSessions;
+  if (!map || typeof map !== "object" || Array.isArray(map)) return null;
+  const harnessIds = [...new Set([spec.harness, spec.agentId].filter((id) => !!id))];
+  for (const harnessId of harnessIds) {
+    const raw = (map as Record<string, unknown>)[harnessId as string];
+    const key = typeof raw === "string" ? raw.trim() : "";
+    if (!key) continue;
+    if (!isAcpShapedSessionKey(key)) continue;
+    const targetAgent = agentIdFromSessionKey(key);
+    if (targetAgent && isOrchestratorAgentId(targetAgent)) continue;
+    return key;
+  }
+  return null;
+}
+
 /** First `length` hex chars of sha256(host normalization of `channel:accountId:conversationId`). */
 export function acpBindingHash(channel: unknown, accountId: unknown, conversationId: unknown, length = 16): string {
   // Mirrors host `sha256HexPrefixCore(`${spec.channel}:${spec.accountId}:${spec.conversationId}`, 16)`

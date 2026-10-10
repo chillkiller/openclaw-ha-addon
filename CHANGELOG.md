@@ -171,6 +171,10 @@ Release-facing summary. Detailed per-release engineering notes: [openclaw_ha_add
 
 ## 0.7.10.21
 - Fix OpenClaw ControlUI asset loading inside HA Ingress when X-Ingress-Path header is missing by rewriting asset links to relative URLs (with absolute fallback when the header is present).
+## [0.7.13.10] - 2026-10-10
+
+### Added
+- **`harnessSessions` option (F3 fix):** dashboards bind to real spawned ACP sessions per harness; manifest configSchema declares all plugin config options; fourth discovery gate (`plugins.allow`) in deploy.
 ## [0.7.13.9] - 2026-10-10
 
 ### Changed

@@ -24,6 +24,18 @@
  *   value import below (dashboard-bridge.js) is plugin-local and stays SDK
  *   value-free at static import time too (its SDK import is dynamic/catched).
  *
+ * Phase 2.18b (F3, Weg A): synthetic binding keys can never be initialized
+ * host-side (manager.utils resolveStoredAcpSession → kind:"stale" +
+ * ACP_SESSION_INIT_FAILED without an acp_sessions row;
+ * upsertAcpSessionMetaRow writes rows only on a real harness spawn), so the
+ * derive consults config.harnessSessions first and targets the REAL spawned
+ * session key when one is configured; unset/invalid falls back to the
+ * synthetic key (documented: synthetic targets need a host-side
+ * /acp-spawn-initialization that does not exist — Weg B/upstream issue).
+ * The bridge's §4.2 row-miss path shares this derivation through the roster
+ * (dashboard-bridge resolveDashboardBindingDecision), so both halves agree
+ * on one target per conversation.
+ *
  * KNOWN LIMITATION (Phase 2.10, GaRoN-K6): while this adapter is registered
  * for webchat:default it SHADOWS the host's generic current-conversation
  * binding store completely (read+write). Legacy Weg-1 bindings created via
@@ -50,6 +62,7 @@ import {
   buildChannelAccountKey,
   parseAgentIdFromConversationId,
   resolveHarnessAgentSpec,
+  resolveHarnessSessionTargetKey,
   type HarnessAgentSpec,
   isAcpShapedSessionKey,
   normalizeAccountId,
@@ -174,6 +187,14 @@ function deriveBindingRecord(ref: BindingConversationRef, options: DashboardBind
   const spec: HarnessAgentSpec | null = resolveHarnessAgentSpec(options.getConfig?.(), agentId);
   if (!spec) return null;
 
+  // Phase 2.18b (F3 Weg A): the gate-ladder above decides WHO binds and is
+  // untouched — only the TARGET changes here. A validated
+  // `config.harnessSessions` entry (a real, explicitly spawned persistent ACP
+  // session key, ACP-shaped, not an orchestrator target) replaces the
+  // synthetic key; unset/invalid entries keep the previous synthetic target.
+  // Metadata below stays informative either way.
+  const configuredTargetKey: string | null = resolveHarnessSessionTargetKey(options.getConfig?.(), spec);
+
   const conversation: BindingConversationRef = {
     channel,
     accountId,
@@ -196,7 +217,9 @@ function deriveBindingRecord(ref: BindingConversationRef, options: DashboardBind
     bindingId: buildBindingId({ channel, accountId, conversationId, kind: "derived" }),
     // buildConfiguredAcpSessionKey-equivalent target; `agent:codex:acp:...`
     // makes host isAcpSessionKey true -> resolveSessionDispatchKind === "acp".
-    targetSessionKey: derivedTargetSessionKey(conversation, spec.agentId),
+    // With a validated harnessSessions entry the target is the REAL spawned
+    // session key instead (which actually carries an acp_sessions row — F3).
+    targetSessionKey: configuredTargetKey ?? derivedTargetSessionKey(conversation, spec.agentId),
     targetKind: "session",
     conversation,
     status: "active",

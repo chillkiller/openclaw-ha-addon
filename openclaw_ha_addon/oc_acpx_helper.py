@@ -370,6 +370,19 @@ def deploy_plugin() -> bool:
             changed_entry = True
             log(f"Added plugins.load.paths entry: {plugins_root}")
 
+        # Phase 2.19 (proof 08:26 live): plugins.allow is the 4th discovery
+        # gate — an allowlist present but missing the plugin id yields
+        # "plugin disabled (not in allowlist)" and the config-validation
+        # runs against a schema-less stub. Union the id (user removals of
+        # OTHER ids preserved; operator can still disable via entries).
+        allow_list = plugins.setdefault("allow", [])
+        if not isinstance(allow_list, list):
+            log(f"WARN: plugins.allow is not a list; not patching allowlist")
+        elif PLUGIN_NAME not in allow_list:
+            allow_list.append(PLUGIN_NAME)
+            changed_entry = True
+            log(f"Added plugins.allow entry: {PLUGIN_NAME}")
+
         if changed_entry:
             write_json(config_path, cfg)
         return True

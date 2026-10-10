@@ -1,3 +1,12 @@
+## [0.7.13.10] - 2026-10-10
+
+### Added
+- **`harnessSessions` config option (F3 fix, proven live):** dashboard conversations bind to a real, explicitly spawned persistent ACP session per harness (`plugins.entries['acp-dashboard-binding'].config.harnessSessions = {codex: '<session-key>', ...}`) instead of synthetic binding keys that die with `ACP_SESSION_INIT_FAILED` (the host only writes `acp_sessions` rows on real spawns — reverse-engineered: `manager.utils` `resolveStoredAcpSession` → `kind:"stale"`).
+- Manifest `configSchema` now declares `boundAgents`, `excludedAgents`, `harnessSessions`.
+- `deploy_plugin()` gates 1-4: deploy + `plugins.entries` + `plugins.load.paths` + **`plugins.allow`** (the 4th discovery gate, proven live: allowlist miss ⇒ "plugin disabled (not in allowlist)").
+
+### Verified
+- 86/86 plugin tests (incl. 13 harnessSessions cases), tsc strict; codex RE-Gegenverifikation of the host metadata contract; MVP == repo == live config bit-identical.
 ## [0.7.13.9] - 2026-10-10
 
 ### Changed

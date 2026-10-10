@@ -13,6 +13,8 @@ import {
   isRosterEligibleAgentId,
   resolveBoundAgentAllowlist,
   resolveExcludedAgentIds,
+  resolveHarnessAgentSpec,
+  resolveHarnessSessionTargetKey,
 } from "./agent-map.js";
 
 // Bridge public surface keeps exporting the shared constants (tests/plugins
@@ -30,6 +32,7 @@ export {
   isRosterEligibleAgentId,
   resolveBoundAgentAllowlist,
   resolveExcludedAgentIds,
+  resolveHarnessSessionTargetKey,
 } from "./agent-map.js";
 
 const WEBCHAT_ADAPTER_KEY = `${BINDING_CHANNEL}:${BINDING_ACCOUNT_ID}`;
@@ -68,6 +71,14 @@ export interface HarnessAgentDefaults {
 export interface HarnessRoster {
   isHarnessAgent(agentId: string): boolean;
   acpDefaults(agentId: string): HarnessAgentDefaults | null;
+  /**
+   * Phase 2.18b (F3 Weg A): the validated `config.harnessSessions` target for
+   * the agent (real spawned session key), or null when unset/invalid → the
+   * caller derives the synthetic ACP target as before. Optional so custom
+   * rosters opt in; the config-backed roster shares agent-map's resolver,
+   * keeping bridge and binding-adapter on one target derivation.
+   */
+  harnessSessionTargetKey?(agentId: string): string | null;
 }
 
 export interface DashboardConversationKey {
@@ -225,6 +236,16 @@ export function createConfigHarnessRoster(config: unknown): HarnessRoster {
         ...(typeof acp?.label === "string" && acp.label.trim() ? { label: acp.label } : {}),
       };
     },
+    // Phase 2.18b (F3 Weg A): resolves the real spawned-session target from
+    // plugins.entries['acp-dashboard-binding'].config.harnessSessions through
+    // the SAME validated agent-map resolver the binding-adapter uses — the
+    // §4.2 row-miss delegation therefore answers with the real key too, not
+    // only the adapter's own Turn-1 synthesis.
+    harnessSessionTargetKey(agentId: string): string | null {
+      const spec = resolveHarnessAgentSpec(config, agentId);
+      if (!spec) return null;
+      return resolveHarnessSessionTargetKey(config, spec);
+    },
   };
 }
 
@@ -254,11 +275,16 @@ export function resolveDashboardBindingDecision(
     ...(ref.parentConversationId ? { parentConversationId: ref.parentConversationId.trim() } : {}),
   };
   const defaults = roster.acpDefaults(dashboardKey.agentId) ?? { mode: BINDING_MODE };
+  // Phase 2.18b (F3 Weg A): a validated harnessSessions entry REPLACES the
+  // synthetic ACP target with the real spawned session key; unset/invalid
+  // keeps the §1.4 synthetic derivation. The roster gate is upstream of this
+  // point and unchanged.
+  const configuredTargetKey = roster.harnessSessionTargetKey?.(dashboardKey.agentId) ?? null;
   return {
     conversation,
     dashboardKey,
     bindingId: buildBindingId(conversation),
-    targetSessionKey: buildDashboardAcpTargetSessionKey({
+    targetSessionKey: configuredTargetKey ?? buildDashboardAcpTargetSessionKey({
       agentId: dashboardKey.agentId,
       channel: conversation.channel,
       accountId: conversation.accountId,

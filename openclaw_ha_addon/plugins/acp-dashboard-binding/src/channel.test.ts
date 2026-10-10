@@ -8,7 +8,8 @@ import {
   buildAcpBindingSessionKey,
   parseAgentIdFromConversationId,
   resolveHarnessAgentSpec,
-  resolveHarnessAgentSpecs
+  resolveHarnessAgentSpecs,
+  resolveHarnessSessionTargetKey
 } from "./agent-map.js";
 import { createDashboardBindingAdapter } from "./binding-adapter.js";
 
@@ -223,6 +224,128 @@ describe("dashboard binding adapter (acceptance #2)", () => {
     const viaSync = adapter.resolveByConversation(DASHBOARD_REF);
     const viaAsync = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
     expect(viaSync).toEqual(viaAsync);
+  });
+});
+
+// --- Phase 2.18b: config.harnessSessions (F3 Weg A, RE-bestaetigt) ----------
+//
+// BEFUND (RE, dist-verifiziert): manager.utils resolveStoredAcpSession()
+// antwortet kind:"stale" + ACP_SESSION_INIT_FAILED, wenn isAcpSessionKey(key)
+// gilt ABER keine acp_sessions-Row mit stored.acp existiert;
+// upsertAcpSessionMetaRow schreibt solche Rows NUR beim echten Harness-Spawn.
+// => synthetische binding-keys koennen NIE initialisiert werden. Weg A
+// traegt die real gespawnten persistenten Session-Keys in
+// plugins.entries['acp-dashboard-binding'].config.harnessSessions ein und
+// laesst das derive den REAL key als Target liefern; die Gate-Ladder
+// (boundAgents > excludedAgents > safe-default) bleibt unangetastet.
+
+/** Key from a one-time `/acp spawn codex` (real acp_sessions row behind it). */
+const REAL_CODEX_SESSION_KEY = "agent:codex:acp:session:2c1a5fa9-9d31-4b3e-a7d1-4f9d0d1f2b7e";
+
+function withHarnessSessions(harnessSessions: unknown): Record<string, unknown> {
+  return {
+    agents: HARNESS_CFG.agents,
+    plugins: {
+      entries: {
+        [CHANNEL_ID]: { config: { harnessSessions } },
+      },
+    },
+  };
+}
+
+const CODEX_SPEC = (cfg: unknown) => resolveHarnessAgentSpec(cfg, "codex")!;
+
+describe("Phase 2.18b harnessSessions (F3 Weg A)", () => {
+  it("harnessSessions gesetzt: resolve liefert den ECHTEN spawned session key", async () => {
+    const cfg = withHarnessSessions({ codex: REAL_CODEX_SESSION_KEY });
+    const adapter = createDashboardBindingAdapter({ getConfig: () => cfg });
+    const record = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
+    expect(record?.targetSessionKey).toBe(REAL_CODEX_SESSION_KEY);
+    expect(record?.targetKind).toBe("session");
+    expect(record?.boundAt).toBe(0); // deterministisch wie bisher
+    // Metadata bleibt informativ (mode/cwd/agentId), nicht plugin-owned.
+    expect(record?.metadata?.agentId).toBe("codex");
+    expect(record?.metadata?.mode).toBe("oneshot");
+    expect(record?.metadata?.acpAgentId).toBe("codex-harness");
+    expect(record?.metadata?.pluginBindingOwner).toBeUndefined();
+  });
+
+  it("harnessSessions NICHT gesetzt: synthetisches Target wie bisher", async () => {
+    const adapter = createDashboardBindingAdapter({ getConfig: () => HARNESS_CFG });
+    const record = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
+    expect(record?.targetSessionKey).toBe(
+      buildAcpBindingSessionKey({ channel: "webchat", accountId: "default", conversationId: DASHBOARD_KEY, agentId: "codex" })
+    );
+    expect(resolveHarnessSessionTargetKey(HARNESS_CFG, CODEX_SPEC(HARNESS_CFG))).toBeNull();
+  });
+
+  it("orchestrator-target wird ABGELEHNT (kein agent:main:acp:... als Target)", async () => {
+    const cfg = withHarnessSessions({ codex: "agent:main:acp:session:deadbeef-0000-0000-0000-000000000000" });
+    expect(resolveHarnessSessionTargetKey(cfg, CODEX_SPEC(cfg))).toBeNull();
+    const adapter = createDashboardBindingAdapter({ getConfig: () => cfg });
+    const record = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
+    // Abgelehnt heißt: Eintrag ignoriert -> synthetisches Target, NICHT main.
+    expect(record?.targetSessionKey).toBe(
+      buildAcpBindingSessionKey({ channel: "webchat", accountId: "default", conversationId: DASHBOARD_KEY, agentId: "codex" })
+    );
+  });
+
+  it("nicht-ACP-geformter Wert (host isAcpSessionKey) wird abgelehnt", async () => {
+    for (const bad of ["agent:codex:main:xyz", "agent:codex", "acx:codex:session:1", "  ", 42]) {
+      const cfg = withHarnessSessions({ codex: bad });
+      expect(resolveHarnessSessionTargetKey(cfg, CODEX_SPEC(cfg))).toBeNull();
+      const adapter = createDashboardBindingAdapter({ getConfig: () => cfg });
+      const record = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
+      expect(record?.targetSessionKey).toBe(
+        buildAcpBindingSessionKey({ channel: "webchat", accountId: "default", conversationId: DASHBOARD_KEY, agentId: "codex" })
+      );
+    }
+  });
+
+  it("bare acp:-geformte Keys sind gueltig; Agent-Anteil ohne Orchestrator bleibt ok", async () => {
+    const cfg = withHarnessSessions({ codex: "acp:codex:07f3c2b1-8b2a-4c4e-9f8a-1d2e3f4a5b6c" });
+    expect(resolveHarnessSessionTargetKey(cfg, CODEX_SPEC(cfg))).toBe(
+      "acp:codex:07f3c2b1-8b2a-4c4e-9f8a-1d2e3f4a5b6c"
+    );
+  });
+
+  it("Lookup via runtime.acp.agent (harness-id key); harness-id gewinnt bei Kollision", async () => {
+    // Keyed by the harness id (runtime.acp.agent "codex-harness").
+    const byHarnessId = withHarnessSessions({ "codex-harness": REAL_CODEX_SESSION_KEY });
+    expect(resolveHarnessSessionTargetKey(byHarnessId, CODEX_SPEC(byHarnessId))).toBe(REAL_CODEX_SESSION_KEY);
+    // claude has NO acp.agent — keyed by its agent id.
+    const byAgentId = withHarnessSessions({ claude: "agent:claude:acp:session:aaaa-bbbb" });
+    expect(resolveHarnessSessionTargetKey(byAgentId, resolveHarnessAgentSpec(byAgentId, "claude")!)).toBe(
+      "agent:claude:acp:session:aaaa-bbbb"
+    );
+    // Both present: the harness-id entry wins.
+    const both = withHarnessSessions({
+      "codex-harness": REAL_CODEX_SESSION_KEY,
+      codex: "agent:codex:acp:session:cccc-dddd",
+    });
+    expect(resolveHarnessSessionTargetKey(both, CODEX_SPEC(both))).toBe(REAL_CODEX_SESSION_KEY);
+  });
+
+  it("Array-/Nicht-Objekt-Formen und unbekannte harness-ids sind wie NICHT gesetzt", () => {
+    for (const harnessSessions of [[], [{ codex: REAL_CODEX_SESSION_KEY }], 42, null]) {
+      expect(resolveHarnessSessionTargetKey(withHarnessSessions(harnessSessions), CODEX_SPEC(withHarnessSessions(harnessSessions)))).toBeNull();
+    }
+    expect(resolveHarnessSessionTargetKey(withHarnessSessions({ opencode: REAL_CODEX_SESSION_KEY }), CODEX_SPEC(withHarnessSessions({})))).toBeNull();
+    // Unbekannter harness-id-Entry bleibt ohne Wirkung für codex.
+  });
+
+  it("bleibt deterministisch und liest die Option live (kein Cache)", async () => {
+    let cfg: unknown = withHarnessSessions({ codex: REAL_CODEX_SESSION_KEY });
+    const adapter = createDashboardBindingAdapter({ getConfig: () => cfg });
+    const first = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
+    const second = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
+    expect(second?.targetSessionKey).toBe(first?.targetSessionKey);
+    expect(first?.targetSessionKey).toBe(REAL_CODEX_SESSION_KEY);
+    // Config update: harnessSessions entfernt -> sofort wieder synthetisch.
+    cfg = HARNESS_CFG;
+    expect((await adapter.resolveByConversationAsync!(DASHBOARD_REF))?.targetSessionKey).toBe(
+      buildAcpBindingSessionKey({ channel: "webchat", accountId: "default", conversationId: DASHBOARD_KEY, agentId: "codex" })
+    );
   });
 });
 
