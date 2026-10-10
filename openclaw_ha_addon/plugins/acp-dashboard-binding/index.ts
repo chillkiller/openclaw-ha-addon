@@ -64,6 +64,10 @@ export default defineChannelPluginEntry({
     // double-registers; the adapter keeps Turn-1 synthesis via §4.2
     // row-miss delegation). Creation stays un-awaited because the host calls
     // registerFull synchronously (core-*.mjs: registerFull?.(api)).
+    // Phase 2.19 (BRIDGE.md §4.2a): the bridge-not-yet-active window is SAFE —
+    // the adapter's §4.2 delegation passes a config-driven roster, so Turn-1
+    // resolves answer from the live config (harnessSessions included); the
+    // roster/hydration flip to the active bridge cannot change the record.
     let bridge: DashboardBridgeHandle | undefined;
     let disposed = false;
     try {

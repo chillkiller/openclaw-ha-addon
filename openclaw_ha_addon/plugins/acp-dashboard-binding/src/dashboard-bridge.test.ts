@@ -555,6 +555,40 @@ describe("dashboard-bridge: §4.2 write-free delegation resolvers", () => {
     })).toBeNull();
   });
 
+  it("Phase 2.19: async mirror honors a context roster in the bridge-not-yet-active window", async () => {
+    // The binding-adapter passes its live-config roster — the async delegation
+    // must synthesize from it even though no bridge is active here.
+    const record = await resolveDashboardBindingAsync(
+      { channel: "webchat", accountId: "default", conversationId: CODEX_DASHBOARD_KEY },
+      { roster: harnessRoster() },
+    );
+    expect(record?.targetSessionKey).toBe(
+      buildDashboardAcpTargetSessionKey({ agentId: "codex", conversationId: CODEX_DASHBOARD_KEY }),
+    );
+  });
+
+  it("Phase 2.19: the context roster is a FALLBACK — an active bridge keeps roster precedence", async () => {
+    // Bridge-backed config WITHOUT harnessSessions: the active bridge's roster
+    // answers §4.2-consistently even when the adapter supplies a richer one.
+    const api = makeApi();
+    const handle = await createDashboardBridge({
+      api,
+      sessionBindingRuntime: { getRegisteredAdapterKeys: () => ["webchat:default"] },
+    });
+    const withHarnessSessions = createConfigHarnessRoster({
+      ...api.config as Record<string, unknown>,
+      plugins: { entries: { [CHANNEL_ID]: { config: { harnessSessions: { codex: "acp:codex:07f3c2b1-8b2a-4c4e-9f8a-1d2e3f4a5b6c" } } } } },
+    });
+    const record = await resolveDashboardBindingAsync(
+      { channel: "webchat", accountId: "default", conversationId: CODEX_DASHBOARD_KEY },
+      { roster: withHarnessSessions },
+    );
+    expect(record?.targetSessionKey).toBe(
+      buildDashboardAcpTargetSessionKey({ agentId: "codex", conversationId: CODEX_DASHBOARD_KEY }),
+    );
+    handle.dispose();
+  });
+
   it("gates main/unknown exactly like the bridge roster", async () => {
     expect(await resolveDashboardBindingAsync({
       channel: "webchat",

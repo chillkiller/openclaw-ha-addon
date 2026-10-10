@@ -66,6 +66,13 @@ export interface HarnessAgentDefaults {
   readonly backend?: string;
   readonly cwd?: string;
   readonly label?: string;
+  /**
+   * Phase 2.19: `runtime.acp.agent` (harness-id) — surfaced so the bridge's
+   * Turn-1 synthesis carries the same informative metadata field the
+   * binding-adapter's derive record has always set (metadata parity between
+   * the two synthesis paths once the delegation leads, see §4.2 note there).
+   */
+  readonly acpAgentId?: string;
 }
 
 export interface HarnessRoster {
@@ -193,6 +200,7 @@ type AgentConfigEntryLike = {
   runtime?: {
     type?: string;
     acp?: {
+      agent?: string;
       mode?: string;
       backend?: string;
       cwd?: string;
@@ -231,6 +239,7 @@ export function createConfigHarnessRoster(config: unknown): HarnessRoster {
       const acp = entry?.runtime?.type === "acp" ? entry.runtime.acp : undefined;
       return {
         mode: typeof acp?.mode === "string" && acp.mode.trim() ? acp.mode : BINDING_MODE,
+        ...(typeof acp?.agent === "string" && acp.agent.trim() ? { acpAgentId: acp.agent.trim() } : {}),
         ...(typeof acp?.backend === "string" && acp.backend.trim() ? { backend: acp.backend } : {}),
         ...(typeof acp?.cwd === "string" && acp.cwd.trim() ? { cwd: acp.cwd } : {}),
         ...(typeof acp?.label === "string" && acp.label.trim() ? { label: acp.label } : {}),
@@ -310,6 +319,10 @@ export function synthesizeDashboardBindingRecord(
       origin: "dashboard-bridge",
       mode: decision.defaults.mode,
       agentId: decision.dashboardKey.agentId,
+      // Phase 2.19: harness-id in the metadata too — same informative field the
+      // binding-adapter's derive record sets, so the record a Turn-1 caller sees
+      // matches the bridge-synthesized one field for field where both are known.
+      ...(decision.defaults.acpAgentId ? { acpAgentId: decision.defaults.acpAgentId } : {}),
       ...(decision.defaults.backend ? { backend: decision.defaults.backend } : {}),
       ...(decision.defaults.cwd ? { cwd: decision.defaults.cwd } : {}),
       ...(decision.defaults.label ? { label: decision.defaults.label } : {}),
@@ -356,15 +369,25 @@ let activeBridgeResolution: ActiveBridgeResolution | null = null;
  * BRIDGE.md §4.2 row-miss resolver for claude's binding-adapter.ts:
  * deterministic and write-free — a row in the active bridge's store wins, a
  * tombstone there suppresses the binding, otherwise the Turn-1 synthesis
- * (boundAt: 0) answers. Without an active bridge an unbacked fallback roster
- * feeds the same synthesis, so the adapter delegation is behavior-stable in
- * every composition (bridge-first, hooks-only, or isolated plugin load).
+ * (boundAt: 0) answers.
+ *
+ * Phase 2.19 (Turn-1-Race-Fix): roster precedence is ACTIVE BRIDGE FIRST, then
+ * the caller-provided roster, then an unbacked fallback. The adapter supplies a
+ * config-driven roster (`createConfigHarnessRoster(options.getConfig?.())`) so
+ * that the window where the bridge is NOT yet active (its startup is awaited
+ * asynchronously behind registerFull, index.ts) still synthesizes from the
+ * LIVE config — previously the unbacked fallback answered null there and the
+ * adapter fell through to its own derive, producing a record that diverged
+ * from the bridge synthesis across the hydration flip. Once the bridge IS
+ * active, its own roster (same config provenance, plus its rows/tombstones)
+ * keeps precedence, so delegation stays bridge-consistent (§4.2-Vertrag).
  */
 export function resolveDashboardBinding(
   ref: DashboardBindingRefLike,
   context?: { roster?: HarnessRoster; store?: BridgeRowStoreLike | null },
 ): SessionBindingRecordLike | null {
-  const roster = context?.roster ?? activeBridgeResolution?.roster ?? createConfigHarnessRoster(undefined);
+  const roster =
+    activeBridgeResolution?.roster ?? context?.roster ?? createConfigHarnessRoster(undefined);
   const store =
     context?.store !== undefined ? context.store ?? null : activeBridgeResolution?.store ?? null;
   const decision = resolveDashboardBindingDecision(ref, roster);
@@ -380,14 +403,21 @@ export function resolveDashboardBinding(
  * delegation target that binding-adapter.ts calls on row-miss. Identical
  * results, so the host's resolve → re-resolve stability comparison stays
  * byte-stable whether it went through the sync mirror or this path.
+ *
+ * Phase 2.19: accepts the same `context` as the sync core (the adapter passes
+ * its config-driven roster for the bridge-not-yet-active window, see there);
+ * the awaited hydration store follows the same precedence as the roster.
  */
 export async function resolveDashboardBindingAsync(
   ref: DashboardBindingRefLike,
+  context?: { roster?: HarnessRoster; store?: BridgeRowStoreLike | null },
 ): Promise<SessionBindingRecordLike | null> {
   // Phase 2.12 F2: wait out the active bridge's startup hydration so the async
   // mirror never diverges from the (post-hydrate) sync core.
-  await activeBridgeResolution?.store.whenReady();
-  return resolveDashboardBinding(ref);
+  const store =
+    context?.store !== undefined ? context.store ?? null : activeBridgeResolution?.store ?? null;
+  await store?.whenReady();
+  return resolveDashboardBinding(ref, context);
 }
 
 export interface KeyedStoreLike<T> {

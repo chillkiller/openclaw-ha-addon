@@ -171,6 +171,10 @@ Release-facing summary. Detailed per-release engineering notes: [openclaw_ha_add
 
 ## 0.7.10.21
 - Fix OpenClaw ControlUI asset loading inside HA Ingress when X-Ingress-Path header is missing by rewriting asset links to relative URLs (with absolute fallback when the header is present).
+## [0.7.13.11] - 2026-10-10
+
+### Fixed
+- **Turn-1 binding race:** adapter delegation now always carries the live config roster (harnessSessions honored on the first turn).
 ## [0.7.13.10] - 2026-10-10
 
 ### Added

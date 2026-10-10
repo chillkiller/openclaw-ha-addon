@@ -241,6 +241,51 @@ export function createDashboardBridge(args: DashboardBridgeArgs): DashboardBridg
 
 ---
 
+## 4.2a Phase 2.19 — Turn-1-Race-Fix (§4.2-Delegation mit config-getriebenem Fallback-Roster)
+
+**Befund (codex-Diagnose 7e9298af):** `createDashboardBridge` startet ASYNC hinter
+`registerFull` (der Host ruft `registerFull` synchron und awaitet die Rückgabe nicht —
+Phase-2.6-Befund), während der Adapter in `registerDashboardBindingRuntime` SOFORT registriert
+ist. In dieser Lücke ist der §4.2-Modul-Pointer (`activeBridgeResolution`) noch `null`; die
+Delegation antwortete mit dem UNBEGRÜNDETEN Fallback-Roster (`createConfigHarnessRoster(undefined)`
+→ leer → null), so dass der Adapter in seine eigene `deriveBindingRecord`-Synthese fiel — deren
+Record weicht von der Bridge-Synthese ab (anderes `bindingId`-Format, andere Metadata) und
+missachtet bei hydration-flip-übergreifenden Turns den harnessSessions-Target. Konnten beide
+Seiten innerhalb des Host-Resolve→touch→re-resolve-Vergleichs unterschiedliche Records sehen,
+drehte der Turn-1-Pfad auf ein synthetisches Target (→ `ACP_TURN_FAILED` /
+„ACP input must be durably committed", §7).
+
+**Gewählte Lösung — Adapter-Fallback (definitiv), NICHT synchroner Bridge-Start:**
+
+1. `resolveDashboardBinding(Async)` nimmt einen `context.roster` entgegen; **roster-Precedence:
+   aktive Brücke > caller-context > unbebackener Safe-Default.** Die aktive Brücke behält
+   Vorrang (§4.2-Vertrag, Rows/Tombstones gehören zu IHREM Roster; getestet in
+   dashboard-bridge.test.ts „context roster is a FALLBACK").
+2. `binding-adapter.ts` übergibt an BEIDE Delegation-Calls (`bridgedRecord` sync +
+   `resolveByConversationAsync`) einen config-getriebenen Roster
+   (`createConfigHarnessRoster(options.getConfig?.())` — pro Resolve frisch gelesen,
+   Phase-2.7-Vertrag). Die Lücke synthesed damit aus der Live-Config inklusive
+   `harnessSessions` statt der blinden Derivation.
+3. Warum kein synchroner Start: der Host kontrolliert den `registerFull`-Aufrufpunkt und
+   awaitet nicht — Bridge-Erzeugung kann dort nicht deterministisch „vor Turn 1" abgeschlossen
+   werden; `await createDashboardBridge` im Entry wäre tot (Phase-2.6-Befund,
+   dist-core-*.mjs). Der Adapter-Fallback ist race-frei, weil die Adapter-Config IMMER lebt.
+
+**Metadata-Parity:** dadurch die Delegation ab Turn 1 antwortet, ist die Bridge-Synthese der
+LEAD-Record für webchat; `synthesizeDashboardBindingRecord` trägt jetzt zusätzlich
+`acpAgentId` (aus `runtime.acp.agent`, via `HarnessAgentDefaults`) — dasselbe informative
+Feld, das die Adapter-Derivation immer setzte. Der Adapter-Derive-Pfad bleibt als
+Synthese-Antwort für den plugin-eigenen Channel-Scope (dort antwortet die Bridge nicht) und
+Non-Dashboard-Formate.
+
+**Tests:** channel.test.ts „Phase 2.19 Turn-1-Race" (Lücke: echter Key statt Derivation;
+Sync/Async byte-identisch; Record bleibt über den Hydration-Flip identisch; undefined-Config
+bleibt null) + dashboard-bridge.test.ts (async-Mirror ehrt context-roster; context-roster ist
+nur Fallback gegen eine aktive Brücke). Mutation-Checks: beide Delegation-Calls ohne Roster
+→ neue Tests schlagen fehl (Fix wird real erkannt).
+
+---
+
 ## 5. Risiko-/Unsicherheitsliste
 
 1. **Ausschluss-Semantik `main`/Weg-1-legacy** (§3.2): Adapter verdeckt generische webchat-Records; Randfall

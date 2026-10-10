@@ -74,7 +74,13 @@ import {
 // resolveDashboardBindingAsync (sync mirror resolveDashboardBinding) consults
 // the ACTIVE bridge's row store/tombstones and otherwise answers with the
 // bridge's Turn-1 synthesis — deterministic, without any write access.
+// Phase 2.19 (Turn-1-Race-Fix): both delegation calls pass a config-driven
+// roster (createConfigHarnessRoster(options.getConfig?.())) so the
+// bridge-not-yet-active window (bridge startup is awaited asynchronously
+// behind registerFull, index.ts) synthesizes from the LIVE config instead of
+// an unbacked roster — see BRIDGE.md §4.2a.
 import {
+  createConfigHarnessRoster,
   resolveDashboardBinding,
   resolveDashboardBindingAsync as bridgeResolveDashboardBindingAsync,
 } from "./dashboard-bridge.js";
@@ -250,13 +256,18 @@ function toBridgeRef(ref: {
  * row/tombstone/synthesis answer — or null (which falls through to our own
  * Turn-1 synthesis so the record exists in bridge-less setups, too).
  */
-function bridgedRecord(ref: {
-  channel: string;
-  accountId: string;
-  conversationId: string;
-  parentConversationId?: string;
-}): DashboardBindingRecord | null {
-  const bridged = resolveDashboardBinding(toBridgeRef(ref));
+function bridgedRecord(
+  ref: {
+    channel: string;
+    accountId: string;
+    conversationId: string;
+    parentConversationId?: string;
+  },
+  options: DashboardBindingAdapterOptions,
+): DashboardBindingRecord | null {
+  const bridged = resolveDashboardBinding(toBridgeRef(ref), {
+    roster: createConfigHarnessRoster(options.getConfig?.()),
+  });
   return bridged ? (bridged as unknown as DashboardBindingRecord) : null;
 }
 
@@ -310,12 +321,15 @@ export function createDashboardBindingAdapter(options: DashboardBindingAdapterOp
     // 2. BRIDGE.md §4.2 row-miss delegation: consult the bridge's write-free,
     //    deterministic resolver (its rows/tombstones, else its Turn-1
     //    synthesis) so both halves agree on one record per conversation.
-    const bridged = bridgedRecord({
-      channel,
-      accountId,
-      conversationId,
-      ...(ref.parentConversationId ? { parentConversationId: ref.parentConversationId } : {}),
-    });
+    const bridged = bridgedRecord(
+      {
+        channel,
+        accountId,
+        conversationId,
+        ...(ref.parentConversationId ? { parentConversationId: ref.parentConversationId } : {}),
+      },
+      options,
+    );
     if (bridged) return bridged;
     // 3. Otherwise derive the ACP target for harness agent conversations
     //    (own Turn-1 synthesis — answers when no bridge is active).
@@ -394,12 +408,16 @@ export function createDashboardBindingAdapter(options: DashboardBindingAdapterOp
       // §4.2: the mid-cascade row-miss delegation hop goes through the
       // bridge's EXPORTED async resolver (same deterministic core as
       // resolveDashboardBinding, mirrored by the sync variant above).
+      // Phase 2.19: config-driven roster so the bridge-not-yet-active window
+      // answers from the live config, not an unbacked fallback (see file head).
       const bridged = await bridgeResolveDashboardBindingAsync(toBridgeRef({
         channel,
         accountId,
         conversationId,
         ...(ref.parentConversationId ? { parentConversationId: ref.parentConversationId } : {}),
-      }));
+      }), {
+        roster: createConfigHarnessRoster(options.getConfig?.()),
+      });
       if (bridged) return bridged as unknown as DashboardBindingRecord;
       return deriveBindingRecord({ channel, accountId, conversationId, ...ref.parentConversationId ? { parentConversationId: ref.parentConversationId } : {} }, options);
     },

@@ -12,6 +12,11 @@ import {
   resolveHarnessSessionTargetKey
 } from "./agent-map.js";
 import { createDashboardBindingAdapter } from "./binding-adapter.js";
+import {
+  createDashboardBridge,
+  type DashboardBridgeApiLike,
+  type SessionBindingRuntimeModule,
+} from "./dashboard-bridge.js";
 
 const DASHBOARD_KEY = "agent:codex:dashboard:3f0d9e1c-8b2a-4c4e-9f8a-1d2e3f4a5b6c";
 const DASHBOARD_REF = {
@@ -346,6 +351,80 @@ describe("Phase 2.18b harnessSessions (F3 Weg A)", () => {
     expect((await adapter.resolveByConversationAsync!(DASHBOARD_REF))?.targetSessionKey).toBe(
       buildAcpBindingSessionKey({ channel: "webchat", accountId: "default", conversationId: DASHBOARD_KEY, agentId: "codex" })
     );
+  });
+});
+
+// --- Phase 2.19: Turn-1-Race (Bridge noch nicht aktiv) ----------------------
+//
+// ROOT CAUSE (codex-Diagnose 7e9298af): createDashboardBridge startet async
+// hinter registerFull (der Host awaitet nichts — Phase-2.6-Befund), während
+// der Adapter SOFORT registriert ist. In der Lücke antwortete die §4.2-
+// Delegation (resolveDashboardBinding[-Async]) mit dem UNBEGRÜNDETEN
+// Fallback-Roster (createConfigHarnessRoster(undefined)) → null → der Adapter
+// fiel in seine eigene deriveBindingRecord-Synthese, deren Record (bindingId-
+// Format, Metadata) von der Bridge-Synthese abweicht — mit harnessSessions
+// lief der Fallback am ECHTEN Target vorbei. Fix: beide Delegation-Calls
+// übergeben einen config-getriebenen Roster; die aktive Brücke behält
+// Vorrang (§4.2), der Fallback synthesize aus der Live-Config.
+
+function makeBridgeApi(config: unknown): DashboardBridgeApiLike {
+  return {
+    id: CHANNEL_ID,
+    config,
+    logger: {},
+    registerHook: () => undefined,
+  } as DashboardBridgeApiLike;
+}
+
+/** Statt des dynamischen SDK-Imports: stub (Bridge bleibt hooks-only). */
+const STUB_RUNTIME: SessionBindingRuntimeModule = {
+  getRegisteredAdapterKeys: () => ["webchat:default"],
+  getSessionBindingService: () => ({}),
+};
+
+describe("Phase 2.19 Turn-1-Race (Bridge noch nicht aktiv)", () => {
+  it("§4.2-Fallback mit config-getriebenem Roster: harnessSessions-Target statt Derivations-Synthese", async () => {
+    const cfg = withHarnessSessions({ codex: REAL_CODEX_SESSION_KEY });
+    const adapter = createDashboardBindingAdapter({ getConfig: () => cfg });
+    // Host-Pfade: async Delegation (diff) UND der Sync-Spiegel (deprecated
+    // Pfad) müssen in der Bridge-Lücke beide den echten Key liefern.
+    const viaAsync = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
+    const viaSync = adapter.resolveByConversation(DASHBOARD_REF);
+    expect(viaAsync?.targetSessionKey).toBe(REAL_CODEX_SESSION_KEY);
+    expect(viaSync?.targetSessionKey).toBe(REAL_CODEX_SESSION_KEY);
+    expect(viaSync).toEqual(viaAsync);
+    // Antwort STAMMT aus der Delegation (Bridge-Synthese), nicht aus der
+    // Adapter-Derivation — Metadata-Herkunft als Beweis.
+    expect(viaAsync?.metadata?.origin).toBe("dashboard-bridge");
+    expect(viaAsync?.metadata?.acpAgentId).toBe("codex-harness");
+  });
+
+  it("auch ohne harnessSessions bleibt die Fallback-Antwort die synthetische (Verhalten stabil)", async () => {
+    const adapter = createDashboardBindingAdapter({ getConfig: () => HARNESS_CFG });
+    const record = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
+    expect(record?.targetSessionKey).toBe(
+      buildAcpBindingSessionKey({ channel: "webchat", accountId: "default", conversationId: DASHBOARD_KEY, agentId: "codex" })
+    );
+  });
+
+  it("Der Record bleibt über den Hydration-Flip hinweg identisch (Lücke → Brücke aktiv → Dispose)", async () => {
+    const cfg = withHarnessSessions({ codex: REAL_CODEX_SESSION_KEY });
+    const adapter = createDashboardBindingAdapter({ getConfig: () => cfg });
+    const inGap = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
+    const handle = await createDashboardBridge({ api: makeBridgeApi(cfg), sessionBindingRuntime: STUB_RUNTIME });
+    try {
+      const withBridge = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
+      expect(handle.ownsWebchatAdapter).toBe(false);
+      expect(withBridge).toEqual(inGap); // deterministisch: resolve→touch→re-resolve sieht EIN Record
+    } finally {
+      handle.dispose(); // Pointer immer freigeben — keine Testübergreifende Leckage
+    }
+    const afterDispose = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
+    expect(afterDispose).toEqual(inGap);
+  });
+
+  it("mit undefined-Config bleibt die Lücke null (Safe-Default unverändert)", async () => {
+    expect(await createDashboardBindingAdapter({ getConfig: () => undefined }).resolveByConversationAsync!(DASHBOARD_REF)).toBeNull();
   });
 });
 

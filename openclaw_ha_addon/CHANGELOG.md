@@ -1,3 +1,7 @@
+## [0.7.13.11] - 2026-10-10
+
+### Fixed
+- **Turn-1 binding race (proven by GaRoN's live test):** the async bridge start left `activeBridgeResolution` null on the first turn, so `binding-adapter.ts:259` fell into `resolveDashboardBinding()` without a config roster and ignored `harnessSessions` — the chat.send died with `ACP_TURN_FAILED: ACP input must be durably committed`. Fix: both delegation calls now pass `createConfigHarnessRoster(options.getConfig?.())` (roster precedence: active bridge > caller context > safe default), race-free by construction since the adapter's config always lives.
 ## [0.7.13.10] - 2026-10-10
 
 ### Added
