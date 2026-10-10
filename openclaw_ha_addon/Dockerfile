@@ -364,6 +364,11 @@ COPY openclaw-proxy-shim.cjs /usr/local/lib/openclaw-proxy-shim.cjs
 COPY nginx.conf.tpl /etc/nginx/nginx.conf.tpl
 COPY landing.html.tpl /etc/nginx/landing.html.tpl
 COPY acpx /openclaw_ha_addon/acpx
+# Bundled plugin payloads — oc_acpx_helper.py deploy_plugin() reads
+# /openclaw_ha_addon/plugins (F1, Phase 2.10: without this COPY the helper
+# early-returned "plugin source not found" and the binding plugin never
+# deployed). Keep in sync with openclaw_ha_addon/plugins/.
+COPY plugins /openclaw_ha_addon/plugins
 COPY docs/index.html.tpl /openclaw_ha_addon/docs/index.html.tpl
 COPY loading.html /openclaw_ha_addon/loading.html
 COPY icon.png /openclaw_ha_addon/icon.png

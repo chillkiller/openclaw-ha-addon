@@ -9,8 +9,12 @@
 
 import { createHash } from "node:crypto";
 
-/** Agents that are dispatched through the ACP harness backends. */
-export const HARNESS_AGENT_IDS = ["codex", "claude", "opencode"] as const;
+/**
+ * Reserved agent id that is NEVER rostered as a harness agent: `main` is the
+ * host's built-in main agent and keeps its built-in dashboard session even
+ * when its config entry carries runtime.acp (Phase 2.7 dynamic-roster rule).
+ */
+export const RESERVED_HARNESS_AGENT_ID = "main";
 
 /** Default binding mode when the agent entry does not configure one. */
 export const BINDING_MODE = "persistent";
@@ -100,7 +104,7 @@ export type HarnessAgentSpec = {
   cwd?: string;
   backend?: string;
   /** ACP agent id (`runtime.acp.agent`), projected as metadata.acpAgentId. */
-  acpAgentId?: string;
+  harness?: string;
 };
 
 /** Minimal structural view of `agents.entries.<id>` (AgentEntryConfig). */
@@ -127,42 +131,68 @@ export function optionalTrim(value: unknown): string | undefined {
   return optionalString(value);
 }
 
+function specFromEntry(agentId: string, entry: AgentEntryLike | undefined): HarnessAgentSpec | null {
+  // Phase 2.7: an entry dispatches through the ACP harness backend exactly
+  // when its config carries `runtime.type === "acp"`.
+  if (entry?.runtime?.type !== "acp") return null;
+  const acp = entry.runtime.acp ?? {};
+  let mode: HarnessAgentSpec["mode"] = BINDING_MODE;
+  if (acp.mode === "oneshot") mode = "oneshot";
+  // cwd precedence: runtime.acp.cwd > entry.cwd > entry.workspace > MVP default.
+  const cwd =
+    optionalString(acp.cwd) ??
+    optionalString(entry.cwd) ??
+    optionalString(entry.workspace) ??
+    `${DEFAULT_CWD_PREFIX}${agentId}`;
+  const backend = optionalString(acp.backend);
+  const harness = optionalString(acp.agent);
+  return {
+    agentId,
+    mode,
+    cwd,
+    ...backend ? { backend } : {},
+    ...harness ? { harness } : {}
+  };
+}
+
 /**
- * Roster lookup: is `agentId` a harness agent, and what are its ACP runtime
- * settings from `agents.entries.<id>.runtime.acp`?
- *
- * Returns null for anything outside HARNESS_AGENT_IDS (main/unknown agents
- * must stay untouched — acceptance criterion #4).
+ * Dynamic harness roster (Phase 2.7, GaRoN: the project must work
+ * user-independently): the OpenClaw config is the single source of truth —
+ * every `agents.entries.<id>` whose `runtime.type === "acp"` is a harness
+ * agent, with `runtime.acp.agent` as its harness id. There is NO fixed id
+ * list anymore. `main` is never rostered (built-in main agent stays
+ * untouched), and an absent/empty config yields an EMPTY roster (safe
+ * default: no match, no derive).
+ */
+export function resolveHarnessAgentSpecs(cfg: unknown): HarnessAgentSpec[] {
+  const entries = (cfg as { agents?: { entries?: Record<string, AgentEntryLike | undefined> } } | undefined)?.agents?.entries;
+  if (!entries) return [];
+  const specs: HarnessAgentSpec[] = [];
+  for (const [rawId, entry] of Object.entries(entries)) {
+    if (entry === undefined || entry === null) continue;
+    const agentId = sanitizeAgentId(rawId);
+    if (agentId === RESERVED_HARNESS_AGENT_ID) continue;
+    const spec = specFromEntry(agentId, entry);
+    if (spec) specs.push(spec);
+  }
+  return specs;
+}
+
+/**
+ * Roster lookup: is `agentId` a harness agent per `cfg`, and what are its ACP
+ * runtime settings? The caller passes its LIVE config on every resolve
+ * (binding-adapter: `options.getConfig?.()`), so config changes are visible
+ * within the adapter generation without any cache. Returns null for
+ * main/unknown/non-acp agents — those keep their untouched dispatch
+ * (acceptance criterion #4).
  */
 export function resolveHarnessAgentSpec(cfg: unknown, agentId: unknown): HarnessAgentSpec | null {
   const normalized = sanitizeAgentId(agentId);
-  if (!(HARNESS_AGENT_IDS as readonly string[]).includes(normalized)) return null;
+  if (normalized === RESERVED_HARNESS_AGENT_ID) return null;
 
-  const agents = cfg as { agents?: { entries?: Record<string, AgentEntryLike> } } | undefined;
-  const entry = agents?.agents?.entries?.[normalized];
-  let mode: HarnessAgentSpec["mode"] = BINDING_MODE;
-  let cwd = optionalString(entry?.cwd) ?? optionalString(entry?.workspace);
-  let backend: string | undefined;
-  let acpAgentId: string | undefined;
-
-  if (entry?.runtime?.type === "acp") {
-    const acp = entry.runtime.acp ?? {};
-    if (acp.mode === "oneshot") mode = "oneshot";
-    cwd = optionalString(acp.cwd) ?? cwd;
-    backend = optionalString(acp.backend);
-    acpAgentId = optionalString(acp.agent);
-  }
-
-  // MVP default: keep each harness agent under the shared workspace prefix.
-  if (!cwd) cwd = `${DEFAULT_CWD_PREFIX}${normalized}`;
-
-  return {
-    agentId: normalized,
-    mode,
-    cwd,
-    backend,
-    ...acpAgentId ? { acpAgentId } : {}
-  };
+  const entries = (cfg as { agents?: { entries?: Record<string, AgentEntryLike | undefined> } } | undefined)?.agents?.entries;
+  if (!entries?.[normalized]) return null;
+  return specFromEntry(normalized, entries[normalized]);
 }
 
 /** First `length` hex chars of sha256(host normalization of `channel:accountId:conversationId`). */

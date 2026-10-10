@@ -168,6 +168,10 @@ Release-facing summary. Detailed per-release engineering notes: [openclaw_ha_add
 
 ## 0.7.10.21
 - Fix OpenClaw ControlUI asset loading inside HA Ingress when X-Ingress-Path header is missing by rewriting asset links to relative URLs (with absolute fallback when the header is present).
+## [0.7.13.6] - 2026-10-10
+
+### Fixed
+- **Plugin deployment missed its Dockerfile COPY** — acp-dashboard-binding now ships in the image and deploys at boot (fallback source resolution + orphan pruning).
 ## [0.7.13.5] - 2026-10-10
 
 ### Added

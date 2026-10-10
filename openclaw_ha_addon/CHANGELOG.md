@@ -1,3 +1,7 @@
+## [0.7.13.6] - 2026-10-10
+
+### Fixed
+- **Plugin never deployed (F1):** the Dockerfile had no `COPY plugins` — `deploy_plugin()` early-returned "plugin source not found" and the acp-dashboard-binding plugin was absent at boot (proven 07:41 build). Fix: `COPY plugins /openclaw_ha_addon/plugins` after the acpx COPY, plus `resolve_plugin_src_dir()` fallback chain in `oc_acpx_helper.py` (image path → helper-dir → host checkout, logged) and manifest-scope orphan pruning after deploys.
 ## [0.7.13.5] - 2026-10-10
 
 ### Added

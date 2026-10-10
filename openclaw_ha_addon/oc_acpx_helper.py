@@ -196,6 +196,37 @@ def prepare_opencode_home() -> None:
         log("Replaced legacy opencode config.toml placeholder")
 
 
+def resolve_plugin_src_dir() -> Path | None:
+    """Locate the bundled plugin payload directory (F1, Phase 2.10).
+
+    The image COPYs /openclaw_ha_addon/plugins, but older images and bare
+    repo checkouts may lack it — so the first candidate that actually
+    contains PLUGIN_NAME/openclaw.plugin.json wins:
+
+      1. /openclaw_ha_addon/plugins           (canonical image payload)
+      2. <this helper's dir>/plugins          (repo checkout / dev runs)
+      3. /share/projekte/github/.../plugins   (host-side checkout fallback)
+
+    The chosen source is logged so a wrong/missing bundle is visible at
+    start instead of failing silently in deploy_plugin().
+    """
+    candidates = [
+        WRAPPER_SRC_DIR.parent / "plugins",
+        Path(__file__).resolve().parent / "plugins",
+        Path("/share/projekte/github/openclaw-ha-addon/openclaw_ha_addon/plugins"),
+    ]
+    for candidate in candidates:
+        if (candidate / PLUGIN_NAME / "openclaw.plugin.json").is_file():
+            if candidate != PLUGIN_SRC_DIR:
+                log(f"INFO: plugin source fallback in use: {candidate}")
+            return candidate
+    log(
+        "WARNING: plugin source not found; probed: "
+        + ", ".join(str(c) for c in candidates)
+    )
+    return None
+
+
 def plugin_source_manifest(src: Path) -> dict[str, str]:
     """sha256 manifest of the pristine plugin source (relative path -> hex)."""
     manifest: dict[str, str] = {}
@@ -222,11 +253,12 @@ def deploy_plugin() -> bool:
     differs from the target (sha256 comparison per file), so unchanged
     restarts stay read-only.
     """
-    src = PLUGIN_SRC_DIR / PLUGIN_NAME
+    src_dir = resolve_plugin_src_dir()
+    src = (src_dir / PLUGIN_NAME) if src_dir else None
     dst = CONFIG_DIR / "plugins" / PLUGIN_NAME
 
-    if not (src / "openclaw.plugin.json").exists():
-        log(f"WARNING: plugin source not found (no manifest): {src}")
+    if src is None or not (src / "openclaw.plugin.json").exists():
+        log("WARNING: deploy_plugin skipped — no bundled plugin source with a manifest")
         return False
 
     desired = plugin_source_manifest(src)
@@ -254,6 +286,28 @@ def deploy_plugin() -> bool:
             ignore=shutil.ignore_patterns(*PRUNED_PLUGIN_DIRS),
         )
         log(f"Deployed plugin {PLUGIN_NAME} -> {dst}")
+
+    # Phase 2.10: drop orphaned payload left behind by older releases — a
+    # source file removed/renamed in a new release never disappears on its
+    # own, because the sha-compare above only inspects files the manifest
+    # still knows. Only manifest-scope files are pruned; target-owned dirs
+    # (node_modules etc., possibly npm-populated by the gateway) stay.
+    removed = 0
+    for path in sorted(dst.rglob("*")):
+        if path.is_dir():
+            continue
+        rel_dir = path.relative_to(dst)
+        if rel_dir.as_posix() in desired:
+            continue
+        if any(part in PRUNED_PLUGIN_DIRS for part in rel_dir.parts):
+            continue
+        try:
+            path.unlink()
+            removed += 1
+        except OSError as e:
+            log(f"WARN: could not prune orphaned plugin file {path}: {e}")
+    if removed:
+        log(f"Pruned {removed} orphaned file(s) from {dst}")
 
     # Register the plugin as enabled. Only touch entries we own: if the user
     # has a plugins.entries entry for this plugin, flip enabled to true but

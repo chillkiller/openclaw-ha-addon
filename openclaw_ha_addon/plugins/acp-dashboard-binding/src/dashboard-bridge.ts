@@ -10,11 +10,11 @@ import {
   BINDING_ID_PREFIX,
   BINDING_MODE,
   CHANNEL_ID,
-  HARNESS_AGENT_IDS,
 } from "./agent-map.js";
 
 // Bridge public surface keeps exporting the shared constants (tests/plugins
-// previously imported them from here).
+// previously imported them from here). HARNESS_AGENT_IDS was removed in
+// Phase 2.7 — the harness roster is dynamic (config-derived, agent-map).
 export {
   BINDING_ACCOUNT_ID,
   BINDING_CHANNEL,
@@ -22,7 +22,6 @@ export {
   BINDING_MODE,
   CHANNEL_ID,
   DEFAULT_CWD_PREFIX,
-  HARNESS_AGENT_IDS,
 } from "./agent-map.js";
 
 const WEBCHAT_ADAPTER_KEY = `${BINDING_CHANNEL}:${BINDING_ACCOUNT_ID}`;
@@ -167,10 +166,6 @@ export function isPluginOwnedBindingMetadata(metadata: Record<string, unknown> |
   );
 }
 
-export function isHarnessAgentId(agentId: string): boolean {
-  return (HARNESS_AGENT_IDS as readonly string[]).includes(normalizeAgentId(agentId));
-}
-
 type AgentConfigEntryLike = {
   runtime?: {
     type?: string;
@@ -193,11 +188,13 @@ export function createConfigHarnessRoster(config: unknown): HarnessRoster {
   const agentsConfig = (config as ConfigLike | undefined)?.agents;
   return {
     isHarnessAgent(agentId: string): boolean {
+      // Phase 2.7: the roster is fully config-derived — an entry is a harness
+      // agent iff runtime.type === "acp" (no fixed id list). `main` never
+      // rosters: the built-in main agent stays untouched.
       const canonical = normalizeAgentId(agentId);
-      if (!isHarnessAgentId(canonical)) return false;
+      if (canonical === DEFAULT_AGENT_ID) return false;
       const entry = agentsConfig?.entries?.[canonical] ?? agentsConfig?.entries?.[agentId];
-      if (!entry?.runtime) return true;
-      return entry.runtime.type === "acp";
+      return entry?.runtime?.type === "acp";
     },
     acpDefaults(agentId: string): HarnessAgentDefaults | null {
       if (!this.isHarnessAgent(agentId)) return null;

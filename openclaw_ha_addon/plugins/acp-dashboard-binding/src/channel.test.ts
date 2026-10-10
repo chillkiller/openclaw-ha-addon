@@ -7,7 +7,8 @@ import {
   DEFAULT_CWD_PREFIX,
   buildAcpBindingSessionKey,
   parseAgentIdFromConversationId,
-  resolveHarnessAgentSpec
+  resolveHarnessAgentSpec,
+  resolveHarnessAgentSpecs
 } from "./agent-map.js";
 import { createDashboardBindingAdapter } from "./binding-adapter.js";
 
@@ -16,6 +17,29 @@ const DASHBOARD_REF = {
   channel: BINDING_CHANNEL,
   accountId: "default",
   conversationId: DASHBOARD_KEY
+} as const;
+
+/**
+ * Phase 2.7 dynamic-roster fixture: codex/claude dispatch through the ACP
+ * harness purely because their entries carry runtime.type==='acp' — NOT
+ * because of any fixed id list; "root" (native) and unlisted ids do not.
+ */
+const HARNESS_CFG = {
+  agents: {
+    entries: {
+      codex: {
+        runtime: {
+          type: "acp",
+          acp: { agent: "codex-harness", mode: "oneshot", cwd: "/share/temp/acpx-workspace/codex", backend: "bridge" }
+        }
+      },
+      claude: {
+        cwd: "/share/temp/claude-ws",
+        runtime: { type: "acp", acp: { backend: "acpx" } }
+      },
+      root: { runtime: { type: "native" } }
+    }
+  }
 } as const;
 
 /** Host equivalence: sha256HexPrefixCore(`${channel}:${accountId}:${conversationId}`, 16). */
@@ -52,36 +76,67 @@ describe("acp target key equivalence", () => {
   });
 });
 
-describe("resolveHarnessAgentSpec (agents.entries.<id>.runtime.acp)", () => {
-  it("reads cwd/mode/backend from runtime.acp", () => {
-    const cfg = {
-      agents: {
-        entries: {
-          codex: {
-            runtime: { type: "acp", acp: { mode: "oneshot", cwd: "/share/temp/acpx-workspace/codex", backend: "bridge" } }
-          }
-        }
-      }
-    };
-    const spec = resolveHarnessAgentSpec(cfg, "codex");
-    expect(spec).toMatchObject({ agentId: "codex", mode: "oneshot", cwd: "/share/temp/acpx-workspace/codex", backend: "bridge" });
+describe("resolveHarnessAgentSpecs (Phase 2.7 dynamic roster)", () => {
+  it("rosters exactly the runtime.type==='acp' entries from the config", () => {
+    const specs = resolveHarnessAgentSpecs(HARNESS_CFG);
+    expect(specs.map((spec) => spec.agentId).sort()).toEqual(["claude", "codex"]);
+  });
+
+  it("projects harness/mode/cwd/backend per entry", () => {
+    expect(resolveHarnessAgentSpec(HARNESS_CFG, "codex")).toEqual({
+      agentId: "codex",
+      mode: "oneshot",
+      cwd: "/share/temp/acpx-workspace/codex",
+      backend: "bridge",
+      harness: "codex-harness"
+    });
+    // claude has no acp.cwd — the entry-level cwd applies; no acp.agent.
+    expect(resolveHarnessAgentSpec(HARNESS_CFG, "claude")).toEqual({
+      agentId: "claude",
+      mode: "persistent",
+      cwd: "/share/temp/claude-ws",
+      backend: "acpx"
+    });
   });
 
   it("falls back to persistent mode and the DEFAULT_CWD_PREFIX workspace", () => {
-    const spec = resolveHarnessAgentSpec({}, "claude");
+    const cfg = { agents: { entries: { codex: { runtime: { type: "acp" } } } } };
+    const spec = resolveHarnessAgentSpec(cfg, "codex");
     expect(spec?.mode).toBe("persistent");
-    expect(spec?.cwd).toBe(`${DEFAULT_CWD_PREFIX}claude`);
+    expect(spec?.cwd).toBe(`${DEFAULT_CWD_PREFIX}codex`);
   });
 
-  it("returns nothing outside the harness roster (main/unknown)", () => {
-    expect(resolveHarnessAgentSpec({}, "main")).toBeNull();
-    expect(resolveHarnessAgentSpec({}, "root")).toBeNull();
+  it("yields an EMPTY roster at undefined/empty config (safe default)", () => {
+    expect(resolveHarnessAgentSpecs(undefined)).toEqual([]);
+    expect(resolveHarnessAgentSpecs({})).toEqual([]);
+    expect(resolveHarnessAgentSpec(undefined, "codex")).toBeNull();
+    expect(resolveHarnessAgentSpec({}, "claude")).toBeNull();
+  });
+
+  it("never rosters main — even when its entry carries runtime.acp", () => {
+    const cfg = {
+      agents: {
+        entries: {
+          main: { runtime: { type: "acp", acp: { agent: "main-harness", mode: "oneshot" } } },
+          codex: { runtime: { type: "acp" } }
+        }
+      }
+    };
+    expect(resolveHarnessAgentSpecs(cfg).map((spec) => spec.agentId)).toEqual(["codex"]);
+    expect(resolveHarnessAgentSpec(cfg, "main")).toBeNull();
+  });
+
+  it("keeps non-acp runtimes and unknown agents outside the roster", () => {
+    expect(resolveHarnessAgentSpec(HARNESS_CFG, "root")).toBeNull();
+    expect(resolveHarnessAgentSpec(HARNESS_CFG, "opencode")).toBeNull();
+    // Canonicalized lookup: "Codex" resolves like "codex" (sanitizeAgentId).
+    expect(resolveHarnessAgentSpec(HARNESS_CFG, "Codex")?.agentId).toBe("codex");
   });
 });
 
 describe("dashboard binding adapter (acceptance #2)", () => {
   it("resolves an ACP target for a codex dashboard conversation", async () => {
-    const adapter = createDashboardBindingAdapter({ getConfig: () => ({}) });
+    const adapter = createDashboardBindingAdapter({ getConfig: () => HARNESS_CFG });
     const record = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
     expect(record).not.toBeNull();
     expect(record?.targetSessionKey).toBe(
@@ -90,12 +145,25 @@ describe("dashboard binding adapter (acceptance #2)", () => {
     expect(record?.targetKind).toBe("session");
     expect(record?.status).toBe("active");
     expect(record?.metadata?.agentId).toBe("codex");
+    expect(record?.metadata?.acpAgentId).toBe("codex-harness"); // runtime.acp.agent
+    expect(record?.metadata?.mode).toBe("oneshot");
     // Not plugin-owned: the get-reply retarget must still apply.
     expect(record?.metadata?.pluginBindingOwner).toBeUndefined();
   });
 
+  it("derives nothing when getConfig is undefined/empty (safe default)", async () => {
+    expect(await createDashboardBindingAdapter().resolveByConversationAsync!(DASHBOARD_REF)).toBeNull();
+    expect(await createDashboardBindingAdapter({ getConfig: () => undefined }).resolveByConversationAsync!(DASHBOARD_REF)).toBeNull();
+  });
+
+  it("derives nothing for main — even when the config gives main runtime.acp", async () => {
+    const cfg = { agents: { entries: { main: { runtime: { type: "acp", acp: { mode: "oneshot" } } } } } };
+    const adapter = createDashboardBindingAdapter({ getConfig: () => cfg });
+    expect(await adapter.resolveByConversationAsync!({ ...DASHBOARD_REF, conversationId: "agent:main:dashboard:abc" })).toBeNull();
+  });
+
   it("resolves nothing for main and for unknown conversation shapes", async () => {
-    const adapter = createDashboardBindingAdapter({ getConfig: () => ({}) });
+    const adapter = createDashboardBindingAdapter({ getConfig: () => HARNESS_CFG });
     expect(await adapter.resolveByConversationAsync!({ ...DASHBOARD_REF, conversationId: "agent:main:dashboard:abc" })).toBeNull();
     expect(await adapter.resolveByConversationAsync!({ ...DASHBOARD_REF, conversationId: "agent:root:dashboard:abc" })).toBeNull();
     expect(await adapter.resolveByConversationAsync!({ ...DASHBOARD_REF, conversationId: "webchat:default:room:1" })).toBeNull();
@@ -103,7 +171,7 @@ describe("dashboard binding adapter (acceptance #2)", () => {
   });
 
   it("is deterministic across resolves (host re-resolve stability check)", async () => {
-    const adapter = createDashboardBindingAdapter({ getConfig: () => ({}) });
+    const adapter = createDashboardBindingAdapter({ getConfig: () => HARNESS_CFG });
     const first = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
     const second = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
     expect(second?.bindingId).toBe(first?.bindingId);
@@ -112,7 +180,7 @@ describe("dashboard binding adapter (acceptance #2)", () => {
   });
 
   it("explicit binds override the derived record and unbind removes them", async () => {
-    const adapter = createDashboardBindingAdapter({ getConfig: () => ({}) });
+    const adapter = createDashboardBindingAdapter({ getConfig: () => HARNESS_CFG });
     const derived = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
     const bound = await adapter.bind?.({
       targetSessionKey: buildAcpBindingSessionKey({
@@ -151,7 +219,7 @@ describe("dashboard binding adapter (acceptance #2)", () => {
   });
 
   it("sync resolveByConversation agrees with the async view", async () => {
-    const adapter = createDashboardBindingAdapter({ getConfig: () => ({}) });
+    const adapter = createDashboardBindingAdapter({ getConfig: () => HARNESS_CFG });
     const viaSync = adapter.resolveByConversation(DASHBOARD_REF);
     const viaAsync = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
     expect(viaSync).toEqual(viaAsync);

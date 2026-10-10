@@ -23,6 +23,21 @@
  *   Registering the adapter with the host happens in src/channel.ts; the one
  *   value import below (dashboard-bridge.js) is plugin-local and stays SDK
  *   value-free at static import time too (its SDK import is dynamic/catched).
+ *
+ * KNOWN LIMITATION (Phase 2.10, GaRoN-K6): while this adapter is registered
+ * for webchat:default it SHADOWS the host's generic current-conversation
+ * binding store completely (read+write). Legacy Weg-1 bindings created via
+ * `/acp spawn --bind here` ("generic:" records in the persisted store) are
+ * therefore invisible to dispatch while the plugin is loaded, and our own
+ * explicit bind() map is in-memory — so explicit binds (old generic ones and
+ * new plugin ones) die at restart; only the derived records survive. A
+ * legacy-fallthrough import was evaluated and REJECTED as non-trivial:
+ * `openclaw/plugin-sdk/conversation-binding-inspection-runtime` only exports
+ * inspectSessionBindingByConversation, which routes BACK through the
+ * registered adapter (self-recursion), and the actual generic-store reader
+ * (inspectGenericCurrentConversationBinding) is dist-internal under a
+ * hash-filename module path — importing it would break on every OpenClaw
+ * upgrade. Revisit when a plugin-sdk export for the generic store appears.
  */
 
 import {
@@ -130,7 +145,12 @@ export type DashboardBindingAdapterOptions = {
    */
   channel?: string;
   accountId?: string;
-  /** Latest live OpenClaw config (agents.entries.<id>.runtime.acp); may be absent. */
+  /**
+   * Latest live OpenClaw config (agents.entries.<id>.runtime.acp); may be
+   * absent. Read on EVERY resolve (Phase 2.7 dynamic roster: entries with
+   * runtime.type==='acp' are the harness agents); undefined/empty config
+   * yields an empty roster — no match, no derive.
+   */
   getConfig?: () => unknown;
   /** Testability hook for explicit-bind timestamps. */
   now?: () => number;
@@ -168,7 +188,7 @@ function deriveBindingRecord(ref: BindingConversationRef, options: DashboardBind
     mode: spec.mode,
     agentId: spec.agentId
   };
-  if (spec.acpAgentId) metadata.acpAgentId = spec.acpAgentId;
+  if (spec.harness) metadata.acpAgentId = spec.harness;
   if (spec.cwd) metadata.cwd = spec.cwd;
   if (spec.backend) metadata.backend = spec.backend;
 

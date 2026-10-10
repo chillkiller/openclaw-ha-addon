@@ -131,12 +131,29 @@ describe("dashboard-bridge: dashboard key parser", () => {
 });
 
 describe("dashboard-bridge: roster gating", () => {
-  it("accepts harness ids and configured harness agents, rejects main/unknown", () => {
+  it("accepts configured harness agents, rejects unconfigured/main/unknown", () => {
     const roster = harnessRoster();
     expect(roster.isHarnessAgent("codex")).toBe(true);
-    expect(roster.isHarnessAgent("opencode")).toBe(true);
+    // Phase 2.7 dynamic roster: opencode is NOT in the config, so it is not
+    // a harness agent — no fixed id list anymore.
+    expect(roster.isHarnessAgent("opencode")).toBe(false);
     expect(roster.isHarnessAgent("main")).toBe(false);
     expect(roster.isHarnessAgent("unknown-agent")).toBe(false);
+  });
+
+  it("rosters only runtime.type==='acp' entries dynamically (Phase 2.7)", () => {
+    const config = {
+      agents: {
+        entries: {
+          opencode: { runtime: { type: "acp", acp: { agent: "opencode-harness" } } },
+          main: { runtime: { type: "acp", acp: {} } },
+        },
+      },
+    };
+    const roster = createConfigHarnessRoster(config);
+    expect(roster.isHarnessAgent("opencode")).toBe(true);
+    expect(roster.isHarnessAgent("main")).toBe(false); // reserved: builtin stays
+    expect(roster.isHarnessAgent("claude")).toBe(false); // not configured here
   });
 
   it("reads runtime.acp defaults from agents.entries (entries-and-multi-agent.md:52-56,86)", () => {
@@ -496,17 +513,14 @@ describe("dashboard-bridge: binding-adapter delegation point", () => {
 });
 
 describe("dashboard-bridge: §4.2 write-free delegation resolvers", () => {
-  it("synthesizes the bridge record deterministically without an active bridge", async () => {
-    const a = await resolveDashboardBindingAsync({
+  it("synthesizes the bridge record deterministically for a config-backed roster", () => {
+    const ref = {
       channel: "webchat",
       accountId: "default",
       conversationId: CODEX_DASHBOARD_KEY,
-    });
-    const b = await resolveDashboardBinding({
-      channel: "webchat",
-      accountId: "default",
-      conversationId: CODEX_DASHBOARD_KEY,
-    });
+    };
+    const a = resolveDashboardBinding(ref, { roster: harnessRoster() });
+    const b = resolveDashboardBinding(ref, { roster: harnessRoster() });
     expect(a).toEqual(b);
     expect(a?.boundAt).toBe(0);
     expect(a?.targetSessionKey).toBe(buildDashboardAcpTargetSessionKey({
@@ -515,6 +529,16 @@ describe("dashboard-bridge: §4.2 write-free delegation resolvers", () => {
     }));
     expect(a?.metadata?.pluginBindingOwner).toBeUndefined();
     expect(a?.targetKind).toBe("session");
+  });
+
+  it("answers null without any config backing (empty dynamic roster)", async () => {
+    // Phase 2.7 safe default: no active bridge + no config → empty roster,
+    // so the exported resolver derives nothing.
+    expect(await resolveDashboardBindingAsync({
+      channel: "webchat",
+      accountId: "default",
+      conversationId: CODEX_DASHBOARD_KEY,
+    })).toBeNull();
   });
 
   it("gates main/unknown exactly like the bridge roster", async () => {
@@ -553,13 +577,11 @@ describe("dashboard-bridge: §4.2 write-free delegation resolvers", () => {
     await adapter.unbind({ bindingId: bound!.bindingId, reason: "tombstone-test" });
     expect(await resolveDashboardBindingAsync(conversation)).toBeNull();
     handle.dispose();
-    // After dispose the bridge is detached from the delegation resolvers: the
-    // (empty) fallback synthesis answers again, boundAt back at the stable 0.
-    const detached = await resolveDashboardBindingAsync(conversation);
-    expect(detached?.boundAt).toBe(0);
-    expect(detached?.targetSessionKey).toBe(
-      buildDashboardAcpTargetSessionKey({ agentId: "codex", conversationId: CODEX_DASHBOARD_KEY }),
-    );
+    // After dispose the bridge is detached from the delegation resolvers. The
+    // fallback roster is config-less now (Phase 2.7 dynamic roster), so the
+    // exported resolver answers null and the adapter cascade falls through to
+    // its own live getConfig()-backed synthesis.
+    expect(await resolveDashboardBindingAsync(conversation)).toBeNull();
   });
 
   it("claude's binding-adapter delegates at row-miss: bridge rows win over its synthesis", async () => {
@@ -592,7 +614,10 @@ describe("dashboard-bridge: §4.2 write-free delegation resolvers", () => {
   });
 
   it("claude's binding-adapter keeps Turn-1 synthesis when no bridge row exists", async () => {
-    const adapter = createDashboardBindingAdapter({ getConfig: () => undefined });
+    const adapter = createDashboardBindingAdapter({
+      // Dynamic roster: codex is a harness agent via its runtime.acp entry.
+      getConfig: () => ({ agents: { entries: { codex: { runtime: { type: "acp", acp: { backend: "acpx" } } } } } }),
+    });
     const record = await adapter.resolveByConversationAsync!({
       channel: "webchat",
       accountId: "default",
