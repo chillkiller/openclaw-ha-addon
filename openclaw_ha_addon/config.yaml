@@ -1,7 +1,7 @@
-# OpenClaw Home Assistant App v0.7.13.6 Configuration
+# OpenClaw Home Assistant App v0.7.13.7 Configuration
 # OpenClaw 2026.9.9 — failed-update recovery, session archive repairs, Docker upgrade-loop fix
 name: OpenClaw Assistant
-version: "0.7.13.6"
+version: "0.7.13.7"
 slug: openclaw_ha_addon
 description: Agentic AI assistant for Home Assistant — full OpenClaw runtime with Ingress Web UI, web terminal, Assist pipeline and MCP integration
 url: https://github.com/chillkiller/openclaw-ha-addon

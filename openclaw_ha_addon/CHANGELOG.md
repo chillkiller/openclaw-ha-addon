@@ -1,3 +1,7 @@
+## [0.7.13.7] - 2026-10-10
+
+### Fixed
+- **Plugin discovery path (F1c):** `deploy_plugin()` now also ensures `plugins.load.paths` contains the user-plugins root (`/config/.openclaw/plugins`) — registration (`plugins.entries`) alone does not make the gateway discover external plugins (proven live: 0.7.13.6 booted with the plugin deployed+registered but absent from the boot list until the path was patched by hand). User path entries are preserved.
 ## [0.7.13.6] - 2026-10-10
 
 ### Fixed

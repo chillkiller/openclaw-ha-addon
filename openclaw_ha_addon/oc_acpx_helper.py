@@ -324,10 +324,28 @@ def deploy_plugin() -> bool:
         if not isinstance(entry, dict):
             log(f"WARN: plugins.entries.{PLUGIN_NAME} is not an object; leaving it untouched")
             return True
+        changed_entry = False
         if entry.get("enabled") is not True:
             entry["enabled"] = True
-            write_json(config_path, cfg)
+            changed_entry = True
             log(f"Registered plugins.entries.{PLUGIN_NAME}.enabled=true in openclaw.json")
+
+        # Phase 2.12 (proof 08:10): plugins.entries alone does not make the
+        # gateway DISCOVER the plugin — external plugins load only from
+        # paths listed in plugins.load.paths. Ensure the user-plugins root
+        # (only the exact path this plugin deploys to; user paths preserved).
+        load = plugins.setdefault("load", {})
+        paths = load.setdefault("paths", [])
+        plugins_root = str(CONFIG_DIR / "plugins")
+        if not isinstance(paths, list):
+            log(f"WARN: plugins.load.paths is not a list; not patching discovery path")
+        elif plugins_root not in paths:
+            paths.insert(0, plugins_root)
+            changed_entry = True
+            log(f"Added plugins.load.paths entry: {plugins_root}")
+
+        if changed_entry:
+            write_json(config_path, cfg)
         return True
     except Exception as e:
         log(f"ERROR: plugin registration failed: {e}")
