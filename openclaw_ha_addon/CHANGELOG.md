@@ -1,3 +1,8 @@
+## [0.7.13.8] - 2026-10-10
+
+### Fixed
+- **Operator opt-out for the binding plugin never overridden:** `deploy_plugin()` flipped `plugins.entries["acp-dashboard-binding"].enabled` to `true` unconditionally on every boot; an operator-set `false` (GaRoN, 2026-10-10 ~08:45 attempt) was silently re-enabled by the next start. An explicit `false` is now respected across boots (helper logs `operator opt-out ... respected`, skips the `plugins.load.paths` registration while disabled), giving a one-plugin disable switch without touching `acp.*`/harness config.
+
 ## [0.7.13.7] - 2026-10-10
 
 ### Fixed

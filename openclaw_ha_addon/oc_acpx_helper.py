@@ -249,6 +249,8 @@ def deploy_plugin() -> bool:
     its user-owned plugin root, and registers
     plugins.entries['<PLUGIN_NAME>'] = {enabled: true} in openclaw.json
     (agents and user plugin entries preserved — same patch pattern as
+    patch_openclaw_config). An explicit operator opt-out enabled:false
+    is respected and NEVER flipped back across boots.
     patch_openclaw_config). The copy fires only when the source actually
     differs from the target (sha256 comparison per file), so unchanged
     restarts stay read-only.
@@ -309,9 +311,9 @@ def deploy_plugin() -> bool:
     if removed:
         log(f"Pruned {removed} orphaned file(s) from {dst}")
 
-    # Register the plugin as enabled. Only touch entries we own: if the user
-    # has a plugins.entries entry for this plugin, flip enabled to true but
-    # leave their remaining fields intact.
+    # Register the plugin as enabled — but NEVER overwrite an explicit
+    # operator opt-out: an entry carrying enabled:false stays false across
+    # boots (single-plugin disable without touching ACP/harnesses).
     config_path = CONFIG_DIR / "openclaw.json"
     try:
         if not config_path.exists():
@@ -325,6 +327,14 @@ def deploy_plugin() -> bool:
             log(f"WARN: plugins.entries.{PLUGIN_NAME} is not an object; leaving it untouched")
             return True
         changed_entry = False
+        if entry.get("enabled") is False:
+            # Operator opt-out (GaRoN 2026-10-10 finding): an explicit
+            # enabled:false is NEVER flipped back by this helper. The plugin
+            # payload stays deployed (copy above), so re-enabling needs no
+            # rebuild; the early return leaves plugins.load.paths untouched
+            # while the plugin is disabled.
+            log(f"INFO: plugins.entries.{PLUGIN_NAME}.enabled=false (operator opt-out) respected")
+            return True
         if entry.get("enabled") is not True:
             entry["enabled"] = True
             changed_entry = True

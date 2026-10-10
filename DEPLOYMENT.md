@@ -4,6 +4,13 @@
 
 | App Version | OpenClaw Version | Release Date |
 |--------------|------------------|---------------|
+| 0.7.13.8 | 2026.9.9 | 2026-10-10 |
+> **Note (0.7.13.8):** the helper's plugin registration respects an explicit operator opt-out: with `plugins.entries["acp-dashboard-binding"].enabled=false`, the flag is never flipped back across boots, the plugin payload stays deployed (re-enable needs no rebuild), and no `plugins.load.paths` entry is written while disabled.
+| 0.7.13.7 | 2026.9.9 | 2026-10-10 |
+| 0.7.13.6 | 2026.9.9 | 2026-10-10 |
+| 0.7.13.5 | 2026.9.9 | 2026-10-10 |
+| 0.7.13.4 | 2026.9.9 | 2026-10-10 |
+
 | 0.7.13.3 | 2026.9.9 | 2026-10-09 |
 | 0.7.13.2 | 2026.9.9 | 2026-10-09 |
 | 0.7.13.1 | 2026.9.9 | 2026-10-09 |
