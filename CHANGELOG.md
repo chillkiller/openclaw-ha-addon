@@ -1,3 +1,12 @@
+## 0.7.13.18 (2026-10-11) — bundled-root trust deploy + startup trace + restart smoke check
+
+- **Fixed (restart Kammerjäger):** path-deployed plugins ran UNTRUSTED — the gateway grants runtime keyed stores only to `origin: "bundled"` plugins, so the binding plugin's persisted bridge store threw `PluginTrustRefusalError` on every restart boot ("persisted bridge state unavailable; memory-only rows"). The helper now compiles both plugins (esbuild, externals `openclaw`/`openclaw/*`/`@openclaw/*`) into the gateway's own `dist/extensions` root (origin "bundled" = full trusted runtime) and removes the stale external copies (both candidates of an id → the config candidate wins and would shadow the trusted one).
+- **Fail-soft:** no bundled root / no esbuild / failed compile → exact legacy external deploy (unchanged v0.7.13.17 semantics, WARN logged). Registration semantics (B3 opt-out invariant, `plugins.allow` union, atomic writes) unchanged — extracted into one shared path used by both deploy roots.
+- **Bridge diagnosing:** the "persisted bridge state unavailable" WARN now carries the underlying cause text in the message (the gateway log serializes messages only, not error objects).
+- **New diagnostic option `gateway_startup_trace`:** exports `OPENCLAW_GATEWAY_STARTUP_TRACE` — per-phase/per-plugin boot breakdown lines; instrumentation for the observed 64s `plugins.runtime-post-bind` block (proof lands with the next restart log).
+- **New read-only post-restart smoke check (`acp_smoke_check.sh`):** gateway alive, bundled payload valid (index.mjs + `openclaw.extensions` package.json), stale-external shadowing absent, ACP session roster, stuck session nodes, boot-error extraction, harness env wiring — no writes, safe anytime.
+- Tests: python 35/35 (new `BundledRootDeployTest` incl. real-esbuild integration probe) · vitest writer 34/34 · vitest binding 161+1. Audited by the acpx-codex harness (`kimi-k2.7-code:cloud`, acp-config verified applied): **GO**.
+
 ## 0.7.13.17 (2026-10-11) — repo-split: standalone harness-config-writer + backup-rewrite + add-on harness defaults
 
 - **Two runtime plugins instead of one (Repo-Split A2, owner GO):** `harness-config-writer` is now a standalone feature plugin (own config surface `config.harnesses`, no channel code) — the writer and the dashboard/webchat binding channel plugin fail independently. Both are baked into the add-on image and deployed/registered per option.
