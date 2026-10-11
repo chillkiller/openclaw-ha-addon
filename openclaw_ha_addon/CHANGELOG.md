@@ -1,3 +1,11 @@
+## [0.7.13.13] - 2026-10-11
+
+### Fixed
+- **Per-cwd binding keys now get real sessions (GaRoN night test 03:22, root cause fully traced):** the auto-provisioner discarded the cascade's `targetSessionKey` and passed a legacy `harness:<agent>` conversation id to the host ensure contract (`ensureConfiguredAcpBindingReady` → `buildConfiguredAcpSessionKey(spec)`). Consequently `acp_sessions` rows landed on the legacy per-agent key (`…:eb7bc1038d1aa310`, sha16 of `webchat:default:harness:claude`) while every resolve answered the cwd-scoped key (`…:ws:<hash>`) — dashboard-bound turns on the scoped key died with `ACP_SESSION_INIT_FAILED: ACP metadata is missing`, and the ensure-spawned session (idle, correct repo cwd) sat unreachable.
+- **Harmonization:** `buildHarnessProvisionedConversationId(agentId, cwdScope?)` appends `:ws:<sha16(cwd)[0..12]>` and is now the single source of truth used by both the key builder and the spec converter; the provisioner carries the target key and the spec converter reverse-parses the scoped conversation id from it (bit-identical ensure-key ≡ resolve-key). Legacy no-scope keys keep the plain grammar.
+### Verified
+- In-process E2E against live copies with the owner's test conversation (`agent:claude:dashboard:65d8c362…`): ensure-key == resolve-key == `agent:claude:acp:binding:webchat:default:a32f2849a6a41b20`.
+- 149/149 vitest, tsc strict clean.
 ## [0.7.13.12] - 2026-10-11
 
 ### Added

@@ -2,6 +2,11 @@
 
 Release-facing summary. Detailed per-release engineering notes: [openclaw_ha_addon/CHANGELOG.md](openclaw_ha_addon/CHANGELOG.md).
 
+## 0.7.13.13 (2026-10-11) — ensure/resolve key harmonization
+
+- **Fixed — per-cwd binding keys now get real sessions:** the provisioner discarded the cascade's target-session key and passed a legacy `harness:<agent>` conversation id to the host ensure contract, so `acp_sessions` rows landed on the legacy per-agent key while resolves answered the cwd-scoped key — dashboard-bound turns perished with `ACP_SESSION_INIT_FAILED (metadata missing)`. The provisioner now carries the target key; the scoped conversation id (`harness:<agent>:ws:<hash>`) goes into the ensure spec, making ensure-key ≡ resolve-key bit-for-bit.
+- Tests: 149/149 vitest, strict TypeScript clean, in-process E2E against the live copies.
+
 ## 0.7.13.12 (2026-10-11) — origin-workspace cwd derivation
 
 - **Dashboard-bound harness sessions now inherit the origin session's working directory:** a new read-only `node:sqlite` reader derives the cwd from the origin dashboard conversation (`session_nodes.entry_json.sessionRoot` → `projects.repo_root` fallback). Sessions are spawned with `cwd = <repo>` instead of a fixed workspace, so harness agents (claude/codex/opencode) work inside the project folder they were opened from.
