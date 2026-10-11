@@ -1,3 +1,14 @@
+## [0.7.13.16] - 2026-10-11
+
+### Added
+- **Generalized harness config (Phase 3, owner GO 11:10):** the plugin now carries the harness config deployment (previously the python helper's job) for ALL 22 acpx harnesses — normalized config (`plugins.entries['acp-dashboard-binding'].config.harnesses.<id>`: model/baseUrl/apiKey/thinking/smallModel/trustProjects), three mechanisms (FILE: codex/opencode; ENV: claude/gemini/droid/qwen/kimi/kiro/iflow; NONE: copilot/cursor CLI-OAuth).
+- **Additive guarantee:** absent harness entry ⇒ no plugin writes, bundled acpx default runs unchanged (native subscriptions intact).
+- **Deploy trigger:** registerFull, idempotent + fail-soft; config applies at next boot (BRIDGE.md §15.4).
+### Changed
+- `oc_acpx_helper.py`: `deploy_harness_configs`/`prepare_opencode_home` retired to no-ops with log marker; `deploy_plugin`/`install_acpx_npm_project` remain (bootstrapping).
+### Verified
+- 186/186 vitest (5 files), tsc strict clean, python helper tests 5/5; trust-dedupe (`/pfad` vs `/pfad/` tomllib header risk closed), auth never-overwrite, custom-preservation semantics verbatim from the helper.
+
 ## [0.7.13.15] - 2026-10-11
 
 ### Added

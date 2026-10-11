@@ -2,6 +2,16 @@
 
 Release-facing summary. Detailed per-release engineering notes: [openclaw_ha_addon/CHANGELOG.md](openclaw_ha_addon/CHANGELOG.md).
 
+## 0.7.13.16 (2026-10-11) — generalized harness config (all acpx harnesses)
+
+- **The plugin now configures ALL acpx harnesses** — not just the three flagship ones. A new writer module (`src/harness-config-writer.ts`) generates the per-harness provider config from a normalized plugin config (`plugins.entries['acp-dashboard-binding'].config.harnesses.<id>`: model, baseUrl?, apiKey?, thinking?, smallModel?, trustProjects?).
+- **Three config mechanisms cover the full 22-harness catalog:** FILE (codex: `auth.json` + `/config/.codex/config.toml`; opencode: `opencode.jsonc`), ENV (claude ANTHROPIC_*, gemini, droid, qwen, kimi, kiro, iflow — env names web-verified), NONE (copilot/cursor — CLI-OAuth-owned, plugin writes nothing).
+- **Additive guarantee:** absent `harnesses.<id>` entry ⇒ the plugin writes NOTHING for that harness and the bundled acpx default (vendor auth/config) runs unchanged — native subscriptions (Claude Pro, ChatGPT Plus, Copilot) stay intact.
+- **Provider-agnostic:** baseUrl + apiKey + model is OpenAI-compatible — Ollama, vLLM, LocalAI, llama.cpp all work; no template-token files anymore.
+- **Python helper retired:** `deploy_harness_configs`/`prepare_opencode_home` are no-ops (log marker); `deploy_plugin`/`install_acpx_npm_project` remain (add-on bootstrapping).
+- **Thinking exposed:** `thinking` config field sets codex `model_reasoning_effort` when present.
+- Tests: 186 vitest (5 files) + tsc strict + python helper tests 5/5.
+
 ## 0.7.13.15 (2026-10-11) — main-klon completion + bindMainSessions flag
 
 - **Fixed — bindMainSessions flag enforced:** the phase-2.24b gate `isMainConversationEligible` ignored the `bindMainSessions` config flag (default TRUE worked, but explicit `false` had no effect) — the claude child run shipped the gate without the flag check. Now enforced **before** the shape match: flag-off ⇒ no main-klon binding, the agent keeps builtin dispatch.
