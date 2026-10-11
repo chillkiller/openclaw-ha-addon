@@ -999,3 +999,27 @@ types is currently unsupported … index.ts` (ab ~16:35). Ursachen-Chain
   nur falls der Restart Double-Registration-Artefakte zeigt (normale
   Plugin-Pipeline + Bundled-Channel-Pfad gleichzeitig), dann gezielt
   fixen + auditieren.
+
+### 16.2. Debug-Restart-Messung: 64-s-Block bestätigt weg (2026-10-11, 18:0x)
+
+Der Boot nach dem v0.7.13.18-Update (Supervisor baute den Container frisch
+aus dem Image) wurde mit ALLEN Debug-Channeln gefahren
+(`gateway_log_level=debug`, beide Consoles, trace, `gateway_startup_trace=true`):
+
+- **0 × "event loop blocked"** in der Trace-Summary und im Log — der
+  64-s-`plugins.runtime-post-bind`-Block (Kammerjäger #1) ist WEG.
+  Summary: `eventLoopMax=0.0ms`, `loadedPluginCount=14`,
+  `gatewayMethodCount=491`.
+- **Kein PluginTrustRefusal mehr** — `openKeyedStore` öffnet den
+  persistierten Store über den trusted bundled Proxy (§16-Fix).
+- **Keine "Bundled channel"-Load-Warns** — der Scanner lädt das
+  kompilierte + trusted Entry oder skipped sauber (§16.1).
+- Verbleibende Slowliness (gepumpte Phasen wie auto-enable ~48s /
+  control-ui-assets ~107s, Slow-SQLite-Reflexe) = I/O-Wait + Debug-Log-
+  Overhead, KEINE Event-Loop-Blockade. `gateway_startup_trace` selbst ist
+  unschädlich — Messung `runtime-post-bind 83877.7ms total=209926.9ms`
+  ist Summen-/Wait-Zeit unter Debug-Last, nicht mehr Blockade.
+- Offene Beobachtung: clean-Info-Boot (nur startup_trace an, debug aus)
+  als Vergleichswert zur 64-s-Ära; stuck session_nodes der claude-DB
+  (Agenda Punkt 1, BACKLOG V34) sind vom Boot unabhängig und bleiben
+  Claim-Pfad-Sache.
