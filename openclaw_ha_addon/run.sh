@@ -96,6 +96,11 @@ export ACP_DASHBOARD_BINDING_ENABLED=$(jq -r '.acp_dashboard_binding_enabled // 
 # overrides it (true = writer runs even with the channel plugin off).
 export HARNESS_CONFIG_WRITER_ENABLED=$(jq -r '.harness_config_writer_enabled // empty' "$OPTIONS_FILE" 2>/dev/null)
 
+# Kammerjäger #1 (Restart-Log 2026-10-11): startup trace — per-phase/plugin
+# breakdown of the gateway boot ("startup trace: plugins.runtime-post-bind
+# …ms" lines). Diagnostic option, default off.
+export OPENCLAW_GATEWAY_STARTUP_TRACE=$(jq -r '.gateway_startup_trace // false' "$OPTIONS_FILE" 2>/dev/null)
+
 # Add-on-Level-Harness-Defaults (GaRoN 2026-10-11): shared writer defaults.
 # base_url is the ACTIVATOR (empty = no generation); model applies to all
 # non-excluded harnesses (codex/opencode keep their ollama_acp_*_model

@@ -34,6 +34,7 @@ import shutil
 import stat
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -55,6 +56,27 @@ PLUGIN_NAME = "acp-dashboard-binding"
 # PLUGIN_SRC_DIR (kept in-sync with openclaw_ha_addon/plugins/).
 HARNESS_CONFIG_WRITER_PLUGIN_NAME = "harness-config-writer"
 BUNDLED_PLUGIN_NAMES = [PLUGIN_NAME, HARNESS_CONFIG_WRITER_PLUGIN_NAME]
+# Bundled-Root-Trust-Deploy (Kammerjäger 2026-10-11, Restart-Log v0.7.13.17):
+# the gateway grants the trusted plugin runtime API (api.runtime.state.
+# openKeyedStore etc.) ONLY to plugins whose record is origin "bundled"
+# (physical root under the pinned gateway package's dist/extensions) or an
+# official-catalog install (trustedOfficialInstall — unreachable for path
+# plugins). Deployed at /config/.openclaw/plugins the plugins load with
+# origin "config" and every openKeyedStore call throws PluginTrustRefusal →
+# the dashboard bridge ran "persisted bridge state unavailable; memory-only
+# rows" at every boot. This helper therefore deploys a COMPILED bundle into
+# the gateway's bundled extensions root: bundled plugins load with full
+# trust, and the TS-stripping cost (heavy part of the 64s runtime-post-bind
+# boot block) disappears because the bundle arrives pre-compiled.
+BUNDLED_EXTENSIONS_DIR = Path("/usr/lib/node_modules/openclaw/dist/extensions")
+# esbuild bundles the TS entry into ONE ESM module (relative imports inlined;
+# "openclaw/plugin-sdk/*" stays a bare specifier resolved by the gateway's
+# plugin loader alias, same mechanism that serves the config-origin TS load).
+# The openclaw package ships its own esbuild — same lifecycle as the gateway.
+ESBUILD_BIN_CANDIDATES = (
+    "/usr/lib/node_modules/openclaw/node_modules/.bin/esbuild",
+    "/usr/lib/node_modules/esbuild/bin/esbuild",
+)
 # Target-owned directories that a copytree from the pristine source must
 # never clobber (npm-managed or VCS-managed payload added at runtime).
 PRUNED_PLUGIN_DIRS = {"node_modules", ".git", "__pycache__"}
@@ -191,13 +213,86 @@ def _env_flag(name: str) -> bool:
     return os.environ.get(name, "").strip().lower() in ("1", "true", "yes", "on")
 
 
+def _find_esbuild() -> str | None:
+    """Locate an esbuild binary — pinned to the gateway package's own copy
+    first (same lifecycle as the pinned OpenClaw), then PATH."""
+    for candidate in ESBUILD_BIN_CANDIDATES:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return candidate
+    return shutil.which("esbuild")
+
+
+def _compile_bundled_plugin(src_dir: Path, esbuild_bin: str) -> bytes | None:
+    """Bundle the plugin entry (index.ts) into ONE self-contained ESM module.
+
+    Relative imports are inlined ("./src/x.js" resolves to the TS sources);
+    `openclaw` and `@openclaw/*` stay bare specifiers — the gateway plugin
+    loader's alias serves them at runtime exactly as for the config-origin
+    TS load. Returns the bundle bytes, or None on any failure (fail-soft:
+    the caller falls back to the legacy external deploy).
+    """
+    entry = src_dir / "index.ts"
+    if not entry.is_file():
+        log(f"WARN: bundled deploy without entry file {entry}")
+        return None
+    with tempfile.TemporaryDirectory(prefix="oc-plugin-bundle-") as tmp:
+        outfile = Path(tmp) / "index.mjs"
+        cmd = [
+            esbuild_bin,
+            str(entry),
+            "--bundle", "--format=esm", "--platform=node", "--target=node26",
+            "--external:openclaw", "--external:openclaw/*", "--external:@openclaw/*",
+            f"--outfile={outfile}",
+        ]
+        try:
+            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+        except (OSError, subprocess.SubprocessError) as e:
+            log(f"WARN: esbuild invocation failed: {e}")
+            return None
+        if proc.returncode != 0:
+            log(f"WARN: esbuild bundle failed for {src_dir.name} "
+                f"(rc={proc.returncode}): {proc.stderr.strip()[:400]}")
+            return None
+        if not outfile.is_file():
+            log(f"WARN: esbuild produced no output for {src_dir.name}")
+            return None
+        return outfile.read_bytes()
+
+
+def _write_bytes_and_cache(path: Path, data: bytes, written: list[str]) -> None:
+    """Write bytes atomically (tmp+rename 0o644); appends to `written` only
+    when the target actually changed (byte-compare first, read-only boots)."""
+    try:
+        if path.read_bytes() == data:
+            return
+    except (OSError, FileNotFoundError):
+        pass
+    fd, tmp_path = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
+    os.chmod(tmp_path, 0o644)
+    os.replace(tmp_path, path)  # type: ignore[typed-may-differ]
+    written.append(str(path))
+
+
 def _deploy_and_register_plugin(plugin_name: str) -> bool:
     """Idempotently deploy ONE bundled plugin, named <plugin_name>.
 
-    Copies PLUGIN_SRC_DIR/<plugin_name> (TS sources + openclaw.plugin.json
-    manifest + package.json, NO node_modules — npm layout is plugin-local)
-    into CONFIG_DIR/plugins/<plugin_name> so the gateway can load it from
-    its user-owned plugin root, and registers
+    Bundled-Root-Trust-Deploy (Kammerjäger 2026-10-11): when the pinned
+    gateway's bundled extensions root is present, the plugin is deployed
+    there as a PRE-COMPILED esbuild bundle (index.mjs + package.json with
+    openclaw.extensions=./index.mjs + manifest) — the gateway marks it
+    origin "bundled" and grants the trusted runtime API (openKeyedStore,
+    previously PluginTrustRefusal → memory-only bridge rows). The stale
+    external deploy under CONFIG_DIR/plugins/<name> (memory-only world,
+    shadow-candidate next to the bundled one) is removed in the same boot.
+    If esbuild is unavailable or the compile fails, the flow falls back
+    fail-soft to the legacy external deploy below (functional, untrusted).
+
+    Legacy path: copies PLUGIN_SRC_DIR/<plugin_name> (TS sources +
+    openclaw.plugin.json manifest + package.json, NO node_modules — npm
+    layout is plugin-local) into CONFIG_DIR/plugins/<plugin_name> so the
+    gateway can load it from its user-owned plugin root, and registers
     plugins.entries['<plugin_name>'] = {enabled: true} in openclaw.json
     (agents and user plugin entries preserved — same patch pattern as
     patch_openclaw_config). An explicit operator opt-out enabled:false
@@ -216,13 +311,48 @@ def _deploy_and_register_plugin(plugin_name: str) -> bool:
     """
     src_dir = resolve_plugin_src_dir()
     src = (src_dir / plugin_name) if src_dir else None
-    dst = CONFIG_DIR / "plugins" / plugin_name
 
     if src is None or not (src / "openclaw.plugin.json").exists():
         log("WARNING: deploy_plugins skipped — no bundled plugin source with a manifest "
             f"(probed {plugin_name} under {src_dir})")
         return False
 
+    external_dst = CONFIG_DIR / "plugins" / plugin_name
+    if BUNDLED_EXTENSIONS_DIR.is_dir():
+        esbuild_bin = _find_esbuild()
+        bundle_bytes = _compile_bundled_plugin(src, esbuild_bin) if esbuild_bin else None
+        if bundle_bytes is not None:
+            dst = BUNDLED_EXTENSIONS_DIR / plugin_name
+            dst.mkdir(parents=True, exist_ok=True)
+            written: list[str] = []
+            _write_bytes_and_cache(dst / "index.mjs", bundle_bytes, written)
+            package_json = json.loads((src / "package.json").read_text())
+            oc_meta = package_json.setdefault("openclaw", {})
+            oc_meta["extensions"] = ["./index.mjs"]
+            _write_bytes_and_cache(dst / "package.json",
+                                   json.dumps(package_json, indent=2).encode() + b"\n",
+                                   written)
+            for copy_name in ("openclaw.plugin.json", "BRIDGE.md", "README.md"):
+                copy_src = src / copy_name
+                if copy_src.is_file():
+                    _write_bytes_and_cache(dst / copy_name, copy_src.read_bytes(), written)
+            if external_dst.exists():
+                shutil.rmtree(external_dst)
+                log(f"Removed stale external plugin deploy {external_dst} "
+                    "(superseded by bundled-root deploy)")
+            if written:
+                log(f"Deployed plugin {plugin_name} -> {dst} "
+                    f"(bundled root = trusted runtime API; esbuild {esbuild_bin})")
+                for path in written:
+                    log(f"  wrote {path}")
+            else:
+                log(f"Plugin {plugin_name} already up to date at {dst} "
+                    "(bundled root, byte-identical — read-only boot)")
+            return _register_plugin_entry(plugin_name)
+        log(f"WARN: bundled deploy unavailable for {plugin_name} "
+            "(esbuild missing or bundle failed) — falling back to external deploy")
+
+    dst = external_dst
     desired = plugin_source_manifest(src)
 
     needs_copy = False
@@ -274,6 +404,18 @@ def _deploy_and_register_plugin(plugin_name: str) -> bool:
     # Register the plugin as enabled — but NEVER overwrite an explicit
     # operator opt-out: an entry carrying enabled:false stays false across
     # boots (single-plugin disable without touching ACP/harnesses).
+    return _register_plugin_entry(plugin_name)
+
+
+def _register_plugin_entry(plugin_name: str) -> bool:
+    """openclaw.json registration shared by both deploy roots.
+
+    entries.enabled: operator opt-out (false) never flipped; load.paths
+    (external-root discovery, Phase 2.12) + plugins.allow (Phase 2.19) are
+    unioned idempotently. The load.paths entry is KEPT even after a
+    bundled-root deploy — harmless while CONFIG_DIR/plugins carries no
+    payload, and it keeps the legacy fallback functional.
+    """
     config_path = CONFIG_DIR / "openclaw.json"
     try:
         if not config_path.exists():

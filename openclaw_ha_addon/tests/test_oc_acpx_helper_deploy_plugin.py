@@ -55,6 +55,12 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
             mock.patch.object(helper, "ACPX_DIR", self.config_dir / "acpx"),
             mock.patch.object(helper, "CODEX_SOURCE_HOME", self.config_dir / ".codex"),
             mock.patch.object(helper, "OPENCODE_GLOBAL_DIR", self.config_dir / "opencode"),
+            # Bundled-root deploy (Kammerjäger-Trust-Fix): point at a
+            # NON-EXISTENT tmp path by default so tests never touch the
+            # real gateway's /usr/lib package — tests that exercise the
+            # bundled branch create the dir explicitly.
+            mock.patch.object(helper, "BUNDLED_EXTENSIONS_DIR",
+                              Path(self.tmp.name) / "dist" / "extensions"),
         )
         for patcher in patches:
             patcher.start()
@@ -487,6 +493,8 @@ class AddonHarnessDefaultsTest(unittest.TestCase):
         patches = (
             mock.patch.object(helper, "PLUGIN_SRC_DIR", self.src_root),
             mock.patch.object(helper, "CONFIG_DIR", self.config_dir),
+            mock.patch.object(helper, "BUNDLED_EXTENSIONS_DIR",
+                              Path(self.tmp.name) / "dist" / "extensions"),
         )
         for patcher in patches:
             patcher.start()
@@ -635,6 +643,128 @@ class AddonHarnessDefaultsTest(unittest.TestCase):
             json.loads((book / "managed-defaults.json").read_text())[
                 "generated"]["claude"]["apiKey"], "sk-secret"
         )
+
+
+class BundledRootDeployTest(unittest.TestCase):
+    """Bundled-Root-Trust-Deploy (Kammerjäger 2026-10-11): der Gateway
+    verweigert openKeyedStore für alles außer origin "bundled" /
+    trustedOfficialInstall — deployed in die bundled extensions root wird
+    der Payload vorkompiliert (esbuild index.mjs), gepatcht (extensions
+    ./index.mjs) und der stale External-Copy entfernt. Fallback: legacy
+    externer Deploy, wenn esbuild fehlt oder der Bundling-Step scheitert."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.src_root = Path(self.tmp.name) / "plugins"
+        write_minimal_plugin_source(self.src_root)
+        self.config_dir = Path(self.tmp.name) / "config"
+        self.config_dir.mkdir()
+        (self.config_dir / "openclaw.json").write_text(json.dumps({"agents": {"entries": {}}}))
+        self.bundled_dir = Path(self.tmp.name) / "dist" / "extensions"
+        patches = (
+            mock.patch.object(helper, "PLUGIN_SRC_DIR", self.src_root),
+            mock.patch.object(helper, "CONFIG_DIR", self.config_dir),
+            mock.patch.object(helper, "BUNDLED_EXTENSIONS_DIR", self.bundled_dir),
+        )
+        for patcher in patches:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def deploy_bundled(self, bundle_bytes: bytes | None) -> bool:
+        self.bundled_dir.mkdir(parents=True)
+        self.assertTrue(helper._deploy_and_register_plugin(
+            helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME))
+        return bool(bundle_bytes) or bundle_bytes is not None
+
+    def bundled_dst(self) -> Path:
+        return self.bundled_dir / helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME
+
+    def test_bundled_deploy_writes_compiled_payload(self) -> None:
+        self.bundled_dir.mkdir(parents=True)
+        mock.patch.object(helper, "_find_esbuild",
+                          lambda: "/fake/esbuild").start()
+        self.addCleanup(mock.patch.stopall)
+        ok = mock.patch.object(helper, "_compile_bundled_plugin",
+                               lambda src, _bin: b"BUNDLE-BYTES").start()
+        self.assertTrue(helper._deploy_and_register_plugin(
+            helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME))
+        dst = self.bundled_dst()
+        self.assertEqual((dst / "index.mjs").read_bytes(), b"BUNDLE-BYTES")
+        package = json.loads((dst / "package.json").read_text())
+        self.assertEqual(package["openclaw"]["extensions"], ["./index.mjs"])
+        self.assertEqual((dst / "openclaw.plugin.json").read_text(),
+                         '{"id": "harness-config-writer"}')
+        # no external shadow copy; only the configured entry
+        self.assertFalse((self.config_dir / "plugins" /
+                          helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME).exists())
+        cfg = json.loads((self.config_dir / "openclaw.json").read_text())
+        entry = cfg["plugins"]["entries"]["harness-config-writer"]
+        self.assertIs(entry["enabled"], True)
+
+    def test_bundled_deploy_removes_stale_external_copy(self) -> None:
+        self.bundled_dir.mkdir(parents=True)
+        external = self.config_dir / "plugins" / helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME
+        external.mkdir(parents=True)
+        (external / "index.ts").write_text("// stale")
+        mock.patch.object(helper, "_find_esbuild",
+                          lambda: "/fake/esbuild").start()
+        self.addCleanup(mock.patch.stopall)
+        mock.patch.object(helper, "_compile_bundled_plugin",
+                          lambda src, _bin: b"BUNDLE-BYTES").start()
+        self.assertTrue(helper._deploy_and_register_plugin(
+            helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME))
+        self.assertFalse(external.exists())
+        self.assertTrue(self.bundled_dst().joinpath("index.mjs").is_file())
+
+    def test_bundled_deploy_byte_identical_second_boot_is_read_only(self) -> None:
+        self.bundled_dir.mkdir(parents=True)
+        mock.patch.object(helper, "_find_esbuild",
+                          lambda: "/fake/esbuild").start()
+        self.addCleanup(mock.patch.stopall)
+        mock.patch.object(helper, "_compile_bundled_plugin",
+                          lambda src, _bin: b"BUNDLE-BYTES").start()
+        self.assertTrue(helper._deploy_and_register_plugin(
+            helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME))
+        index = self.bundled_dst() / "index.mjs"
+        first_mtime = os.stat(index).st_mtime_ns
+        self.assertTrue(helper._deploy_and_register_plugin(
+            helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME))
+        self.assertEqual(os.stat(index).st_mtime_ns, first_mtime)
+
+    def test_bundled_deploy_falls_back_to_external_when_bundle_fails(self) -> None:
+        mock.patch.object(helper, "_find_esbuild",
+                          lambda: "/fake/esbuild").start()
+        self.addCleanup(mock.patch.stopall)
+        mock.patch.object(helper, "_compile_bundled_plugin",
+                          lambda src, _bin: None).start()
+        self.assertTrue(helper._deploy_and_register_plugin(
+            helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME))
+        # legacy external deploy happened
+        external = self.config_dir / "plugins" / helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME
+        self.assertTrue((external / "openclaw.plugin.json").is_file())
+        self.assertFalse(self.bundled_dst().exists())
+
+    def test_compile_bundled_plugin_with_real_esbuild(self) -> None:
+        """Integrations-Probe: der REALE esbuild (gateway-pinned, falls im
+        Image/Der-Dev-Box verfügbar) bündelt die echte Plugin-Source; alle
+        relativen Module werden inlined ('openclaw/*' bleibt bare specifier
+        für den Loader-Alias). Skip, wenn esbuild nicht vorhanden."""
+        esbuild_bin = helper._find_esbuild()
+        if not esbuild_bin:
+            self.skipTest("no esbuild available")
+        src = self.config_dir.parent / "real-src" / helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME
+        real_src = REPO / "plugins" / helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME
+        src.parent.mkdir(parents=True)
+        shutil_copytree = __import__("shutil").copytree
+        shutil_copytree(real_src, src,
+                        ignore=__import__("shutil").ignore_patterns(
+                            "node_modules", ".git", "__pycache__"))
+        bundle = helper._compile_bundled_plugin(src, esbuild_bin)
+        self.assertIsNotNone(bundle)
+        self.assertGreater(len(bundle or b""), 1000)
+        self.assertNotIn(b"from './src/", bundle)
+        self.assertIn(b"definePluginEntry", bundle)
 
 
 if __name__ == "__main__":

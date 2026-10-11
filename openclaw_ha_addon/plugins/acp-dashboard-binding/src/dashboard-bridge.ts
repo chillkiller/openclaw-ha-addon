@@ -981,7 +981,16 @@ export async function createDashboardBridge(args: DashboardBridgeArgs): Promise<
   } catch (error) {
     openPersistedRows = null;
     openPersistedTombstones = null;
-    logger.warn?.(`[${CHANNEL_ID}] persisted bridge state unavailable; memory-only rows`, error);
+    // The single most common cause (live-diagnosed 2026-10-11): the gateway
+    // grants runtime keyed stores ONLY to bundled/official-trusted plugins
+    // — external path deployments get PluginTrustRefusalError ("…is only
+    // available through the plugin runtime proxy" / trust refusal). Name it
+    // in the message so the restart log is self-explanatory (the gateway
+    // log serialises the message, not the error object).
+    const message = error instanceof Error
+      ? `persisted bridge state unavailable; memory-only rows (caused by: ${error.message})`
+      : `persisted bridge state unavailable; memory-only rows (${String(error)})`;
+    logger.warn?.(`[${CHANNEL_ID}] ${message}`);
   }
   const store = new BridgeRowStore(openPersistedRows, openPersistedTombstones, {
     onHydrateError: (error) => {

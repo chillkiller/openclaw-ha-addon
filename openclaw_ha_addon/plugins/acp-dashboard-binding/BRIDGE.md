@@ -912,3 +912,64 @@ Was sich geändert hat:
   läuft weiter).
 - Dieses Channel-Plugin ist seitdem reiner Bracket/Claim-Brücken-Code
   (channel/bridge/reply-claim/agent-map/binding-adapter/origin-workspace).
+
+## 16. Bundled-Root-Trust-Deploy (Kammerjäger Restart-Log, 2026-10-11)
+
+**Befund (v0.7.13.17-Boot, 16:32):** `[acp-dashboard-binding] persisted bridge
+state unavailable; memory-only rows` — beim Boot liefen ALLE `openKeyedStore`-
+Calls des Bridge persistierten Stores in `PluginTrustRefusalError`. Belegkette
+(dist 2026.9.9):
+
+- `loader-runtime-load-DpgEqnzx.mjs:411` — `createRuntimeBase()` stellt
+  `state.openKeyedStore` als `unavailable()` (throws) bereit; nur der
+  runtime-Proxy überschreibt es (Zeile 4645) mit `createPluginStateKeyedStore`.
+- `:4607` — der Proxy gated das dahinter: `assertTrustedPluginRuntime`
+  wirft, wenn `record.origin !== "bundled" && record.trustedOfficialInstall
+  !== true`.
+- `installed-plugin-record-match-BHcdsxjn.mjs:217` — `resolvePluginTrust`
+  gibt "trusted-official" NUR über den offiziellen Katalog
+  (`official-external-plugin-catalog`, npm `@openclaw/*` oder ClawHub
+  "official"-Channel). Path-Deployed Plugins: `trust.reason = "record-missing"`
+  (empirisch via `openclaw plugins inspect --runtime --json`).
+- `discovery-BDmn67Fz.mjs` — origin "bundled" kommt rein durch physische
+  Zugehörigkeit zu `trustedBundledPluginRootsForPackageRoot` =
+  `<pkgRoot>/dist/extensions` (bzw. dist-runtime/extensions; Source-Checkout
+  zusätzlich `<pkgRoot>/extensions`). Kein Config-Flag, kein Datei-Marker —
+  Trust ist hier PATH-is.
+- Bundled-Plugins werden über `openclaw.extensions` im package.json geladen
+  und brauchen EINE kompilierte Entry-Datei: `.ts` im Image-Bundled-Root
+  scheitert hart an "Stripping types is currently unsupported for files under
+  node_modules".
+
+**Fix (Helper-Deploy-Umstellung, beides fail-soft):**
+1. `oc_acpx_helper.py::_deploy_and_register_plugin` deployt bei vorhandenem
+   Bundled-Root (`/usr/lib/node_modules/openclaw/dist/extensions`) den Payload
+   VORKOMPIILIERT: esbuild bündelt `index.ts` zu einem self-contained
+   `index.mjs` (relative Imports inlined; `openclaw/plugin-sdk/*` bleibt
+   bare specifier — der Loader-Alias löst das, gleiche Mechanik wie beim
+   config-origin TS-Load), `package.json`-Kopie mit
+   `openclaw.extensions = ["./index.mjs"]`, dazu `openclaw.plugin.json` +
+   BRIDGE.md. Byte-Vergleich → identische Boots bleiben read-only.
+2. Der stale externe Deploy unter `CONFIG_DIR/plugins/<name>` wird entfernt
+   (Shadow-Kandidat neben der bundled Variante — Inspect bewies: beide
+   Kandidaten existieren parallel, der config-origin gewinnt mit
+   explicit-Enable). `plugins.load.paths` bleibt registriert (harmlos +
+   Fallback-funktional).
+3. Fällt zurück auf den legacy externen Deploy (v0.7.13.17-Verhalten), wenn
+   esbuild fehlt oder der Bundling-Step scheitert.
+4. Plugin-Seite: die Bridge-WARN nennt jetzt die Ursache im Message-Text
+   (das Gateway-Log serialisiert `message`, nicht das Error-Objekt) —
+   `persisted bridge state unavailable … (caused by: <error.message>)`.
+
+**Empirischer Probe (dieser Box, ohne Gateway-Restart):** `plugins inspect
+acp-dashboard-binding --runtime --json` nach Umzug → `origin: "bundled"`,
+`trust: {reason: "bundled"}`, `status: "loaded"` — beides für
+acp-dashboard-binding UND harness-config-writer.
+
+**Erwartete Rest-Folgen im Restart-Log:** die beiden Boot-Blocker (64s
+`plugins.runtime-post-bind` und die Kaskade Slow-SQLite/Observer-Disabled/
+sessions.list-Timeouts) müssen NACH dem Umstieg neu gemessen werden — das
+Bündel ist kompiliert (kein TS-Stripping) und die Store-Öffnung geht jetzt
+über den trusted Proxy; ob die 64s verschwinden, zeigt der nächste
+Restart-Log (`gateway_startup_trace: true` → per-Plugin-Breakdown). Der
+Terminal-Write-Ownership-Race (Agenda Punkt 1) bleibt davon UNBERÜHRT.
