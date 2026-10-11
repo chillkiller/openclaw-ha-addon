@@ -5,8 +5,11 @@ OpenClaw HA App — ACPX harness initializer.
 This helper runs during app startup (called from run.sh) and ensures that
 the local-model ACP harnesses are ready to use:
 
-  1. Deploys codex auth.json + /config/.codex/config.toml (the acpx
-     inheritance source for provider routing, verified 2026-10-09)
+  1. (RETIRED, Phase 3 / v0.7.13.16) Harness config generation (codex
+     auth.json + /config/.codex/config.toml inheritance source, opencode
+     jsonc) moved into the acp-dashboard-binding plugin
+     (plugins.entries['acp-dashboard-binding'].config.harnesses, BRIDGE.md
+     §15); deploy_harness_configs/prepare_opencode_home are no-ops now.
   2. Creates a small managed npm project in /config/.openclaw/acpx/.node_project
      with @openclaw/acpx, @openclaw/codex and opencode installed
   3. Patches /config/.openclaw/openclaw.json to enable ACPX (agents preserved)
@@ -111,89 +114,22 @@ def write_json(path: Path, data: dict[str, Any]) -> None:
 
 
 def deploy_harness_configs() -> None:
-    """Deploy the harness config templates from the source directory.
-
-    - codex-home/auth.json into ACPX_DIR (the acpx generated wrapper's
-      CODEX_HOME; without it codex fails with "Authentication required",
-      verified 2026-10-09)
-    - /config/.codex/config.toml: the acpx inheritance source, from which
-      the plugin regenerates the operational codex-home/config.toml at
-      every gateway start (verified 2026-10-09: only model, model_provider,
-      model_reasoning_effort, sandbox_mode and [model_providers.*] plus
-      trust entries are inherited; regenerates once per gateway start).
+    """Retired (Phase 3, release v0.7.13.16): harness config generation moved
+    into the acp-dashboard-binding plugin (src/harness-config-writer.ts, fed
+    by plugins.entries['acp-dashboard-binding'].config.harnesses — BRIDGE.md
+    §15, additiv zum bundled acpx). Kept as an idempotent no-op for the
+    stable main()/run.sh call surface.
     """
-    if not WRAPPER_SRC_DIR.exists():
-        log(f"WARNING: harness config source directory not found: {WRAPPER_SRC_DIR}")
-        return
-
-    # codex auth.json (wrapper CODEX_HOME, read at every adapter start)
-    codex_home = ACPX_DIR / "codex-home"
-    codex_home.mkdir(parents=True, exist_ok=True)
-    auth_path = codex_home / "auth.json"
-    if not auth_path.exists():
-        write_json(
-            auth_path,
-            {"OPENAI_API_KEY": "ollama", "tokens": None, "last_refresh": None},
-        )
-        try:
-            os.chmod(auth_path, 0o600)
-        except OSError as e:
-            log(f"WARN: could not chmod auth.json: {e}")
-        log("Created codex auth.json (placeholder API key)")
-
-    # Codex inheritance source for the acpx plugin (gateway-start regeneration)
-    src_codex_source = WRAPPER_SRC_DIR / ".codex-source" / "config.toml"
-    if src_codex_source.exists():
-        CODEX_SOURCE_HOME.mkdir(parents=True, exist_ok=True)
-        desired = render_template(src_codex_source.read_text(encoding="utf-8"))
-        target = CODEX_SOURCE_HOME / "config.toml"
-        if not target.exists():
-            target.write_text(desired, encoding="utf-8")
-            log("Installed /config/.codex/config.toml (acpx inheritance source)")
-        else:
-            current = target.read_text(encoding="utf-8")
-            if "[model_providers." not in current:
-                target.write_text(desired, encoding="utf-8")
-                log("Upgraded /config/.codex/config.toml (provider routing)")
-            elif current != desired:
-                log("NOTE: /config/.codex/config.toml is customized; leaving intact")
-    else:
-        log(f"WARNING: {src_codex_source} not found; codex provider inheritance not applied")
-
-    # OpenCode JSON(C) provider config (ACPX_DIR home + global dir)
-    prepare_opencode_home()
+    log("INFO: harness config deployment moved to acp-dashboard-binding plugin")
 
 
 def prepare_opencode_home() -> None:
-    """Ensure OpenCode finds its JSON(C) provider config.
-
-    OpenCode reads config files as JSON(C) even when the filename ends in
-    .toml (verified 2026-10-09: "config.toml is not valid JSON(C)"). The
-    real config therefore lives in opencode.jsonc, deployed into
-    OPENCODE_HOME and the global /config/opencode directory.
+    """Retired (Phase 3, release v0.7.13.16): opencode provider config
+    generation moved into the acp-dashboard-binding plugin (both deploy dirs
+    + legacy config.toml neutralization, same semantics — BRIDGE.md §15).
+    Kept as an idempotent no-op for callers/tests of the stable surface.
     """
-    src_config = WRAPPER_SRC_DIR / "opencode.jsonc"
-    if not src_config.exists():
-        log(f"WARNING: {src_config} not found; opencode provider config not applied")
-        return
-
-    desired = render_template(src_config.read_text(encoding="utf-8"))
-
-    for target_dir in (ACPX_DIR / "opencode-home", OPENCODE_GLOBAL_DIR):
-        target_dir.mkdir(parents=True, exist_ok=True)
-        target = target_dir / "opencode.jsonc"
-        if not target.exists() or target.read_text(encoding="utf-8") != desired:
-            target.write_text(desired, encoding="utf-8")
-            log(f"Updated {target} (Ollama provider config)")
-
-    # Neutralize the legacy TOML placeholder (comment-only file).
-    legacy = ACPX_DIR / "opencode-home" / "config.toml"
-    legacy_src = WRAPPER_SRC_DIR / "opencode-home" / "config.toml"
-    if legacy_src.exists() and (
-        not legacy.exists() or legacy.read_bytes() != legacy_src.read_bytes()
-    ):
-        shutil.copy2(legacy_src, legacy)
-        log("Replaced legacy opencode config.toml placeholder")
+    log("INFO: harness config deployment moved to acp-dashboard-binding plugin")
 
 
 def resolve_plugin_src_dir() -> Path | None:

@@ -890,3 +890,127 @@ dashboard-bridge.test (1 neuer): Bridge-Entscheidung bleibt dashboard-only.
 5. bindMainSessions:false betrifft NUR den Adapter-Derive; die Kaskade selbst
    (harnessProvisionedTarget etc.) bleibt shape-agnostisch — konsistent mit
    der Dashboard-Kaskade (Gate liegt IMMER upstream im Derive).
+
+---
+
+## 15. Phase 3 — Generalisierte Harness-Config (GaRoN 10:37 / Owner-Design 10:37, 2026-10-11)
+
+Plugin-seitige Generierung der Harness-Konfiguration statt des retired
+Python-Helpers (`oc_acpx_helper.deploy_harness_configs` /
+`prepare_opencode_home` sind seit v0.7.13.16 no-ops mit INFO-Log). Modul:
+`src/harness-config-writer.ts` — ein Writer pro Mechanismus, getriggert
+idempotent aus `registerFull`.
+
+### 15.1 Surface + ADDITIV-GARANTIE (bindend)
+
+`plugins.entries['acp-dashboard-binding'].config.harnesses` — normalisiert
+je Harness:
+
+```jsonc
+"harnesses": {
+  "<harnessId>": {
+    "model": "...",          // Pflicht (non-empty)
+    "baseUrl": "...",        // OAI-kompatibel (Ollama/vLLM/LocalAI/llama.cpp)
+    "apiKey": "...",         // absent → Helper-Placeholder "ollama"
+    "thinking": "...",       // codex: model_reasoning_effort wenn non-empty
+    "smallModel": "...",     // opencode small_model / claude SMALL_FAST_MODEL
+    "trustProjects": ["/pfad"] // codex: [projects.".."] trust_level=trusted
+  }
+}
+```
+
+**ABSENCE = no-op**: Fehlt ein Harness in `harnesses` (oder die Section
+ganz / ist leer), schreibt das Plugin für ihn NICHTS — kein mkdir, kein
+Write, kein Log-Noise. Der bundled acpx-Default (eigene Auth/Config) greift
+unverändert: native Abos (Claude Pro, ChatGPT Plus, Copilot-OAuth) laufen
+exakt wie ohne das Plugin ("Vendor auth must already exist on the host").
+Das macht Ollama/vLLM/LocalAI/llama.cpp (OpenAI-kompatibel) konfigurierbar,
+ohne native Abos zu berühren. Katalog (22 ids, acp-agents quickstart+setup):
+`claude, codex, copilot, cursor, droid, fast-agent, gemini, grok-build,
+iflow, kilocode, kimi, kiro, mcode, mux, opencode, openclaw, pi, pool,
+qoder, qwen, trae, zeroclaw`.
+
+### 15.2 Drei Mechanismen
+
+| Mechanismus | Harnesses | Was der Writer tut |
+|---|---|---|
+| **A FILE** | `codex` | `auth.json` (OPENAI_API_KEY, 2-Indent-JSON) nach `<STATE>/acpx/codex-home/` — Helper-Semantik: install-if-missing, 0600, **NIE overwrite**; `/config/.codex/config.toml` (acpx-Inheritance-Quelle) generiert: `model`, `model_provider` (generiert `binding_<host>`, NICHT `ollama` — reserviert), `base_url = baseUrl+/v1` (kein Doppel-/v1), `wire_api="responses"`, `requires_openai_auth=true`, `sandbox_mode="workspace-write"`, `model_reasoning_effort` nur bei `thinking`, `[projects."…"] trust_level="trusted"` je trustProjects (dedupe+sort, keine Doppel-Header) — Helper-Semantik verbatim: install-if-missing / upgrade NUR wenn current KEINEN `[model_providers.`-Block trägt / customized **NIE** überschrieben (NOTE) |
+| **A FILE** | `opencode` | `opencode.jsonc` (provider-Block: npm `@ai-sdk/openai-compatible`, baseURL baseUrl+/v1, apiKey; `model` + `small_model` als `provider/model`) nach `opencode-home/` UND `/config/opencode/` (beide wie Helper, bytes-sync), legacy `config.toml`-Placeholder in opencode-home neutralisiert (comment-only) |
+| **B ENV** | `claude` | `harness-env/claude.env`: `ANTHROPIC_MODEL`/`ANTHROPIC_BASE_URL` (verbatim, KEIN /v1)/`ANTHROPIC_AUTH_TOKEN`/`ANTHROPIC_SMALL_FAST_MODEL` |
+| **B ENV** | `gemini` | `GEMINI_API_KEY`, `GEMINI_MODEL`, `GOOGLE_GEMINI_BASE_URL` |
+| **B ENV** | `droid` | `FACTORY_API_KEY` (kein Base-URL-Env → Warnung wenn baseUrl gesetzt) |
+| **B ENV** | `qwen` | `OPENAI_API_KEY`, `OPENAI_BASE_URL` (baseUrl+/v1), `OPENAI_MODEL` |
+| **B ENV** | `kimi` | `KIMI_MODEL_API_KEY`, `KIMI_MODEL_BASE_URL` (baseUrl+/v1), `KIMI_MODEL_NAME` — Kimi Code liest Provider-Credentials NICHT via Shell-Env; die `KIMI_MODEL_*`-Familie ist die einzige Shell-Surface (docs 2026-10-11) |
+| **B ENV** | `kiro` | `KIRO_API_KEY` (kein Base-URL-Env → Warnung wenn baseUrl gesetzt) |
+| **B ENV** | `iflow` | `IFLOW_API_KEY`, `IFLOW_BASE_URL` (baseUrl+/v1), `IFLOW_modelName` (camelCase-Konvention der iflow-docs) |
+| **C NONE** | `copilot`, `cursor` + alle übrigen/ungekatalogisierten ids | Skip — CLI-OAuth-owned, Plugin schreibt nichts; bewusst STUMM (kein Warn-Noise) |
+
+Alle ENV-Namen docs-verifiziert am 2026-10-11 (kimi.com kimi-code env-vars,
+kiro.dev authentication, iflow-ai settings.md, qwen-code OPENAI_*).
+`deriveProviderId(baseUrl)`: deterministisch aus dem Host
+(`http://localhost:11434` → `binding_localhost_11434`) — multi-Backend-safe,
+reine `[a-z0-9_]`-ids sind als TOML-Header unquoted safe.
+
+### 15.3 ENV-Verdrahtung (Command-Override, offizieller Mechanismus)
+
+Die env-Dateien werden NICHT ambient exportiert (Plugin kann die Gateway-proc
+ENV nicht ändern) — sie werden wrapperartig gesourcet vom acpx-Command-Override
+`plugins.entries.acpx.config.agents.<id>.command/args`:
+
+```jsonc
+"plugins.entries.acpx.config.agents.claude": {
+  "command": "/bin/sh",
+  "args": ["-c",
+    ". /config/.openclaw/acpx/harness-env/claude.env && exec claude ... <acp-adapter-args>"]
+}
+```
+
+`exec` ersetzt die Shell, das Adapter-Child erbt die gesetzten Vars. Der
+env-Datei-Header trägt einen Hinweis auf diese Verdrahtung + Generierung.
+Werte sind sh-safe quoted (single quotes, `'` als `'"'"'`). Dateien mit
+Tokens/Keys erhalten 0600.
+
+### 15.4 Trigger + Config-Change (ehrlich)
+
+Deploy am Plugin-Load (`registerFull`), idempotent:
+auth.json/config.toml install-if-missing bzw. upgrade-only-no-providers,
+jsonc/env bytes-sync. Einen verifizierten config-change-Hook am Host gibt es
+NICHT → **Harness-Config-Änderungen gelten beim nächsten Boot**. Deployment-
+Fehler sind fail-soft (error-Log, Plugin-Load unberührt). Pfadauflösung via
+`resolveOpenClawStateDir`-Ladder (Host: `/config/.openclaw` →
+`/config/.codex` + `/config/opencode` — exakt die Helper-Konstanten).
+
+### 15.5 Manifest
+
+`configSchema` um `harnesses` erweitert (Gate-4-Regel; `model` required,
+Objekt je Harness mit model/baseUrl/apiKey/thinking/smallModel/trustProjects).
+
+### 15.6 Tests (vitest, src/harness-config-writer.test.ts)
+
+codex fresh/upgraded(no-providers)/custom-preserved(NOTE)/auth-NIE-overwrite;
+thinking gesetzt/leer; trust dedupe+sort; opencode beide Dirs + sync-on-diff +
+legacy-neutralize + small_model; env je CLI (kimi KIMI_MODEL_*, kiro ohne
+Base-URL + Warnung, iflow camelCase), sh-safe quoting, 0600 auf Secret-Files;
+ABSENCE=no-op byte-hart (keine Dirs); copilot/cursor/kilocode → mechanism
+none ohne Files; vLLM/LocalAI baseUrl-Varianten ohne Doppel-/v1 (TOML+JSONC);
+codex/opencode ohne baseUrl → skip mit Warning, kein Write.
+
+### 15.7 Ehrliche Risiken
+
+1. **ENV-Writer braucht Wrapper-Verdrahtung (15.3)**: ohne den
+   acpx-Command-Override passiert mit den env-Dateien NICHTS — der Writer
+   allein macht qwen/kimi/… nicht backend-fähig. Der Override ist der
+   offizielle acpx-Mechanismus, aber die konkret nötigen Adapter-Args je CLI
+   sind Host-Konfiguration (User-Aufgabe), nicht Plugin-Aufgabe.
+2. **Config-Change ohne Live-Surface** (15.4) — gilt beim nächsten Boot.
+3. **Inheritance-Window bei model-Änderungen (codex)**: verbatim-Helper-
+   Semantik bedeutet, eine abweichende custom config.toml MIT
+   model_providers-Block wird NIE überschrieben — Modells/BaseUrl-Wechsel
+   über `harnesses.codex` erreichen solch eine Datei nicht; der NOTE-Log macht
+   es sichtbar. Frisch installs/upgrades (ohne Block) übernehmen die config.
+4. **auth.json-Ersatz nach OAuth-Migration**: install-if-missing heißt, eine
+   existierende auth.json (auch native ChatGPT-Stände) bleibt — wer auf API
+   Key wechseln will, trägt apiKey in der config UND löscht die alte
+   auth.json (oder löscht die harnesses.codex-Entry — dann greift nativ).
+5. env-Namen sind docs-Stand 2026-10-11 (kimi/kiro/iflow CLI-Entwicklung ist
+   schnelllebig; kiro hat bewusst KEIN Base-URL-Mapping).

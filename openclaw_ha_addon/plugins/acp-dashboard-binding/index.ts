@@ -37,6 +37,11 @@ import {
   type InboundClaimEventLike,
   type InboundClaimResultLike,
 } from "./src/reply-claim.js";
+import {
+  deployHarnessConfigs,
+  resolveHarnessWriterPaths,
+  type HarnessWriterLogger,
+} from "./src/harness-config-writer.js";
 
 const BRIDGE_LIFECYCLE_ID = "acp-dashboard-binding.dashboard-bridge";
 
@@ -222,6 +227,59 @@ function registerOriginWorkspaceReader(api: OpenClawPluginApi): void {
   setOriginWorkspaceReader(readOriginWorkspaceRow);
 }
 
+/**
+ * Phase 3 (generalisierte Harness-Config, GaRoN 10:37 / Owner-Design 10:37):
+ * deployt je nach Mechanismus die natives Harness-Config-Surface aus
+ * plugins.entries['acp-dashboard-binding'].config.harnesses (src/
+ * harness-config-writer.ts, BRIDGE.md §15). ADDITIV-GARANTIE: fehlt die
+ * Section bzw. ein Harness → NICHTS geschrieben, der bundled acpx-Default
+ * (eigene Vendor-Auth) greift unverändert (native Claude Pro / ChatGPT Plus /
+ * Copilot-OAuth laufen identisch zum Default).
+ *
+ * Trigger: Plugin-Load (registerFull) — alle Writer sind idempotent
+ * (install-if-missing bzw. bytes-sync, Helper-Semantik). Ein verifizierter
+ * config-change-Hook existiert nicht → Harness-Config-Änderungen gelten beim
+ * NÄCHSTEN BOOT (BRIDGE.md §15.4). Fail-soft: ein Deploy-Fehler darf das
+ * Plugin-Load niemals crashen (Warnung, binding bleibt unberührt).
+ */
+function registerHarnessConfigDeployment(api: OpenClawPluginApi): void {
+  try {
+    const harnesses = (api.config as { harnesses?: unknown } | undefined)?.harnesses;
+    if (harnesses === null || typeof harnesses !== "object" ||
+        Object.keys(harnesses as Record<string, unknown>).length === 0) {
+      // Absence = no-op (still — kein Log-Noise im Default-Fall).
+      return;
+    }
+    const paths = resolveHarnessWriterPaths();
+    if (paths === null) {
+      api.logger?.warn?.(
+        `[${CHANNEL_ID}] harness config deployment skipped: no OpenClaw state dir resolvable from env`,
+      );
+      return;
+    }
+    const logger: HarnessWriterLogger = {
+      debug: (message) => api.logger.debug?.(message),
+      info: (message) => api.logger.info(message),
+      warn: (message) => api.logger.warn(message),
+    };
+    const report = deployHarnessConfigs(api.config, paths, logger);
+    for (const result of report.results) {
+      for (const warning of result.warnings) {
+        api.logger?.warn?.(`[${CHANNEL_ID}] harness ${result.harnessId}: ${warning}`);
+      }
+    }
+    api.logger?.info?.(
+      `[${CHANNEL_ID}] harness config deployment: ${report.results
+        .map((r) => `${r.harnessId}=${r.mechanism}`)
+        .join(", ")} (harnesses config surface, BRIDGE.md §15)`,
+    );
+  } catch (error) {
+    api.logger?.error?.(
+      `[${CHANNEL_ID}] harness config deployment failed (fail-soft, binding unaffected) — ${errorBrief(error)}`,
+    );
+  }
+}
+
 /** Narrow plugin-api projection for the bridge (DashboardBridgeApiLike shape). */
 function dashboardBridgeApi(api: OpenClawPluginApi): DashboardBridgeApiLike {
   return {
@@ -265,6 +323,9 @@ export default defineChannelPluginEntry({
     registerOriginWorkspaceReader(api);
     registerDashboardBindingRuntime(api);
     registerHarnessReplyClaimHook(api);
+    // Phase 3: generalized harness config deployment (additive to acpx,
+    // idempotent, config changes apply on next boot — see BRIDGE.md §15).
+    registerHarnessConfigDeployment(api);
     // Phase 2.21: persistent per-agent harness sessions are provisioned by the
     // plugin itself (config option plugins.entries['acp-dashboard-binding']
     // .config.autoProvision, default true; harnessSessions = manual override).
