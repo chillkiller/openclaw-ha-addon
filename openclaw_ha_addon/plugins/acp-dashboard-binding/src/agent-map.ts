@@ -843,9 +843,19 @@ export function resolveOriginWorkspaceCwd(
  * conversationId under the webchat:default scope that names the persistent
  * per-agent harness session (`harness:<agentId>`). Deliberately NOT a real
  * dashboard conversation; only used to derive the stable session key.
+ *
+ * Phase 2.23 (key harmonization, GaRoN test 03:22): an optional cwdScope
+ * appends `:ws:<sha16(cwd)[0..12]>` — MUST stay bit-identical with the
+ * expression inside buildHarnessProvisionedSessionKey — so the host ensure
+ * contract mints the acp_sessions row on the SAME key the resolve answers.
+ * The legacy no-scope call keeps the pre-2.22 grammar untouched.
  */
-export function buildHarnessProvisionedConversationId(agentId: unknown): string {
-  return `harness:${sanitizeAgentId(agentId)}`;
+export function buildHarnessProvisionedConversationId(agentId: unknown, cwdScope?: string): string {
+  const base = `harness:${sanitizeAgentId(agentId)}`;
+  const scope = typeof cwdScope === "string" ? cwdScope.trim() : "";
+  return scope
+    ? `${base}:ws:${createHash("sha256").update(scope, "utf8").digest("hex").slice(0, 12)}`
+    : base;
 }
 
 /**
@@ -868,9 +878,7 @@ export function buildHarnessProvisionedSessionKey(
   cwdScope?: string,
 ): string {
   const scope = typeof cwdScope === "string" ? cwdScope.trim() : "";
-  const conversationId = scope
-    ? `${buildHarnessProvisionedConversationId(spec.agentId)}:ws:${createHash("sha256").update(scope, "utf8").digest("hex").slice(0, 12)}`
-    : buildHarnessProvisionedConversationId(spec.agentId);
+  const conversationId = buildHarnessProvisionedConversationId(spec.agentId, scope);
   return buildAcpBindingSessionKey({
     channel: BINDING_CHANNEL,
     accountId: BINDING_ACCOUNT_ID,

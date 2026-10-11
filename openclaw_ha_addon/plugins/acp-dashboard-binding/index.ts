@@ -20,6 +20,7 @@ import {
   setDashboardBindingProvisioner,
   setOriginWorkspaceReader,
   buildHarnessProvisionedConversationId,
+  isHarnessProvisionedSessionKey,
   type DashboardHarnessProvisioner,
 } from "./src/agent-map.js";
 import {
@@ -57,18 +58,50 @@ type AcpBindingRuntimeModule = {
   }) => Promise<{ ok: boolean; error?: string }>;
 };
 
-/** Maps a HarnessAgentSpec onto the host ensure contract's ConfiguredAcpBindingSpec. */
-function configuredBindingSpecFromHarnessSpec(spec: {
-  agentId: string;
-  harness?: string;
-  mode: string;
-  cwd?: string;
-  backend?: string;
-}): Record<string, unknown> {
+/**
+ * Maps a HarnessAgentSpec onto the host ensure contract's ConfiguredAcpBindingSpec.
+ *
+ * Phase 2.23: `targetSessionKey` (the cascade's cwd-scoped per-cwd key) is
+ * reverse-parsed back into the SAME conversationId the key was built from —
+ * `buildConfiguredAcpSessionKey(spec)` (dist persistent-bindings.lifecycle) is
+ * bit-for-bit `sha16("webchat:default:<conversationId>")` over the binding
+ * grammar, so carrying the scoped id here makes ensure-key ≡ resolve-key.
+ */
+function configuredBindingSpecFromHarnessSpec(
+  spec: {
+    agentId: string;
+    harness?: string;
+    mode: string;
+    cwd?: string;
+    backend?: string;
+  },
+  targetSessionKey?: string,
+): Record<string, unknown> {
+  const base = buildHarnessProvisionedConversationId(spec.agentId);
+  let conversationId = base;
+  if (typeof targetSessionKey === "string" && targetSessionKey.includes(":ws:")) {
+    // Only the cwd-scoped per-cwd keys carry the `:ws:` marker; the legacy
+    // per-agent key (no scope) keeps the plain conversation id.
+    const scopedTarget = isHarnessProvisionedSessionKey(spec.agentId, targetSessionKey, spec.cwd);
+    const legacyTarget = isHarnessProvisionedSessionKey(spec.agentId, targetSessionKey);
+    if (scopedTarget || !legacyTarget) {
+      const wsMarker = ":ws:";
+      const start = base.length + wsMarker.length;
+      const colonAt = targetSessionKey.indexOf(`:ws:`, base.length);
+      if (colonAt === base.length) {
+        const tail = targetSessionKey.slice(colonAt + wsMarker.length);
+        const end = tail.indexOf(":");
+        const scopeHash = end === -1 ? tail : tail.slice(0, end);
+        if (scopeHash && /^[0-9a-f]{12}$/.test(scopeHash)) {
+          conversationId = `${base}:ws:${scopeHash}`;
+        }
+      }
+    }
+  }
   return {
     channel: BINDING_CHANNEL,
     accountId: BINDING_ACCOUNT_ID,
-    conversationId: buildHarnessProvisionedConversationId(spec.agentId),
+    conversationId,
     agentId: spec.agentId,
     acpAgentId: spec.harness ?? spec.agentId,
     mode: spec.mode,
@@ -93,7 +126,14 @@ function configuredBindingSpecFromHarnessSpec(spec: {
  * priority) and is no longer required.
  */
 function registerHarnessAutoProvision(api: OpenClawPluginApi): void {
-  const provisioner: DashboardHarnessProvisioner = async (spec) => {
+  // Phase 2.23 (key harmonization, GaRoN test 03:22): the provisioner receives
+  // the TARGET session key from the cascade (agent-map:969) — the cwd-scoped
+  // conversationId of that key MUST also go into the host ensure spec, so
+  // `buildConfiguredAcpSessionKey(spec)` mints the acp_sessions row on the
+  // SAME key the resolve answers. Previously the target key was discarded and
+  // the legacy `harness:<agent>` id went into the spec — rows landed on
+  // `…:eb7bc…` while the UI routed to `…:ws:<hash>` (ACP_SESSION_INIT_FAILED).
+  const provisioner: DashboardHarnessProvisioner = async (spec, targetSessionKey) => {
     // Variable specifier: the module ships without .d.ts (excluded from the
     // npm package) — a non-literal import stays untyped and resolves at runtime.
     const sdk = (await import(ACP_BINDING_RUNTIME_SPECIFIER).catch(() => undefined)) as
@@ -105,7 +145,7 @@ function registerHarnessAutoProvision(api: OpenClawPluginApi): void {
     }
     const result = await ensure({
       cfg: api.config,
-      configuredBinding: { spec: configuredBindingSpecFromHarnessSpec(spec) },
+      configuredBinding: { spec: configuredBindingSpecFromHarnessSpec(spec, targetSessionKey) },
     });
     if (!result?.ok) {
       throw new Error(result?.error ?? "harness session provisioning failed");
