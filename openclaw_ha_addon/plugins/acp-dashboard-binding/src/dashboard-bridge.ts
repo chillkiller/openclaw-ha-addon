@@ -10,11 +10,17 @@ import {
   BINDING_ID_PREFIX,
   BINDING_MODE,
   CHANNEL_ID,
+  buildHarnessProvisionedConversationId,
+  buildHarnessProvisionedSessionKey,
+  buildPluginOwnedBindingMetadata,
+  getDashboardBindingProvisioner,
   isRosterEligibleAgentId,
+  resolveAutoProvisionEnabled,
   resolveBoundAgentAllowlist,
   resolveExcludedAgentIds,
   resolveHarnessAgentSpec,
   resolveHarnessSessionTargetKey,
+  resolveHarnessTargetOrigin,
 } from "./agent-map.js";
 
 // Bridge public surface keeps exporting the shared constants (tests/plugins
@@ -86,6 +92,30 @@ export interface HarnessRoster {
    * keeping bridge and binding-adapter on one target derivation.
    */
   harnessSessionTargetKey?(agentId: string): string | null;
+  /**
+   * Phase 2.21: the auto-provisioned per-agent persistent session key, or null
+   * when auto-provisioning is off/no provisioner is registered/the provisioned
+   * key would not apply. Optional so custom rosters opt in; the config-backed
+   * roster answers from the shared agent-map cascade (same kick + key the
+   * binding-adapter derive uses — one target per agent everywhere).
+   *
+   * Phase 2.22: LEGACY single-arg form — answers the per-agent key WITHOUT an
+   * origin-cwd scope (kept for existing call sites/tests). Prefer
+   * {@link harnessProvisionedTarget} which takes the origin conversation.
+   */
+  harnessProvisionedTargetKey?(agentId: string): string | null;
+  /**
+   * Phase 2.22: the provisioning leg WITH the origin conversation — resolves
+   * the origin-workspace cwd (agent-map ladder) through the SHARED target
+   * cascade, kicks the same deduped ensure, and reports both the cwd-scoped
+   * target key and the effective cwd (undefined = agent-default cwd applies).
+   * Null unless the cascade resolves to the PROVISIONED leg. Optional so
+   * custom rosters opt in.
+   */
+  harnessProvisionedTarget?(
+    agentId: string,
+    conversation: { channel: string; accountId: string; conversationId: string },
+  ): { targetKey: string; cwd?: string; cwdSource?: string } | null;
 }
 
 export interface DashboardConversationKey {
@@ -100,7 +130,17 @@ export interface DashboardBindingDecision {
   readonly dashboardKey: DashboardConversationKey;
   readonly bindingId: string;
   readonly targetSessionKey: string;
+  /** Phase 2.21: which cascade leg produced the target (informative + metadata). */
+  readonly targetOrigin: "configured" | "provisioned" | "synthetic";
   readonly defaults: HarnessAgentDefaults;
+  /**
+   * Phase 2.22: origin-derived cwd for the provisioned leg (undefined when the
+   * agent-default cwd applies) — stamped as metadata.cwd by the synthesis so
+   * bridge records match the binding-adapter derive record field for field.
+   */
+  readonly provisionedCwd?: string;
+  /** Phase 2.22: which origin-cwd ladder leg resolved (informative metadata). */
+  readonly provisionedCwdSource?: string;
 }
 
 const AGENT_ID_VALID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
@@ -196,6 +236,22 @@ export function isPluginOwnedBindingMetadata(metadata: Record<string, unknown> |
   );
 }
 
+/**
+ * Phase 2.20 (F4): adds the plugin-owned ownership fields (host
+ * `isPluginOwnedBindingMetadata` shape) to a record this plugin synthesized.
+ * Informative fields stay underneath; ownership is not overridable by them.
+ * Records without a registered plugin root stay WITHOUT ownership markers and
+ * keep the legacy retarget dispatch (safe degraded mode).
+ */
+export function withPluginOwnedMetadata(
+  metadata: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const merged: Record<string, unknown> = { ...metadata };
+  const pluginOwned = buildPluginOwnedBindingMetadata();
+  if (pluginOwned) Object.assign(merged, pluginOwned);
+  return merged;
+}
+
 type AgentConfigEntryLike = {
   runtime?: {
     type?: string;
@@ -255,6 +311,37 @@ export function createConfigHarnessRoster(config: unknown): HarnessRoster {
       if (!spec) return null;
       return resolveHarnessSessionTargetKey(config, spec);
     },
+    // Phase 2.21: the auto-provisioning leg of the shared target cascade —
+    // deterministically derived per-agent key; the ensure itself is fired
+    // (deduped) as a side effect, the answer does not wait for it.
+    // Phase 2.22: WITHOUT a conversation this is the legacy no-origin-cwd
+    // variant (per-agent key, agent-default cwd) — kept for compat callers.
+    harnessProvisionedTargetKey(agentId: string): string | null {
+      const spec = resolveHarnessAgentSpec(config, agentId);
+      if (!spec) return null;
+      if (!resolveAutoProvisionEnabled(config) || !getDashboardBindingProvisioner()) return null;
+      const resolved = resolveHarnessTargetOrigin(config, spec, {
+        channel: BINDING_CHANNEL,
+        accountId: BINDING_ACCOUNT_ID,
+        conversationId: buildHarnessProvisionedConversationId(agentId)
+      });
+      return resolved.origin === "provisioned" ? resolved.targetKey : null;
+    },
+    // Phase 2.22: the provisioned leg WITH origin-workspace resolution —
+    // one shared cascade call (same kick + key the binding-adapter derive
+    // uses), so adapter and bridge stay on one target per conversation.
+    harnessProvisionedTarget(agentId, conversation) {
+      const spec = resolveHarnessAgentSpec(config, agentId);
+      if (!spec) return null;
+      if (!resolveAutoProvisionEnabled(config) || !getDashboardBindingProvisioner()) return null;
+      const resolved = resolveHarnessTargetOrigin(config, spec, conversation);
+      if (resolved.origin !== "provisioned") return null;
+      return {
+        targetKey: resolved.targetKey,
+        ...(resolved.cwd ? { cwd: resolved.cwd } : {}),
+        ...(resolved.cwdSource ? { cwdSource: resolved.cwdSource } : {})
+      };
+    },
   };
 }
 
@@ -284,21 +371,57 @@ export function resolveDashboardBindingDecision(
     ...(ref.parentConversationId ? { parentConversationId: ref.parentConversationId.trim() } : {}),
   };
   const defaults = roster.acpDefaults(dashboardKey.agentId) ?? { mode: BINDING_MODE };
-  // Phase 2.18b (F3 Weg A): a validated harnessSessions entry REPLACES the
-  // synthetic ACP target with the real spawned session key; unset/invalid
-  // keeps the §1.4 synthetic derivation. The roster gate is upstream of this
-  // point and unchanged.
+  // Phase 2.18b (F3 Weg A) → Phase 2.21 target cascade: a validated
+  // harnessSessions entry REPLACES the synthetic ACP target with the real
+  // spawned session key; without one, an auto-provisioned per-agent session
+  // key takes over (fire-and-forget ensure in the roster above); the §1.4
+  // synthetic derivation stays the fallback (autoProvision:false / no
+  // provisioner). The roster gate is upstream of this point and unchanged.
   const configuredTargetKey = roster.harnessSessionTargetKey?.(dashboardKey.agentId) ?? null;
+  if (configuredTargetKey) {
+    return {
+      conversation,
+      dashboardKey,
+      bindingId: buildBindingId(conversation),
+      targetSessionKey: configuredTargetKey,
+      targetOrigin: "configured",
+      defaults,
+    };
+  }
+  // Phase 2.22: the provisioning consult carries the ORIGIN conversation so
+  // the origin-workspace cwd ladder applies; the single-arg legacy method
+  // stays supported for custom rosters (no cwd scope then).
+  const provisionedTarget: { targetKey: string; cwd?: string; cwdSource?: string } | null =
+    roster.harnessProvisionedTarget?.(dashboardKey.agentId, conversation) ??
+    (roster.harnessProvisionedTargetKey
+      ? (() => {
+          const key = roster.harnessProvisionedTargetKey(dashboardKey.agentId);
+          return key ? { targetKey: key } : null;
+        })()
+      : null);
+  if (provisionedTarget) {
+    return {
+      conversation,
+      dashboardKey,
+      bindingId: buildBindingId(conversation),
+      targetSessionKey: provisionedTarget.targetKey,
+      targetOrigin: "provisioned",
+      defaults,
+      ...(provisionedTarget.cwd ? { provisionedCwd: provisionedTarget.cwd } : {}),
+      ...(provisionedTarget.cwdSource ? { provisionedCwdSource: provisionedTarget.cwdSource } : {}),
+    };
+  }
   return {
     conversation,
     dashboardKey,
     bindingId: buildBindingId(conversation),
-    targetSessionKey: configuredTargetKey ?? buildDashboardAcpTargetSessionKey({
+    targetSessionKey: buildDashboardAcpTargetSessionKey({
       agentId: dashboardKey.agentId,
       channel: conversation.channel,
       accountId: conversation.accountId,
       conversationId,
     }),
+    targetOrigin: "synthetic",
     defaults,
   };
 }
@@ -324,8 +447,22 @@ export function synthesizeDashboardBindingRecord(
       // matches the bridge-synthesized one field for field where both are known.
       ...(decision.defaults.acpAgentId ? { acpAgentId: decision.defaults.acpAgentId } : {}),
       ...(decision.defaults.backend ? { backend: decision.defaults.backend } : {}),
-      ...(decision.defaults.cwd ? { cwd: decision.defaults.cwd } : {}),
+      // Phase 2.22: the origin-derived cwd (provisionedCwd) beats the config
+      // default (defaults.cwd) — metadata parity with the binding-adapter
+      // derive record (same field, same precedence).
+      ...(decision.provisionedCwd ?? decision.defaults.cwd
+        ? { cwd: decision.provisionedCwd ?? decision.defaults.cwd }
+        : {}),
+      ...(decision.provisionedCwdSource ? { originWorkspace: decision.provisionedCwdSource } : {}),
       ...(decision.defaults.label ? { label: decision.defaults.label } : {}),
+      // Phase 2.21: informative marker that the target is the auto-provisioned
+      // per-agent harness session (kept off configured/synthetic targets so
+      // records stay deterministic and legible).
+      ...(decision.targetOrigin === "provisioned" ? { provisioned: true } : {}),
+      // Phase 2.20 (F4): plugin-owned ownership markers — host dispatch stops
+      // retargeting such records and instead claims through our inbound_claim
+      // hook, whose reply reaches the dashboard conversation (see file head).
+      ...withPluginOwnedMetadata({}),
     },
   };
 }
@@ -615,6 +752,21 @@ class BridgeRowStore implements BridgeRowStoreLike {
       // Guards: in-memory rows already written (e.g. a bind during hydrate)
       // win, and a tombstone seen so far suppresses a stale persisted row.
       if (this.rows.has(bindingId) || this.tombstones.has(bindingId)) continue;
+      // Phase 2.20 (F4): rows persisted before the plugin-bound claim fix carry
+      // informative metadata only — upgrade OUR OWN rows (binding-id prefix +
+      // legacy source marker, and never a foreign plugin-owned record) so
+      // restarts do not flip those conversations back to the reply-loss
+      // retarget path. Fresh syntheses already carry the markers.
+      if (
+        bindingId.startsWith(BINDING_ID_PREFIX) &&
+        row.record.metadata?.source === "plugin" &&
+        !isPluginOwnedBindingMetadata(row.record.metadata)
+      ) {
+        this.rows.set(bindingId, {
+          record: { ...row.record, metadata: withPluginOwnedMetadata(row.record.metadata) },
+        });
+        continue;
+      }
       this.rows.set(bindingId, row);
     }
   }

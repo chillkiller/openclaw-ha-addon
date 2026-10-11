@@ -21,6 +21,19 @@
         "type": "object",
         "additionalProperties": { "type": "string" },
         "description": "Per-harness mapping to a real persistent ACP session key (created by /acp spawn). Dashboard conversations route to these instead of synthetic binding keys."
+      },
+      "harnessReplyWaitMs": {
+        "type": "number",
+        "description": "Clamped wait window (1000..900000, default 120000) for the harness turn reply in the inbound claim path."
+      },
+      "workspaces": {
+        "type": "object",
+        "additionalProperties": { "type": "string" },
+        "description": "Explicit cwd override map: keys are exact dashboard conversation ids (agent:<id>:dashboard:<uuid>) or project ids, values are absolute workspace paths. Wins over the origin derivation; below the harnessSessions override."
+      },
+      "deriveOriginWorkspace": {
+        "type": "boolean",
+        "description": "Default true: derive the origin conversation's workspace cwd from the host agent DB (read-only) and spawn/ensure the bound harness session in that cwd with a per-cwd-scoped session key. Set false to keep the agent-default cwd ladder only."
       }
     }
   },

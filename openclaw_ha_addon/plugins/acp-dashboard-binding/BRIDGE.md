@@ -460,6 +460,312 @@ harness-id gewinnt bei Kollision, agent id deckt Entries ohne `acp.agent` ab.
   werden ignoriert (Fallback synthetisch) statt die ganze Bindung abzulehnen.
 
 **Weg B — host-seitiger ensure-Pfad (Materialisierung der `acp_sessions`-Row host-seitig)**
-bleibt Upstream-Issue gegen OpenClaw (§7 unten: „Option A host-seitiger ensure" bzw.
-Turn-1-Fehler-UX). So lange gibt es für NICHT eingetragene Harnesses keinen Weg, eine
-synthetische binding-key-Session zu initialisieren.
+ist seit Phase 2.21 überflüssig geworden: der Plugin nutzt den offiziellen
+`ensureConfiguredAcpBindingReady`-Contract (plugin-sdk `acp-binding-runtime`) SELBST —
+siehe §11.1 (synthetische Keys bleiben unbeinitialisierbar, aber provisionierte Keys sind
+echt gespawned und ready).
+
+## 10. Reply-Delivery-Claim (Phase 2.20 F4 → Phase 3.1 Fix 2.0, Weg A: Agent-Spawn)
+
+**Problem (F4):** Webchat-UI-Delivery ist Transcript-Projektion auf die ORIGIN-Konversation
+(dispatch-from-config ~1926 scannt per runId-Match); retargetete Dispatches schreiben den Reply
+NUR ins TARGET-Transcript, und `resolveReplyRoutingDecision` (:2926) liefert webchat→webchat immer
+false → der Harness-Reply stirbt im Target. Der Host-eigene Pfad für plugin-owned Bindings claimt
+stattdessen den Turn: plugin-owned Records (`pluginBindingOwner:"plugin"` + pluginId + pluginRoot,
+gesetz seit Phase 2.20 in derive/synthesize/hydrate; adapter-bind bleibt marker-frei) →
+`resolveBoundAcpDispatchSessionKey` SKIP Retarget (:191) → `hookRunner.runInboundClaimForPluginOutcome`
+→ case `handled`: `persistPluginBindingUserTurn` + `deliverBindingPayload(reply,"terminal",owner)` →
+Mirror-Append (TARGET) + `broadcastChatTerminal` (LIVE ORIGIN).
+
+**Phase 2.20-Seam (verworfen):** der Claim-Handler startete den Turn via
+`api.runtime.gateway.request("sessions.send" → ack.runId → "agent.wait" → terminalReply)`.
+LIVE-BEFUND 12:09:58: `Gateway requests are only available to bundled or trusted official
+plugins. Plugin "acp-dashboard-binding"` — `dispatchTrustedPluginGatewayMethod`
+(server-plugins-CzOpf53P.mjs:369) verlangt `canTrustedOfficialPluginRequestScopes` (offizielle
+Katalog-Provenienz + Integrität; Source-Path-Plugin erreicht das NIE, kein Config-Flag).
+
+**Phase 3.1 Weg A (implementiert, src/reply-claim.ts):** Turn-Start über `api.runtime.subagent`:
+- `subagent.run({sessionKey: target, message})` dispatcht den `agent`-Gateway-Method **in-process**
+  (`dispatchGatewayMethodInProcess`, `agentRunTracking:"plugin_subagent"`, synthetischer
+  system-Operator-Client) — OHNE den trusted-official-Gate (Beleg:
+  `createGatewayPluginRuntimeBindings` binde `subagent` unangetastet neben `gateway`
+  (package-update-activation-recovery.mjs:1308663); `createGatewaySubagentRuntime.run` ruft
+  `dispatchGatewayMethodInProcess("agent", …)` direkt, server-plugins-CzOpf53P.mjs).
+  Doc: docs/plugins/sdk-runtime/background-work.md#api-runtime-subagent.
+- `subagent.waitForRun({runId, timeoutMs})` → kanonisches Wait-Result (`AgentWaitResult`,
+  run-wait.types.d.ts) mit `terminalReply {disposition:"visible", text}`; Status auch `pending`
+  (in-process, kein Client-Timeout-Grace nötig; Timeout cancelt NICHT den Run).
+- `api.runtime.hooks.dispatchHookAgentTurn` ist explizit trust-gated + `hook:`-key-gebunden —
+  NICHT verwendbar; subagent ist der Architektur-korrekte Agent-Spawn-Weg.
+- Delivery bleibt Claim-Result-basiert: `{handled:true, reply:{text}}` → Host `deliverBindingPayload`
+  (kein eigener Session-Write — alle Write-Seams ohne Gateway wären Trust-gesichert).
+- Fallback-Vertrag unverändert: `handled:false` NUR vor Turn-Start (run wirft/kein runId/keine
+  subagent-Surface/gateway unavailable → Host-Notice + Normal-Processing); NACH Turn-Start immer
+  `handled:true` (Wait-Failure-Notice bei waitForRun-Throw), sonst Doppel-Processing.
+- Option `harnessReplyWaitMs` (default 120s, clamp 1s–15min) bounds waitForRun.
+
+## 11. Phase 2.21 — Auto-Provisioning + Workspace-Konvention (GaRoN 11:59/12:30)
+
+### 11.1 Auto-Provisioning (harnessSessions wird optional)
+
+**RE-Befund (dist-verifiziert, 2026-10-10):** Es gibt einen un-gegateten OFFIZIELLEN
+Spawn-Contract in der Plugin-SDK: `openclaw/plugin-sdk/acp-binding-runtime` exportiert
+`ensureConfiguredAcpBindingReady` (dist/persistent-bindings.lifecycle-DU_YBswY.mjs:
+`ensureConfiguredAcpBindingSession`) → `acpManager.resolveSessionAsync` (Struktur-Check) →
+`acpManager.initializeSession` (manager-DsPnlciX.mjs:1041 `runManagerInitializeSession`) →
+`runtime.ensureSession` (ECHTER Backend-Spawn, cwd/model/thinking through runtimeOptions) →
+Session-Meta-Write (`writeSessionMeta`/`upsertAcpSessionMetaRow`, state "idle"). Danach
+antwortet `resolveStoredAcpSession` `kind:"ready"` — d. h. **die §9-Lücke
+(synthetische Keys können nie initialisiert werden) ist für keys, die der Plugin selbst
+via diesem Contract initialisiert, geschlossen.** Kein Trust-Gate auf diesem Weg (anders
+als `api.runtime.gateway.request`, siehe §10).
+
+**Implementierung:**
+- Neue Config-Option `plugins.entries['acp-dashboard-binding'].config.autoProvision`
+  (default **true**; nur explizites `false` deaktiviert). `harnessSessions` bleibt als
+  manueller Override und ist keine PFLICHT mehr.
+- **Target-Kaskade** (eine Herleitung, geteilt von Adapter-Derive UND Bridge-Decision —
+  `resolveHarnessTargetOrigin`/`HarnessRoster.harnessProvisionedTargetKey` in agent-map.ts):
+  1. `harnessSessions` (validiert, wie §9) → configured target.
+  2. Auto-Provision (autoProvision aktiv + Provisioner registriert) → deterministischer
+     Key pro Agent, Ensure fire-and-forget gekickt.
+  3. Synthetischer per-Conversation-Key (Pre-2.21-Fallback, §9-Lücke bleibt dokumentiert).
+- **Deterministischer Keys statt random Mint:** `agent:<agentId>:acp:binding:webchat:default:<sha16("webchat:default:harness:<agentId>")>`
+  (buildHarnessProvisionedSessionKey — exakt `buildConfiguredAcpSessionKey`-Grammatik,
+  conversationId ist das Pseudo-Ergebnis `harness:<agentId>`). Vorteile: Derive bleibt
+  synchron/deterministisch (Resolve→Touch→Re-Resolve-Stabilität, §4.2/§10-Vertrag bricht
+  nicht), Restart-regenerierbar, ein Key pro Agent.
+- **Dedupe/Lifecycle (agent-map):** Ensure-Dedupe pro Agent (in-flight Join), Spec-Signatur-
+  Cache nach Erfolg (gleiche spec → Skip), Spec-Änderung → Re-Ensure (ensure contract
+  selbst schließt/neuspawnt bei Struktur-Mismatch), Fehler → kein Cache, nächster Consult
+  retried. Provisioner-Registrierung: setDashboardBindingProvisioner (index.ts, registerFull),
+  Dispose cleared via eigenem RuntimeLifecycle (`acp-dashboard-binding.auto-provision`).
+- **Barrier:** resolved Records handen den Key IMMER sofort aus (fire-and-forget) — der
+  erste echte Dispatch wartet im Reply-Claim (src/reply-claim.ts) auf den in-flight Ensure
+  (`pendingDashboardHarnessProvisioning`), NUR für provisionierte Targets. Ein
+  fehlgeschlagener Ensure blockiert den Claim nicht: der Turn startet trotzdem und der
+  Host surfact die ACP-Init-Fehlermeldung als Reply (`handled:true`, sonst Doppel-Processing).
+- **Metadata-Parität:** provisionierte Records (Derive UND Bridge-Synthese) tragen
+  `metadata.provisioned: true` (informativ); configured/synthetisch nicht.
+
+### 11.2 Workspace-Konvention
+
+Persistente Harness-Workspaces leben auf der AGENT-KONVENTION:
+`/config/clawd/agents/<agentId>/` (codex, claude, opencode, …). `DEFAULT_CWD_PREFIX`
+(agent-map.ts) ist jetzt `/config/clawd/agents/`; das Plugin liest die eigentlichen
+Workspace-Pfade ohnehin aus `agents.entries` cfg (Präzedenz `runtime.acp.cwd` >
+`entry.cwd` > `entry.workspace` > Default-Prefix). Die `/share/temp/acpx-workspace/`-Welt
+ist ab jetzt NUR noch Pipeline-Run-Scratch (sessions_spawn mit cwd-Isolation je run).
+
+### 11.3 Alt-Last (Bereinigung = Trash-Go des Operators, der Plugin löscht NICHTS)
+
+Die Harness-Workspaces `/share/temp/acpx-workspace/{codex,claude}` tragen GaRoN-Test-
+Verunreinigungen (codex: `memory/2026-10-10-1101.md`, claude: `memory/dreaming/`) +
+geseedete Identitätsdateien (AGENTS/SOUL/IDENTITY/USER + avatars; BOOTSTRAP.md in opencode)
+aus dem alten Workflow. Der neue Workflow legt Identität+Workspace am
+`/config/clawd/agents/<id>/` an; die alten Dateien sind Alt-Last und können vom Operator
+separat bereinigt werden (der neue Workflow referenziert sie nicht mehr).
+
+## 12. Phase 3.5 — Transcript-Mirror-Fehlt (GaRoN 12:23 — Forensik + Fix, 2026-10-10)
+
+### 12.1 Befund
+
+Test 5 (Session cbaa0035 @ 12:23, live): der Turn WURDE sauber geroutet — der Target-Session
+26b6335a erhielt `human_direct_message` + `run_completed` ✓, `state_heads` aktualisiert ✓ —
+ABER GaRoN sah die Antwort in seinem UI-Chat (cbaa0035) nicht.
+
+### 12.2 Verifizierte Mirror-Mechanik (dist, 2026.9.9)
+
+- **Claim-Delivery-Kette:** `deliverBindingPayload(reply, "terminal", transcriptOwner)`
+  (dispatch-from-config-BG9rT_X3.mjs:3077-3094) baut
+  `sourceReplyTranscriptMirror: transcriptOwner` in das Reply-Payload; falls
+  `routeReplyOperationToOriginating` null liefert (webchat→webchat: `routeReplyRuntime`
+  :2967 ist für interne Webchat-Turns nie geladen) → `turnLedger`-Fallback → projektierter
+  Chat-Dispatcher → `finalizeChatSendDispatchedReplies`
+  (chat-send-handler-CxoF4cDR.mjs:2297): Assistant-Append an den MIRROR-OWNER (kind
+  "owner", `expectedSessionId` erfüllt) ODER Skip (kind "blocked", Recorder hat den
+  Turn bereits persistiert) + immer `broadcastChatTerminal({sessionKey: ORIGIN})` (:2491)
+  als LIVE-Delivery.
+- **Mirror-Owner ist IMMER das TARGET:** `persistPluginBindingUserTurn`
+  (dispatch-from-config:2603-2645, :2601) nimmt `pluginBindingSessionKey =
+  pluginOwnedBindingRecord.targetSessionKey` und persistiert den User-Turn (approved)
+  in die TARGET-Session — `resolveTranscriptMirrorOwner` (chat-send-handler:2266) löst
+  also auf `record.targetSessionKey` auf. Der ORIGIN-Transcript erhält in der
+  Claim-Pipeline NIE eine Assistant-Zeile — per Host-Code (empirisch bestätigt:
+  codex-DB Target-Window 8c5d21fa seq15 = Mirror-Append der Notice mit
+  `idem ph35-mirror-test-0001`; Origin-Window fd0f1d7d steht ohne Reply).
+- **Unsere Row kann daran nichts ändern** (alle drei Host-Design-Pfade void):
+  (a) `deliverBindingPayload` liest KEINE Binding-Row-Metadata für den Mirror
+  (Owner ist Recorder/host-hergeleitet);
+  (b) `session_upstream_links` ist eine EXTERNAL-Catalog-Watcher-Tabelle
+  (join mit session_watch_cursors nötig; dist-Datei ist reine Watcher-Verwaltung) —
+  KEIN Reply-Mirror-Mechanismus; live leer;
+  (c) direkte Origin-Transcript-Writes via `sessions.*`/Transcript-Append sind für
+  Source-Path-Plugins trust-gegatet (§10: `dispatchTrustedPluginGatewayMethod`).
+- **Alternativer Host-Modus (warum kein Patch):** die designed acpx-Thread-Lage
+  (🤖-Threads, z. B. 79ce1bb3→claude ad83e8ed) hat KEINEN Origin-Transcript-Window
+  überhaupt — das Control-UI liest die Historie aus der gebundenen TARGET-Session.
+  Plugin-owned Records sind aber vom Reply/Historie-Retarget-Pfad ausgeschlossen
+  (`isPluginOwnedSessionBindingRecord`, get-reply-eZY--4sq.mjs) — für einen
+  Origin-Chat, der die Target-Historie anzeigt, müsste das Record-Marker-Prädikat
+  des Hosts einen zweiten Ausschluss-Zweck bekommen bzw. das Control-UI müsste
+  gebundene Chats auf die Target-Session-Lese-Pfad legen. Beides ist Host-(Upstream-)Sache.
+
+### 12.3 Sichtbarkeit = Live-Broadcast + Target-Historie
+
+In der Phase-3.1-Architektur ist die Antwort in GaRoN's Chat daher BY HOST DESIGN
+LIVE-only sichtbar (`broadcastChatTerminal`, chat-send-handler:2414/:2491 — solange die
+UI-Verbindung steht). Vollständige Historie (User+Assistant) ist im TARGET/Harness-
+Session-Transcript persistiert (dorthin spiegelte der Host), nicht im Origin-Chat.
+Nach einem Reload der Origin-Chat-Ansicht fehlen die Antworten bis zum Upstream-Fix.
+Fix-Weg (Upstream-Issue, nicht Plugin): Origin-Transcript-Mirror für plugin-owned
+Bindings in `persistPluginBindingUserTurn`/`sourceReplyTranscriptMirror` ergänzen
+(Owner-Berechnung um `originSessionKey` erweitern) — dokumentiert als der gewählte
+"kein Host-Patch"-Pfad.
+
+### 12.4 MVP-Fix im Rahmen (Race-Hardening)
+
+Neuer Live-Bug aus Phase 3.5: `subagent.run` ackt den runId BEVOR der Gateway den Run
+registriert (audit `agent.run.started` ~200 ms nach dem Ack) — der sofortige
+`waitForRun` warf und degradierte zur "waiting failed"-Notice (traf BEIDE Live-Tests).
+`settleRunWait` (src/reply-claim.ts) retried jetzt schnelle Wait-Failures mit kurzem
+Backoff [100,250,500,750] ms (Optionen `waitRetryDelaysMs`/`waitRetryCallBudgetMs`
+für Tests); langsame Throws gehen direkt zur Notice (echter API-Fehler). 123 Tests,
+tsc 0; MVP==Repo==/config/.openclaw/plugins bit-identisch.
+
+## 13. Phase 2.22 — Origin-Workspace-cwd (GaRoN Phase B, 18:46 Befund → GO)
+
+### 13.1 Befund (GaRoN-UI-Test 18:46)
+
+Binding + Zustellung + Spiegelung funktionieren ALLE (human_direct_message →
+Harness-Antwort live + persistiert in der gebundenen ACP-Session). EINZIGER Defekt:
+die gebundene Harness-Session hatte cwd=`/share/temp/acp-rebuild` (Beweislauf-Debris
+über den `harnessSessions`-Override). Persistente ACP-Sessions behalten ihren
+SPAWN-cwd (`runtime.acp.cwd` wirkt nur beim ersten Spawn) — der Agent sah nur den
+temp-Ordner, nicht den Projekt-Ordner desselben Dashboard-Fensters.
+
+### 13.2 Kandidatenprüfung (dist + plugin-sdk verifiziert)
+
+- **(a) InboundClaimContextLike volles Shape** (`message-hook-mappers-1uJn41lN.mjs:
+  buildPluginInboundClaimContext:215-231`): der Host liefert channel/accountId/
+  conversationId/**sessionKey**/agentId/parentConversationId/senderId/messageId/
+  runId/callDepth + reply-/trace-Felder — **KEIN projectId, KEIN cwd**. Toter Endpunkt
+  für cwd (sessionKey haben wir ohnehin über die Binding-Ref).
+- **(b) message_received/before_dispatch-Hook-Kontexte** (dispatch-from-config
+  ~900-920, `toPluginMessageReceivedEvent`): sessionKey + metadata
+  (originatingChannel/surface/…), kein Projekt/cwd. Toter Endpunkt.
+- **(c) api.runtime als Read-Surface**: `runtime.state.openKeyedStore` ist
+  plugin-scoped (keine Host-Session-Nodes lesbar), `gateway` ist Trust-geklärt
+  (Phase 3.1, §10), `subagent` ist Turn-Delivery, kein Lesen. Kein officieller
+  session→project-Export im plugin-sdk (agent-workspace-runtime ist Memory-only).
+- **(d) Konfig-Mapping `plugins.entries[…].config.workspaces`**:
+  implemented (unten).
+- **(e) Ensure-Contract cwd-Parameter**: **JA** — und das ist der Schlüssel;
+  `ensureConfiguredAcpBindingReady({cfg, configuredBinding})`
+  (plugin-sdk `openclaw/plugin-sdk/acp-binding-runtime`, un-gegatet) liest im Core
+  (persistent-bindings.lifecycle-DU_YBswY.mjs) NUR `configuredBinding.spec` — der
+  Plugin übersetzt `spec.cwd` direkt in `acpManager.initializeSession` (cwd-Param)
+  und `sessionStructurallyMatchesConfiguredBinding` (:19-21) vergleicht Meta-cwd
+  gegen `spec.cwd` (Mismatch → Close+Reinit). Ein per-cwd-ge-scopeter Session-Key ist
+  frei wählbar: `buildConfiguredAcpSessionKey` hasht nur channel/accountId/
+  conversationId — pseudo conversationId `harness:<agentId>:ws:<sha16(cwd)12>`
+  kollidiert nicht (Präfix `harness:`, anders als echte Dashboard-uuids) und
+  erzeugt KEINE Host-Kollision (die acp_sessions-Zeile schreibt unser eigener
+  Ensure). Damit kann ein cwd-Wechsel NIE eine bestehende Session wegclonken.
+
+### 13.3 Verifizierter Datenpfad (live geprüft, 2026-10-10)
+
+1. Agent-DB `/config/.openclaw/agents/<agentId>/agent/openclaw-agent.sqlite`,
+   `session_nodes.session_key` = die Origin-Conversation-Key
+   (z. B. `agent:claude:dashboard:27eddc7c-…`) → `project_id` +
+   `entry_json` mit **`sessionRoot`** (verbatim Origin-cwd) und `projectId`.
+2. State-DB `/config/.openclaw/state/openclaw.sqlite`, `projects`:
+   `id` → `repo_root` (Fallback, wenn entry_json keinen sessionRoot trägt).
+Beide DBs sind node:sqlite/WAL — read-only Concurrent-Reader ist vom Host selbst
+unterstützte Semantik (LIVE mit node-26 `process.getBuiltinModule('node:sqlite')`
+gegen beide Dateien nachgewiesen; auch `state/openclaw.sqlite`).
+Plugin-lokale Helfer: `resolveOpenClawStateDir` (Env-Kette OPENCLAW_STATE_DIR >
+OPENCLAW_CONFIG_DIR > dirname(OPENCLAW_CONFIG_PATH) > XDG_CONFIG_HOME/.openclaw >
+HOME/.openclaw — im Add-on landen alle auf `/config/.openclaw`), `trimOriginConversationKey`
+(Thread-Suffix → Basis-Key), `parseOriginWorkspaceEntryJson`.
+
+### 13.4 Gewählter Weg (ohne Upstream-Änderung, openclaw.json-konfigurierbar)
+
+Sync-Reader-Seam (`setOriginWorkspaceReader`, agent-map.ts) + node:sqlite-
+Implementierung (src/origin-workspace.ts, wired in index.ts registerFull VOR
+Runtime/Bridge). **Sync**, weil Resolve/Ensure sync und deterministisch bleiben
+müssen (resolve → touch → re-resolve); Memoization macht das günstig und stabil:
+Treffer permanent gecached (sessionRoot eines Dashboard-Gesprächs ändert sich nicht
+unter dem Key), Misses mit 30-s-TTL (transiente DB-Fehler heilen turns später statt
+falschen cwd zu pinnen).
+
+**cwd-Ladder** (`resolveOriginWorkspaceCwd`, agent-map.ts) — UNTER dem unveränderten
+`harnessSessions`-Override und ÜBER dem Agent-Default (`runtime.acp.cwd` > `entry.cwd`
+> `entry.workspace` > `/config/clawd/agents/<id>`):
+
+1. `config.workspaces[<conversationId>]` (explizit, ohne DB-Zugriff)
+2. `config.workspaces[<projectId>]` (explizit, projectId via Reader)
+3. Origin-`sessionRoot` (verbatim cwd der ORIGIN-Session)
+4. Origin-`projects.repo_root`
+5. null → Agent-Default-Ladder unverändert.
+
+Nur absolute Pfade zählen; `deriveOriginWorkspace:false` schaltet die Beine 2-4 ab
+(config-only Modus). Reader wird NUR für bind-eligible Dashboard-Klassen-IDs
+angerufen — `harness:<id>`-pseudo-Keys und `agent:<id>:main`/acp-Klassen berühren
+die DBs nie.
+
+**Key-Scope** (`buildHarnessProvisionedSessionKey(spec, cwdScope?)`): mit Origin-cwd
+wird der pseudo conversationId `harness:<agentId>:ws:<sha16(cwd).slice(0,12)>` —
+**ein persistent Session pro Agent × cwd-Scope** (Sessions behalten Spawn-cwd;
+unterschiedliche Workspaces teilen sich eine Session sonst close/reopen-Krieg).
+Ohne Origin-Treffer exakt das 2.21-Verhalten (per-Agent-Key, Agent-Default-cwd).
+Ensure-Dedupe/Signature-Cache/Barrier sind jetzt per TARGET-KEY (nicht Agent-Id)
+— `pendingDashboardHarnessProvisioning(target)` nimmt den Session-Key (bzw. legacy
+Agent-Id). Reply-Claim-Barrier keyed auf `metadata.provisioned` + Target-Key.
+
+**Metadata-Parität**: beide Synthese-Pfade (Adapter-Derive + Bridge-Synthesis)
+stempeln `metadata.cwd` = effektiver cwd (Origin schlägt Config-Default) und
+`metadata.originWorkspace` = Ladder-Leg (provenienz für GaRoN-Forensik).
+
+**Manifest**: `workspaces` (map) + `deriveOriginWorkspace` (boolean) + `harnessReplyWaitMs`
+(bereits gelesen seit 3.1, jetzt erstmals deklariert) im configSchema
+(openclaw.plugin.json) — Reload-Deadlock-Regel beachtet.
+
+### 13.5 Ehrliche Risiken / fehlende Steine
+
+1. **Kein offizieller Read-Surface für session_nodes/projects** — der Reader liest
+   HOST-EIGENE sqlite-Dateien (read-only). Schema-Kopplung: `session_nodes`
+   (session_key, project_id, entry_json) + `projects` (id, repo_root) sind
+   Daten-Schema (stabler als dist-Modulhashes, aber NICHT vertraglich). Alle
+   Fehler fail-soft → Agent-Default-cwd. **Upstream-Fix-Kandidat**: SDK-Export
+   „lookup origin session workspace (conversationId → {projectId, cwd})" oder
+   projectId im BindingConversationRef (session-conversation-binding:31-35).
+   Danach kann der Reader durch ein einziges SDK-Call ersetzt werden.
+2. **Turn-1-Freeze**: die Bridge-Zeile (§4.2-Row) friert den ersten Record ein —
+   ein cwd-Änderungs-Ergebnis nach TTL-Retry ändert den Target NICHT für bereits
+   resolve-antwortende Konversationen (Rows bleiben). Deterministisch pro
+   Konversation, aber Operator muss Row-Invalidation (Tombstone) nutzen, wenn er
+   die cwd-Herleitung nach dem ersten Turn ändert.
+3. **harnessSessions-Override bleibt oberste Prio** (GaRoN-Regel) — der
+   live-stehende Override `claude → agent:claude:acp:0abbe325-…` (Beweislauf-Session,
+   cwd=/share/temp/acp-rebuild) übersteuert die Herleitung, SOLANGE er in der
+   Konfig steht. Deploy-Hinweis: Override entfernen oder durch den gewünschten
+   Key ersetzen — erst dann greift die Origin-Herleitung für claude.
+4. **node:sqlite Verfügbarkeit**: Host-Node ≥22.3 nötig (`process.getBuiltinModule`);
+   ohne → Reader null → Agent-Default-cwd (Log warn). Kein static Import im
+   Modul (keine Load-Abhängigkeit).
+5. Lesen der DBs erfolgt in-process im Gateway — ein sqlite-Lesefehler (z. B.
+   exotic Lock-Situation) kostet eine Miss-TTL-Phase mit falschem (Default-)cwds,
+   kein Crash; konkurrierende WAL-Writer blockieren Reader nicht.
+
+### 13.6 Tests
+
+149 Tests (war 123/127), tsc 0: channel.test (12 neue: Env-Kette, DB-Layout,
+entry_json-Parse, Thread-Trim, workspaces-Validierung, Flag, cwd-Scoped-Key,
+Memoization/TTL/Throw, Ladder-Präzedenz, Ensure-Spec-Override, Legacy-Fallback,
+Override/„synthetic“-Prezedenz, Metadata+Stabilität, Barrier per
+Target-Key), dashboard-bridge.test (4 neue: Provisioned-Roster-Shape + Legacy,
+§4.2-Parität mit Origin-cwd, harnessSessions-Prezedenz), reply-claim.test
+(Barrier am cwd-scoped Key), origin-workspace.test (3 Integrationstests gegen
+ECHTE sqlite-Dateien im tmp-Layout: sessionRoot/Thread-Fallback/Fail-soft,
+projects.repo_root-Fallback, End-to-End Resolve/Ensure mit Scope-Key).

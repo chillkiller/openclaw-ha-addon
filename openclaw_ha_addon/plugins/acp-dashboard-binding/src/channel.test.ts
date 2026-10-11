@@ -1,15 +1,36 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import {
   BINDING_CHANNEL,
   CHANNEL_ID,
   DEFAULT_CWD_PREFIX,
+  ORIGIN_WORKSPACE_MISS_TTL_MS,
   buildAcpBindingSessionKey,
+  buildHarnessProvisionedSessionKey,
+  buildOriginWorkspaceDatabasePaths,
+  ensureDashboardHarnessProvisioning,
+  isHarnessProvisionedSessionKey,
   parseAgentIdFromConversationId,
+  parseOriginWorkspaceEntryJson,
+  pendingDashboardHarnessProvisioning,
+  queryOriginWorkspace,
+  resetDashboardBindingProvisionerForTest,
+  resetOriginWorkspaceReaderForTest,
+  resolveAutoProvisionEnabled,
   resolveHarnessAgentSpec,
   resolveHarnessAgentSpecs,
-  resolveHarnessSessionTargetKey
+  isBindEligibleConversationId,
+  resolveHarnessSessionTargetKey,
+  resolveHarnessTargetOrigin,
+  resolveOpenClawStateDir,
+  resolveOriginWorkspaceCwd,
+  resolveOriginWorkspaceDerivationEnabled,
+  resolveWorkspaceOverrides,
+  setDashboardBindingProvisioner,
+  setOriginWorkspaceReader,
+  trimOriginConversationKey,
+  type DashboardHarnessProvisioner
 } from "./agent-map.js";
 import { createDashboardBindingAdapter } from "./binding-adapter.js";
 import {
@@ -54,6 +75,17 @@ function expectedHostHash(channel: string, accountId: string, conversationId: st
 }
 
 describe("agent-map roster", () => {
+  it("bind eligibility isBindEligibleConversationId", () => {
+    expect(isBindEligibleConversationId("agent:claude:dashboard:uuid")).toBe(true);
+    expect(isBindEligibleConversationId("agent:claude:dashboard:uuid:thread")).toBe(true);
+    expect(isBindEligibleConversationId("agent:claude:main")).toBe(false);
+    expect(isBindEligibleConversationId("agent:claude:acp:xyz")).toBe(false);
+    expect(isBindEligibleConversationId("telegram:claude:dashboard:uuid")).toBe(false);
+    expect(isBindEligibleConversationId("someOtherKey")).toBe(false);
+    expect(isBindEligibleConversationId("")).toBe(false);
+    expect(isBindEligibleConversationId(null)).toBe(false);
+  });
+
   it("recognizes codex/claude/opencode as harness agents", () => {
     expect(parseAgentIdFromConversationId(DASHBOARD_KEY)).toBe("codex");
     expect(parseAgentIdFromConversationId("agent:claude:dashboard:xyz")).toBe("claude");
@@ -275,6 +307,36 @@ describe("Phase 2.18b harnessSessions (F3 Weg A)", () => {
     expect(record?.metadata?.pluginBindingOwner).toBeUndefined();
   });
 
+  it("ignores agent:<harness>:main conversations", async () => {
+    const adapter = createDashboardBindingAdapter({ getConfig: () => HARNESS_CFG });
+    const record = await adapter.resolveByConversationAsync!({
+      channel: BINDING_CHANNEL,
+      accountId: "default",
+      conversationId: "agent:claude:main",
+    });
+    expect(record).toBeNull();
+  });
+
+  it("ignores acp-class conversation ids", async () => {
+    const adapter = createDashboardBindingAdapter({ getConfig: () => HARNESS_CFG });
+    const record = await adapter.resolveByConversationAsync!({
+      channel: BINDING_CHANNEL,
+      accountId: "default",
+      conversationId: "agent:claude:acp:xyz",
+    });
+    expect(record).toBeNull();
+  });
+
+  it("binds dashboard-class as before", async () => {
+    const adapter = createDashboardBindingAdapter({ getConfig: () => HARNESS_CFG });
+    const record = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
+    expect(record).not.toBeNull();
+    expect(record?.targetSessionKey).toBe(
+      buildAcpBindingSessionKey({ channel: "webchat", accountId: "default", conversationId: DASHBOARD_KEY, agentId: "codex" })
+    );
+    expect(record?.metadata?.agentId).toBe("codex");
+  });
+
   it("harnessSessions NICHT gesetzt: synthetisches Target wie bisher", async () => {
     const adapter = createDashboardBindingAdapter({ getConfig: () => HARNESS_CFG });
     const record = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
@@ -425,6 +487,436 @@ describe("Phase 2.19 Turn-1-Race (Bridge noch nicht aktiv)", () => {
 
   it("mit undefined-Config bleibt die Lücke null (Safe-Default unverändert)", async () => {
     expect(await createDashboardBindingAdapter({ getConfig: () => undefined }).resolveByConversationAsync!(DASHBOARD_REF)).toBeNull();
+  });
+});
+
+// --- Phase 2.21: Workspace-Konvention + Auto-Provisioning (GaRoN 11:59/12:30)
+describe("Phase 2.21: Workspace-Konvention + Auto-Provisioning", () => {
+  // Module-scoped provisioner state — never leak between suites/tests.
+  afterEach(() => {
+    resetDashboardBindingProvisionerForTest();
+  });
+
+  it("DEFAULT_CWD_PREFIX liegt auf der Agent-Konvention /config/clawd/agents/", () => {
+    expect(DEFAULT_CWD_PREFIX).toBe("/config/clawd/agents/");
+    const cfg = { agents: { entries: { codex: { runtime: { type: "acp" } } } } };
+    expect(resolveHarnessAgentSpec(cfg, "codex")?.cwd).toBe("/config/clawd/agents/codex");
+    // entry-cfg cwd winzt weiterhin (Plugin liest echte Pfade aus agents.entries).
+    expect(resolveHarnessAgentSpec(HARNESS_CFG, "claude")?.cwd).toBe("/share/temp/claude-ws");
+  });
+
+  it("autoProvision: default true; nur explizites boolean false deaktiviert", () => {
+    expect(resolveAutoProvisionEnabled(undefined)).toBe(true);
+    expect(resolveAutoProvisionEnabled({})).toBe(true);
+    for (const autoProvision of [true, "false", 0, null]) {
+      expect(resolveAutoProvisionEnabled({ plugins: { entries: { [CHANNEL_ID]: { config: { autoProvision } } } } })).toBe(true);
+    }
+    expect(resolveAutoProvisionEnabled({ plugins: { entries: { [CHANNEL_ID]: { config: { autoProvision: false } } } } })).toBe(false);
+  });
+
+  it("provisionierter Key ist deterministisch pro Agent und host-grammar-gültig", () => {
+    const key = buildHarnessProvisionedSessionKey({ agentId: "codex" });
+    const expected = buildAcpBindingSessionKey({
+      channel: "webchat",
+      accountId: "default",
+      conversationId: "harness:codex",
+      agentId: "codex"
+    });
+    expect(key).toBe(expected);
+    expect(key).toBe(`agent:codex:acp:binding:webchat:default:${expectedHostHash("webchat", "default", "harness:codex")}`);
+    expect(key.startsWith("agent:codex:acp:binding:webchat:default:")).toBe(true);
+    expect(isHarnessProvisionedSessionKey("codex", key)).toBe(true);
+    expect(isHarnessProvisionedSessionKey("codex", buildHarnessProvisionedSessionKey({ agentId: "claude" }))).toBe(false);
+    expect(buildHarnessProvisionedSessionKey({ agentId: "codex" })).toBe(key); // deterministisch
+  });
+
+  function provisionAdapter() {
+    return createDashboardBindingAdapter({ getConfig: () => HARNESS_CFG });
+  }
+
+  it("Target-Kaskade: harnessSessions > provisioniert > synthetisch", async () => {
+    // 1. Kein Provisioner registriert → synthetisch (Verhalten 2.18b unverändert).
+    const synth = await provisionAdapter().resolveByConversationAsync!(DASHBOARD_REF);
+    expect(synth?.targetSessionKey).toBe(
+      buildAcpBindingSessionKey({ channel: "webchat", accountId: "default", conversationId: DASHBOARD_KEY, agentId: "codex" })
+    );
+    expect(synth?.metadata?.provisioned).toBeUndefined();
+
+    // 2. Provisioner registriert, kein harnessSessions → provisionierter Key.
+    const kicks: Array<[string, string]> = [];
+    const provisioner: DashboardHarnessProvisioner = async (spec, targetSessionKey) => {
+      kicks.push([spec.agentId, targetSessionKey]);
+    };
+    setDashboardBindingProvisioner(provisioner);
+    const provisioned = await provisionAdapter().resolveByConversationAsync!(DASHBOARD_REF);
+    const provKey = buildHarnessProvisionedSessionKey({ agentId: "codex" });
+    expect(provisioned?.targetSessionKey).toBe(provKey);
+    expect(provisioned?.metadata?.provisioned).toBe(true);
+    // Dedupe: wiederholte Resolves starten keinen zweiten Ensure
+    // (Signature-Cache nach Erfolg bzw. In-flight-Join).
+    expect(await provisionAdapter().resolveByConversationAsync!(DASHBOARD_REF)).toEqual(provisioned);
+    expect(kicks).toHaveLength(1);
+
+    // 3. harnessSessions (manueller Override) gewinnt ÜBER den Provisioner.
+    const cfgConfigured = withHarnessSessions({ codex: REAL_CODEX_SESSION_KEY });
+    const configured = await createDashboardBindingAdapter({ getConfig: () => cfgConfigured })
+      .resolveByConversationAsync!(DASHBOARD_REF);
+    expect(configured?.targetSessionKey).toBe(REAL_CODEX_SESSION_KEY);
+    expect(configured?.metadata?.provisioned).toBeUndefined();
+
+    // 4. autoProvision:false → wieder synthetisch, kein Kick.
+    resetDashboardBindingProvisionerForTest();
+    setDashboardBindingProvisioner(provisioner);
+    const off = await createDashboardBindingAdapter({
+      getConfig: () => ({ ...HARNESS_CFG, plugins: { entries: { [CHANNEL_ID]: { config: { autoProvision: false } } } } })
+    }).resolveByConversationAsync!(DASHBOARD_REF);
+    expect(off?.targetSessionKey).toBe(synth?.targetSessionKey);
+    expect(off?.metadata?.provisioned).toBeUndefined();
+    expect(kicks).toHaveLength(1);
+  });
+
+  it("Ensure-Dedupe: Erfolg mit gleichem Spec wird übersprungen, Spec-Änderung re-ensured, Fehler retried", async () => {
+    const ensureCalls: string[] = [];
+    let fail = true;
+    setDashboardBindingProvisioner(async (spec) => {
+      ensureCalls.push(`${spec.agentId}:${spec.cwd ?? "-"}`);
+      await new Promise<void>((resolve) => setTimeout(resolve, 0)); // bleibt in-flight
+      if (fail) throw new Error("backend down");
+    });
+    const spec = resolveHarnessAgentSpec(HARNESS_CFG, "codex")!;
+    // Fehler: kein Signature-Cache → nächster Consult retried.
+    await (ensureDashboardHarnessProvisioning(HARNESS_CFG, spec) ?? Promise.resolve(false));
+    await (ensureDashboardHarnessProvisioning(HARNESS_CFG, spec) ?? Promise.resolve(false));
+    expect(ensureCalls).toHaveLength(2);
+
+    fail = false;
+    await (ensureDashboardHarnessProvisioning(HARNESS_CFG, spec) ?? Promise.resolve(false));
+    expect(ensureCalls).toHaveLength(3);
+    // Erfolg mit identischem Spec → Skip (null), KEIN vierter Ensure.
+    expect(ensureDashboardHarnessProvisioning(HARNESS_CFG, spec)).toBeNull();
+    // Anderer Spec (cwd) → Re-Ensure (In-flight-Schutz: pro Agent läuft max. EINS).
+    const changed = { ...spec, cwd: "/config/clawd/agents/codex" };
+    await (ensureDashboardHarnessProvisioning(HARNESS_CFG, changed) ?? Promise.resolve(false));
+    expect(ensureCalls).toHaveLength(4);
+    // In-flight wird gejoint, nicht verdoppelt.
+    const pending = ensureDashboardHarnessProvisioning(HARNESS_CFG, { ...spec, cwd: "/other/ws" });
+    expect(pending).not.toBeNull();
+    expect(ensureDashboardHarnessProvisioning(HARNESS_CFG, { ...spec, cwd: "/other/ws" })).toBe(pending);
+    expect(ensureCalls).toHaveLength(5);
+    await pending ?? 0;
+  });
+
+  it("pendingDashboardHarnessProvisioning zeigt den laufenden Ensure (Reply-Claim-Barrier-Seam)", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    setDashboardBindingProvisioner(async () => {
+      await gate;
+    });
+    const spec = resolveHarnessAgentSpec(HARNESS_CFG, "codex")!;
+    const run = ensureDashboardHarnessProvisioning(HARNESS_CFG, spec);
+    expect(pendingDashboardHarnessProvisioning("codex")).toBe(run);
+    expect(pendingDashboardHarnessProvisioning("claude")).toBeNull();
+    release();
+    await run;
+    expect(pendingDashboardHarnessProvisioning("codex")).toBeNull();
+  });
+});
+
+// --- Phase 2.22: origin-workspace cwd derivation (GaRoN Phase B, 18:46 GO) --
+describe("Phase 2.22: origin-workspace cwd derivation", () => {
+  const ORIGIN_CWD = "/share/projekte/github/openclaw-ha-addon";
+  const CONV = { channel: BINDING_CHANNEL, accountId: "default", conversationId: DASHBOARD_KEY } as const;
+
+  const withConfig = (pluginConfig: Record<string, unknown>): Record<string, unknown> => ({
+    ...HARNESS_CFG,
+    plugins: { entries: { [CHANNEL_ID]: { config: pluginConfig } } }
+  });
+  const withWorkspaces = (map: Record<string, string>) => withConfig({ workspaces: map });
+
+  afterEach(() => {
+    resetDashboardBindingProvisionerForTest();
+    resetOriginWorkspaceReaderForTest();
+  });
+
+  it("resolveOpenClawStateDir deckt die dokumentierte Env-Kette ab (State > ConfigDir > ConfigPath > XDG > HOME)", () => {
+    expect(resolveOpenClawStateDir({})).toBeNull();
+    expect(resolveOpenClawStateDir({ OPENCLAW_STATE_DIR: "/custom/state" })).toBe("/custom/state");
+    expect(resolveOpenClawStateDir({ OPENCLAW_CONFIG_DIR: "/config/.openclaw" })).toBe("/config/.openclaw");
+    expect(resolveOpenClawStateDir({ OPENCLAW_CONFIG_PATH: "/config/.openclaw/openclaw.json" })).toBe("/config/.openclaw");
+    expect(resolveOpenClawStateDir({ XDG_CONFIG_HOME: "/config" })).toBe("/config/.openclaw");
+    expect(resolveOpenClawStateDir({ HOME: "/config" })).toBe("/config/.openclaw");
+    // Präzedenz: der letzte gesetzte Arm der Kette gewinnt.
+    expect(
+      resolveOpenClawStateDir({ OPENCLAW_STATE_DIR: "/s", OPENCLAW_CONFIG_DIR: "/c", HOME: "/h" })
+    ).toBe("/s");
+    expect(
+      resolveOpenClawStateDir({ OPENCLAW_CONFIG_DIR: "/c", XDG_CONFIG_HOME: "/x", HOME: "/h" })
+    ).toBe("/c");
+    expect(
+      resolveOpenClawStateDir({ OPENCLAW_CONFIG_PATH: "/c/.openclaw/openclaw.json", XDG_CONFIG_HOME: "/x" })
+    ).toBe("/c/.openclaw");
+  });
+
+  it("buildOriginWorkspaceDatabasePaths spiegelt das verifizierte Host-DB-Layout", () => {
+    const paths = buildOriginWorkspaceDatabasePaths("/config/.openclaw", "claude");
+    expect(paths?.agentDb).toBe("/config/.openclaw/agents/claude/agent/openclaw-agent.sqlite");
+    expect(paths?.projectsDb).toBe("/config/.openclaw/state/openclaw.sqlite");
+    // Trailing slashes ohne Effekt; Agent-Id kanonisiert.
+    expect(buildOriginWorkspaceDatabasePaths("/config/.openclaw/", "Claude")?.agentDb)
+      .toBe("/config/.openclaw/agents/claude/agent/openclaw-agent.sqlite");
+    expect(buildOriginWorkspaceDatabasePaths("", "claude")).toBeNull();
+  });
+
+  it("parseOriginWorkspaceEntryJson liest sessionRoot/projectId, verwirft Müll", () => {
+    expect(parseOriginWorkspaceEntryJson('{"sessionRoot":"/ws/a","projectId":"p1"}'))
+      .toEqual({ sessionRoot: "/ws/a", projectId: "p1" });
+    expect(parseOriginWorkspaceEntryJson({ sessionRoot: " /ws/b ", projectId: " p2 " }))
+      .toEqual({ sessionRoot: "/ws/b", projectId: "p2" });
+    expect(parseOriginWorkspaceEntryJson("{}")).toBeNull();
+    expect(parseOriginWorkspaceEntryJson("not json")).toBeNull();
+    expect(parseOriginWorkspaceEntryJson(42)).toBeNull();
+    expect(parseOriginWorkspaceEntryJson(null)).toBeNull();
+    expect(parseOriginWorkspaceEntryJson({ sessionRoot: "  " })).toBeNull();
+  });
+
+  it("trimOriginConversationKey kürzt Thread-Segmente auf den Basis-Key", () => {
+    expect(trimOriginConversationKey("agent:c:dashboard:u:t")).toBe("agent:c:dashboard:u");
+    expect(trimOriginConversationKey("agent:c:dashboard:u")).toBe("agent:c:dashboard:u");
+    expect(trimOriginConversationKey("agent:c:dashboard:u:t:x")).toBe("agent:c:dashboard:u");
+    expect(trimOriginConversationKey("")).toBeNull();
+    expect(trimOriginConversationKey("no-spaces")).toBe("no-spaces");
+  });
+
+  it("resolveWorkspaceOverrides: absolute-Pfad-Map, ungültige Einträge ignoriert", () => {
+    expect(resolveWorkspaceOverrides(undefined)).toBeNull();
+    expect(resolveWorkspaceOverrides({})).toBeNull();
+    expect(resolveWorkspaceOverrides(withConfig({ workspaces: { x: "relative/path" } }))).toBeNull();
+    const ws = resolveWorkspaceOverrides(
+      withConfig({
+        workspaces: {
+          "openclaw-ha-addon": ORIGIN_CWD,
+          [DASHBOARD_KEY]: "/abs/per-conversation",
+          relative: "not/absolute",
+          empty: "",
+          bad: 42 as unknown as string
+        }
+      })
+    );
+    expect(ws).toEqual({
+      "openclaw-ha-addon": ORIGIN_CWD,
+      [DASHBOARD_KEY]: "/abs/per-conversation"
+    });
+  });
+
+  it("deriveOriginWorkspace: default true, nur boolean false deaktiviert", () => {
+    expect(resolveOriginWorkspaceDerivationEnabled(undefined)).toBe(true);
+    expect(resolveOriginWorkspaceDerivationEnabled(withConfig({}))).toBe(true);
+    for (const flag of [true, "false", 0, null]) {
+      expect(resolveOriginWorkspaceDerivationEnabled(withConfig({ deriveOriginWorkspace: flag }))).toBe(true);
+    }
+    expect(resolveOriginWorkspaceDerivationEnabled(withConfig({ deriveOriginWorkspace: false }))).toBe(false);
+  });
+
+  it("buildHarnessProvisionedSessionKey: cwd-Scope determinisiert pro Workspace", () => {
+    const legacy = buildHarnessProvisionedSessionKey({ agentId: "codex" });
+    const scoped = buildHarnessProvisionedSessionKey({ agentId: "codex" }, ORIGIN_CWD);
+    expect(scoped).not.toBe(legacy);
+    expect(scoped.startsWith("agent:codex:acp:binding:webchat:default:")).toBe(true);
+    expect(buildHarnessProvisionedSessionKey({ agentId: "codex" }, ORIGIN_CWD)).toBe(scoped);
+    const pseudoId = `harness:codex:ws:${createHash("sha256").update(ORIGIN_CWD, "utf8").digest("hex").slice(0, 12)}`;
+    expect(scoped).toBe(buildAcpBindingSessionKey({
+      channel: "webchat", accountId: "default", conversationId: pseudoId, agentId: "codex"
+    }));
+    // Anderer Workspace → anderer Key (Sessions können pro cwd nicht kollidieren).
+    expect(buildHarnessProvisionedSessionKey({ agentId: "codex" }, "/other/ws")).not.toBe(scoped);
+    // Gleicher Workspace für anderen Agent → getrennter Agent-Teil.
+    expect(buildHarnessProvisionedSessionKey({ agentId: "claude" }, ORIGIN_CWD)
+      .startsWith("agent:claude:acp:binding:webchat:default:")).toBe(true);
+    expect(buildHarnessProvisionedSessionKey({ agentId: "claude" }, ORIGIN_CWD)).not.toBe(scoped);
+  });
+
+  it("queryOriginWorkspace: Hit dauerhaft gememoized, Miss mit TTL-Retry, Reader-Throw = Miss", () => {
+    let calls = 0;
+    setOriginWorkspaceReader(() => {
+      calls += 1;
+      return { projectId: "p1", sessionRoot: "/ws/a" };
+    });
+    expect(queryOriginWorkspace("codex", DASHBOARD_KEY)).toEqual({ projectId: "p1", sessionRoot: "/ws/a" });
+    expect(queryOriginWorkspace("codex", DASHBOARD_KEY)).toEqual({ projectId: "p1", sessionRoot: "/ws/a" });
+    expect(calls).toBe(1); // Permanent-Cache für Treffer
+
+    setOriginWorkspaceReader(() => {
+      calls += 1;
+      return null;
+    });
+    const realNow = Date.now;
+    let shift = 0;
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => realNow() + shift);
+    try {
+      expect(queryOriginWorkspace("codex", DASHBOARD_KEY)).toBeNull();
+      expect(queryOriginWorkspace("codex", DASHBOARD_KEY)).toBeNull();
+      expect(calls).toBe(2); // Miss innerhalb der TTL nicht wiederholt
+      shift += ORIGIN_WORKSPACE_MISS_TTL_MS + 1;
+      expect(queryOriginWorkspace("codex", DASHBOARD_KEY)).toBeNull();
+      expect(calls).toBe(3); // nach TTL retried
+    } finally {
+      nowSpy.mockRestore();
+    }
+
+    setOriginWorkspaceReader(() => {
+      calls += 1;
+      throw new Error("db locked");
+    });
+    expect(queryOriginWorkspace("codex", DASHBOARD_KEY)).toBeNull(); // Throw wird gefangen
+    expect(queryOriginWorkspace("codex", "")).toBeNull(); // leere Conversation → null ohne Reader-Call
+    expect(calls).toBe(4);
+  });
+
+  it("resolveOriginWorkspaceCwd: Ladder config-conversation > config-project > sessionRoot > repoRoot", () => {
+    const spec = { agentId: "codex" } as const;
+
+    // 3./4. Derivation-Beine: sessionRoot verbatim vor repo_root.
+    setOriginWorkspaceReader(() => ({ projectId: "p1", repoRoot: "/repo/root", sessionRoot: "/ws/a" }));
+    expect(resolveOriginWorkspaceCwd(undefined, spec, CONV))
+      .toEqual({ cwd: "/ws/a", source: "origin-session-root", projectId: "p1" });
+    setOriginWorkspaceReader(() => ({ projectId: "p1", repoRoot: "/repo/root" }));
+    expect(resolveOriginWorkspaceCwd(undefined, spec, CONV))
+      .toEqual({ cwd: "/repo/root", source: "origin-project-db", projectId: "p1" });
+    // Keine absoluten Pfade im Reader → Fallback null.
+    setOriginWorkspaceReader(() => ({ projectId: "p1", sessionRoot: "relative/ws" }));
+    expect(resolveOriginWorkspaceCwd(undefined, spec, CONV)).toBeNull();
+    setOriginWorkspaceReader(() => null);
+    expect(resolveOriginWorkspaceCwd(undefined, spec, CONV)).toBeNull();
+
+    // 2. config-project schlägt sessionRoot.
+    setOriginWorkspaceReader(() => ({ projectId: "p1", sessionRoot: "/ws/a" }));
+    expect(resolveOriginWorkspaceCwd(withWorkspaces({ p1: "/cfg/project" }), spec, CONV))
+      .toEqual({ cwd: "/cfg/project", source: "config-project", projectId: "p1" });
+
+    // 1. config-conversation schlägt config-project.
+    expect(resolveOriginWorkspaceCwd(withWorkspaces({ p1: "/cfg/project", [DASHBOARD_KEY]: "/cfg/conv" }), spec, CONV))
+      .toEqual({ cwd: "/cfg/conv", source: "config-conversation" });
+
+    // deriveOriginWorkspace:false → Reader-Beine tot, config-conversation lebt weiter.
+    setOriginWorkspaceReader(() => {
+      throw new Error("must not be called");
+    });
+    expect(
+      resolveOriginWorkspaceCwd(
+        withConfig({ deriveOriginWorkspace: false, workspaces: { [DASHBOARD_KEY]: "/cfg/conv" } }),
+        spec,
+        CONV
+      )
+    ).toEqual({ cwd: "/cfg/conv", source: "config-conversation" });
+    expect(resolveOriginWorkspaceCwd(withConfig({ deriveOriginWorkspace: false }), spec, CONV)).toBeNull();
+  });
+
+  it("resolveHarnessTargetOrigin: Origin-cwd → cwd-scoped Key + Ensure-Spec-cwd-Override", () => {
+    const kicks: Array<{ agentId: string; targetSessionKey: string; cwd?: string }> = [];
+    setDashboardBindingProvisioner(async (spec, targetSessionKey) => {
+      kicks.push({ agentId: spec.agentId, targetSessionKey, cwd: spec.cwd });
+    });
+    setOriginWorkspaceReader(() => ({ projectId: "openclaw-ha-addon", sessionRoot: ORIGIN_CWD }));
+
+    const spec = resolveHarnessAgentSpec(HARNESS_CFG, "codex")!;
+    const resolved = resolveHarnessTargetOrigin(HARNESS_CFG, spec, CONV);
+    // Origin-Workspace gefunden: cwd im Ergebnis, cwd-scoped Key, Ensure-Spec trägt den Origin-cwd.
+    expect(resolved.origin).toBe("provisioned");
+    expect(resolved.cwd).toBe(ORIGIN_CWD);
+    expect(resolved.cwdSource).toBe("origin-session-root");
+    expect(resolved.targetKey).toBe(buildHarnessProvisionedSessionKey({ agentId: "codex" }, ORIGIN_CWD));
+    expect(kicks).toHaveLength(1);
+    expect(kicks[0].cwd).toBe(ORIGIN_CWD);
+    expect(kicks[0].targetSessionKey).toBe(resolved.targetKey);
+    // Der Agent-config cwd wird NICHT mehr als Spawn-cwd benutzt:
+    expect(kicks[0].cwd).not.toBe(spec.cwd);
+
+    // Stabilität: gleicher Consult (memoized + Signature-Skip) → identisch, kein zweiter Kick.
+    expect(resolveHarnessTargetOrigin(HARNESS_CFG, spec, CONV)).toEqual(resolved);
+    expect(kicks).toHaveLength(1);
+  });
+
+  it("resolveHarnessTargetOrigin: ohne Origin-Treffer Legacy-Verhalten unverändert (per-Agent Key, Config-cwd)", () => {
+    const kicks: Array<{ cwd?: string; targetSessionKey: string }> = [];
+    setDashboardBindingProvisioner(async (spec, targetSessionKey) => {
+      kicks.push({ cwd: spec.cwd, targetSessionKey });
+    });
+    setOriginWorkspaceReader(() => null);
+    const spec = resolveHarnessAgentSpec(HARNESS_CFG, "codex")!;
+    const resolved = resolveHarnessTargetOrigin(HARNESS_CFG, spec, CONV);
+    expect(resolved).toEqual({
+      targetKey: buildHarnessProvisionedSessionKey({ agentId: "codex" }),
+      origin: "provisioned"
+    });
+    expect(kicks).toHaveLength(1);
+    expect(kicks[0].cwd).toBe("/share/temp/acpx-workspace/codex"); // Agent-config cwd bleibt
+  });
+
+  it("resolveHarnessTargetOrigin: harnessSessions-Override bleibt oberste Prio, autoProvision:false → synthetisch", () => {
+    const kicks: unknown[] = [];
+    setDashboardBindingProvisioner(async () => {
+      kicks.push("ensure");
+    });
+    setOriginWorkspaceReader(() => ({ projectId: "openclaw-ha-addon", sessionRoot: ORIGIN_CWD }));
+    const spec = resolveHarnessAgentSpec(HARNESS_CFG, "codex")!;
+
+    // Override gewinnt — kein Ensure-Kick, kein Origin-cwd.
+    const configured = resolveHarnessTargetOrigin(withHarnessSessions({ codex: REAL_CODEX_SESSION_KEY }), spec, CONV);
+    expect(configured).toEqual({ targetKey: REAL_CODEX_SESSION_KEY, origin: "configured" });
+    expect(kicks).toHaveLength(0);
+
+    // autoProvision:false → synthetisch (per Conversation), kein Kick.
+    const off = resolveHarnessTargetOrigin(
+      { ...HARNESS_CFG, plugins: { entries: { [CHANNEL_ID]: { config: { autoProvision: false } } } } },
+      spec,
+      CONV
+    );
+    expect(off.origin).toBe("synthetic");
+    expect(off.targetKey).toBe(
+      buildAcpBindingSessionKey({ channel: "webchat", accountId: "default", conversationId: DASHBOARD_KEY, agentId: "codex" })
+    );
+    expect(kicks).toHaveLength(0);
+  });
+
+  it("Adapter-Derive trägt origin-cwd-Metadaten + bleibt resolve→resolve-stabil", async () => {
+    setDashboardBindingProvisioner(async () => {});
+    setOriginWorkspaceReader(() => ({ projectId: "openclaw-ha-addon", sessionRoot: ORIGIN_CWD }));
+    const adapter = createDashboardBindingAdapter({ getConfig: () => HARNESS_CFG });
+    const rec1 = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
+    expect(rec1?.metadata?.provisioned).toBe(true);
+    expect(rec1?.metadata?.cwd).toBe(ORIGIN_CWD);
+    expect(rec1?.metadata?.originWorkspace).toBe("origin-session-root");
+    expect(rec1?.targetSessionKey).toBe(buildHarnessProvisionedSessionKey({ agentId: "codex" }, ORIGIN_CWD));
+    const rec2 = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
+    expect(rec2).toEqual(rec1); // Host-Stabilitätsvertrag (resolve → touch → re-resolve)
+
+    // Ohne Origin-Treffer: Metadaten zurück auf Agent-config cwd, kein originWorkspace-Marker.
+    resetOriginWorkspaceReaderForTest();
+    const legacy = await createDashboardBindingAdapter({ getConfig: () => HARNESS_CFG })
+      .resolveByConversationAsync!(DASHBOARD_REF);
+    expect(legacy?.metadata?.cwd).toBe("/share/temp/acpx-workspace/codex");
+    expect(legacy?.metadata?.originWorkspace).toBeUndefined();
+  });
+
+  it("pendingDashboardHarnessProvisioning: Barrier-Seam per cwd-scoped target key (Legacy-Agent-Id kompatibel)", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    setDashboardBindingProvisioner(async () => { await gate; });
+    const spec = resolveHarnessAgentSpec(HARNESS_CFG, "codex")!;
+    const scopedRun = ensureDashboardHarnessProvisioning(HARNESS_CFG, spec, ORIGIN_CWD);
+    expect(scopedRun).not.toBeNull();
+    const scopedKey = buildHarnessProvisionedSessionKey({ agentId: "codex" }, ORIGIN_CWD);
+    expect(pendingDashboardHarnessProvisioning(scopedKey)).toBe(scopedRun);
+    // Legacy-Agent-Id zeigt NUR auf den per-Agent-Legacy-Key — nicht auf den Scoped-Run.
+    expect(pendingDashboardHarnessProvisioning("codex")).toBeNull();
+    release();
+    await scopedRun;
+    expect(pendingDashboardHarnessProvisioning(scopedKey)).toBeNull();
+
+    // Legacy-Form bleibt kompatibel (Agent-Id → per-Agent-Key).
+    const legacyRun = ensureDashboardHarnessProvisioning(HARNESS_CFG, { ...spec, cwd: "/other/ws-legacy" });
+    expect(pendingDashboardHarnessProvisioning("codex")).toBe(legacyRun);
+    await legacyRun;
   });
 });
 

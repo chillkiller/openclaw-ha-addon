@@ -43,8 +43,18 @@ export function isOrchestratorAgentId(agentId: unknown): boolean {
 /** Default binding mode when the agent entry does not configure one. */
 export const BINDING_MODE = "persistent";
 
-/** Workspace root for the auto-detected ACP cwd fallback. */
-export const DEFAULT_CWD_PREFIX = "/share/temp/acpx-workspace/";
+/**
+ * Workspace root for the auto-detected ACP cwd fallback (Phase 2.21 workspace
+ * convention): persistent harness workspaces live on the agent convention
+ * `/config/clawd/agents/<agentId>/` — NOT the `/share/temp/acpx-workspace/`
+ * scratch world (which is reserved for pipeline-run scratch sessions only and
+ * holds legacy GaRoN-turn debris; its files are operator-cleanup territory,
+ * the plugin never read-writes them as a workspace root anymore). Real
+ * workspace paths come from `agents.entries` cfg anyway (cwd precedence in
+ * specFromEntry); this prefix is only the fallback when an entry carries no
+ * cwd/workspace at all.
+ */
+export const DEFAULT_CWD_PREFIX = "/config/clawd/agents/";
 
 /** Plugin id (package + manifest + channel plugin object). */
 export const CHANNEL_ID = "acp-dashboard-binding";
@@ -67,6 +77,66 @@ export const BINDING_ID_PREFIX = "plugin-binding:";
 
 /** Label stored in binding record metadata; never use the reserved source "config". */
 export const BINDING_SOURCE_LABEL = "plugin:acp-dashboard-binding";
+
+/**
+ * Phase 2.20 (F4 reply-delivery gap): plugin-owned binding ownership markers
+ * matching the host predicate `isPluginOwnedBindingMetadata`
+ * (dist/conversation-binding-metadata-CFOhDjMh.mjs): metadata is plugin-owned
+ * iff `pluginBindingOwner === "plugin" && typeof pluginId === "string" &&
+ * typeof pluginRoot === "string"`. Records carrying this metadata dispatch
+ * through the host's plugin-bound claim path — the dispatch stays in the ORIGIN
+ * webchat conversation (no retarget, dispatch-from-config:191), the host calls
+ * our `inbound_claim` hook, and a `{handled: true, reply}` result is delivered
+ * back into the dashboard conversation by the host itself
+ * (dispatch-from-config ~3493-3530 → deliverBindingPayload → chat-send
+ * finalization + live broadcast).
+ */
+export const PLUGIN_BINDING_OWNER = "plugin";
+
+/** Human plugin name stored in binding metadata (info field of the host's own buildBindingMetadata). */
+export const PLUGIN_NAME = "ACP Dashboard Binding";
+
+/**
+ * Plugin root (package dir) used in binding metadata. A string with `typeof
+ * === "string"` is REQUIRED by the host predicate — resolve once at plugin
+ * registration from `api.rootDir` (OpenClawPluginApi.rootDir, the record's
+ * rootDir). Registered in index.ts before any binding is synthesized.
+ */
+let pluginRootValue: string | undefined;
+
+/** Registers the plugin root used for plugin-owned binding metadata (idempotent; first call wins). */
+export function setDashboardBindingPluginRoot(value: unknown): void {
+  if (pluginRootValue !== undefined) return;
+  const trimmed = typeof value === "string" ? value.trim() : "";
+  if (trimmed) pluginRootValue = trimmed;
+}
+
+/** The registered plugin root, or null while unset (records stay non-plugin-owned). */
+export function getDashboardBindingPluginRoot(): string | null {
+  return pluginRootValue ?? null;
+}
+
+/** Test reset for the module-scoped plugin root (vitest module isolation). */
+export function resetDashboardBindingPluginRootForTest(): void {
+  pluginRootValue = undefined;
+}
+
+/**
+ * Metadata fragment marking a binding record as plugin-owned. Returns only the
+ * ownership fields; callers merge their informative fields underneath. Returns
+ * null while no plugin root is registered — callers then emit records WITHOUT
+ * ownership metadata (legacy dispatch behavior).
+ */
+export function buildPluginOwnedBindingMetadata(): Record<string, unknown> | null {
+  const pluginRoot = getDashboardBindingPluginRoot();
+  if (!pluginRoot) return null;
+  return {
+    pluginName: PLUGIN_NAME,
+    pluginBindingOwner: PLUGIN_BINDING_OWNER,
+    pluginId: CHANNEL_ID,
+    pluginRoot
+  };
+}
 
 /** Canonical agent-id shape (mirrors host normalizeAgentId input validation). */
 const VALID_AGENT_ID_RE = /^[a-z0-9][a-z0-9_-]{0,63}$/i;
@@ -121,6 +191,37 @@ export function parseAgentIdFromConversationId(conversationId: unknown): string 
   return null;
 }
 
+
+/**
+ * GaRoN design gate: only real dashboard-class conversations are eligible
+ * for binding/linking. Writing into the MAIN session of a harness agent
+ * (agent:<id>:main), an acp-class key, telegram-class key, etc. must always
+ * dispatch through the untouched built-in path and synthesize a NEW builtin
+ * session — never bind. Eligible are either:
+ *
+ *   (a) a real dashboard conversation id: `agent:<id>:dashboard:<uuid>`
+ *       (or with extra trailing thread segments) where the kind segment is
+ *       literally "dashboard" and at least one token follows; or
+ *   (b) an explicit binding record (handled by the findExplicit path before
+ *       this gate is consulted, so this predicate covers the derive path).
+ *
+ * This function is intentionally defensive (accepts `unknown`) and is reused
+ * by both `binding-adapter.ts` and `dashboard-bridge.ts`.
+ */
+export function isBindEligibleConversationId(conversationId: unknown): boolean {
+  if (typeof conversationId !== "string") return false;
+  const raw = conversationId.trim();
+  if (!raw) return false;
+  const parts = raw.split(":");
+  if (parts.length < 4) return false;
+  const namespace = parts[0] ?? "";
+  const kindSegment = parts[2] ?? "";
+  const restParts = parts.slice(3);
+  if (namespace.toLowerCase() !== "agent") return false;
+  if (kindSegment.toLowerCase() !== "dashboard") return false;
+  if (restParts.length === 0) return false;
+  return true;
+}
 /** Normalized ACP runtime settings read from `agents.entries.<id>.runtime.acp`. */
 export type HarnessAgentSpec = {
   agentId: string;
@@ -427,4 +528,529 @@ export function isAcpShapedSessionKey(sessionKey: unknown): boolean {
   const parts = raw.split(":");
   if (parts[0] !== "agent") return false;
   return parts.slice(2).join(":").toLowerCase().startsWith("acp:");
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2.22 — origin-workspace cwd derivation (GaRoN Phase B, 18:46 GO)
+//
+// Defect closed (GaRoN UI-Test 18:46): binding/delivery/mirroring all WORKED,
+// but the bound harness session had been spawned with a stale cwd
+// (/share/temp/acp-rebuild — proof-run debris). Persistent ACP sessions keep
+// their SPAWN cwd (runtime.acp.cwd only matters at first spawn), so the only
+// way to honor the ORIGIN conversation's workspace is to bake the origin cwd
+// into the ensured session — with a session key that differs per cwd-scope.
+//
+// Verified data path (live-checked, 2026-10-10):
+//   1. the origin dashboard conversation id IS a session_nodes row of the
+//      AGENT-DB `<stateDir>/agents/<agentId>/agent/openclaw-agent.sqlite`
+//      (e.g. `agent:claude:dashboard:27eddc7c-…` → project_id
+//      `openclaw-ha-addon`, entry_json.sessionRoot = the concrete repo dir);
+//   2. `<stateDir>/state/openclaw.sqlite` projects: id → repo_root (fallback
+//      when entry_json carries no sessionRoot).
+// The plugin has NO official read surface for these DBs (openKeyedStore is
+// plugin-scoped; the binding ref carries no projectId — session-conversation-
+// binding-ClcCbPHd.mjs:31-35), so the read lives behind an INJECTED SYNC
+// reader seam (setOriginWorkspaceReader — index.ts wires a node:sqlite
+// implementation; unit tests inject fakes). The seam is deliberately narrow:
+// one lookup per (agentId, dashboard-conversationId), pure data out.
+//
+// Fallback contract (GaRoN rules): `workspaces` config map (explicit, highest
+// precedence below the immutable harnessSessions override) > origin
+// derivation > the untouched agent-default cwd ladder (runtime.acp.cwd >
+// entry.cwd > entry.workspace > DEFAULT_CWD_PREFIX). Nothing here touches
+// `agent:<id>:main`/acp-class conversations (isBindEligibleConversationId in
+// binding-adapter.ts stays the gate).
+// ---------------------------------------------------------------------------
+
+/** What the injected reader may report about an origin conversation. */
+export type OriginWorkspaceInfo = {
+  projectId?: string;
+  sessionRoot?: string;
+  repoRoot?: string;
+};
+
+/**
+ * Sync read seam for origin-conversation workspace facts. `agentId` locates
+ * the agent DB, `conversationId` the session_nodes row. Null = "nothing
+ * found" (row absent, DB unreadable, …) — the caller falls back per ladder.
+ * Synchronization contract: resolve/ensure paths are sync and must stay
+ * deterministic, so the reader MUST be sync and cheap (one indexed lookup).
+ */
+export type OriginWorkspaceReader = (agentId: string, conversationId: string) => OriginWorkspaceInfo | null | undefined;
+
+export const ORIGIN_WORKSPACE_MISS_TTL_MS = 30_000;
+
+let originWorkspaceReader: OriginWorkspaceReader | null = null;
+/**
+ * Memoization so the sync derives stay deterministic AND cheap:
+ * - non-null results are cached PERMANENTLY (a dashboard session's
+ *   sessionRoot/project don't change under its key);
+ * - null results are cached with a TTL (transient unreadable-DB races can
+ *   heal on a later turn instead of pinning the wrong cwd forever).
+ * Both cache legs guarantee the resolve → touch → re-resolve stability
+ * window (one dispatch, milliseconds apart) always sees the SAME value.
+ */
+const originWorkspaceCache = new Map<string, { info: OriginWorkspaceInfo | null; at: number; resolved: boolean }>();
+
+/** Registers (or clears with null) the origin-workspace reader. Clears the memo cache. */
+export function setOriginWorkspaceReader(reader: OriginWorkspaceReader | null): void {
+  originWorkspaceReader = reader;
+  originWorkspaceCache.clear();
+}
+
+/** Test reset for the reader + cache (vitest module isolation). */
+export function resetOriginWorkspaceReaderForTest(): void {
+  originWorkspaceReader = null;
+  originWorkspaceCache.clear();
+}
+
+/** Cache key: sanitized agent + EXACT conversation id (dashboard uuid included). */
+function originWorkspaceCacheKey(agentId: string, conversationId: string): string {
+  return `${agentId}␟${conversationId}`;
+}
+
+/**
+ * Memoized single lookup of one origin conversation's workspace facts.
+ * Never throws (reader errors count as miss). Returns null without a
+ * registered reader.
+ */
+export function queryOriginWorkspace(agentId: unknown, conversationId: unknown, now: () => number = Date.now): OriginWorkspaceInfo | null {
+  const convId = typeof conversationId === "string" ? conversationId.trim() : "";
+  if (!convId) return null;
+  const key = originWorkspaceCacheKey(sanitizeAgentId(agentId), convId);
+  const cached = originWorkspaceCache.get(key);
+  const at = now();
+  if (cached && (cached.resolved || at - cached.at < ORIGIN_WORKSPACE_MISS_TTL_MS)) return cached.info;
+  let info: OriginWorkspaceInfo | null = null;
+  if (originWorkspaceReader) {
+    try {
+      info = originWorkspaceReader(sanitizeAgentId(agentId), convId) ?? null;
+    } catch {
+      info = null;
+    }
+  }
+  originWorkspaceCache.set(key, { info, at, resolved: info !== null });
+  return info;
+}
+
+/**
+ * `plugins.entries['<CHANNEL_ID>'].config.workspaces` — explicit cwd override
+ * map. Keys are EITHER exact dashboard conversation ids (`agent:<id>:dashboard:<uuid>`)
+ * OR project ids (as recorded in the origin agent DB / dashboard window, e.g.
+ * `openclaw-ha-addon`); values are ABSOLUTE cwd paths. Conversation-id keys win
+ * over project-id keys; anything invalid (non-object, non-string/empty/non-
+ * absolute values) is ignored — returns null then (no overrides).
+ */
+export function resolveWorkspaceOverrides(cfg: unknown): Record<string, string> | null {
+  const map = resolvePluginEntryConfig(cfg)?.workspaces;
+  if (!map || typeof map !== "object" || Array.isArray(map)) return null;
+  const resolved: Record<string, string> = {};
+  for (const [key, value] of Object.entries(map as Record<string, unknown>)) {
+    const trimmedKey = typeof key === "string" ? key.trim() : "";
+    const cwd = typeof value === "string" ? value.trim() : "";
+    if (!trimmedKey || !resolvedAbsoluteCwd(cwd)) continue;
+    resolved[trimmedKey] = cwd;
+  }
+  return Object.keys(resolved).length > 0 ? resolved : null;
+}
+
+/** Strict cwd validation: trim happens in the resolvers; here: absolute path only. */
+function resolvedAbsoluteCwd(value: string): boolean {
+  return typeof value === "string" && value.startsWith("/") && value.length > 1;
+}
+
+/**
+ * Mirrors the host's state-dir resolution (`config-utils-DioOBKyj.mjs
+ * resolveStateDir`): OPENCLAW_STATE_DIR override, else derived from the
+ * effective home. This mirror covers the documented fallback arms the addon
+ * environment sets (OPENCLAW_CONFIG_DIR / OPENCLAW_CONFIG_PATH /
+ * XDG_CONFIG_HOME / HOME); returns null when no arm yields a value.
+ */
+export function resolveOpenClawStateDir(env?: Record<string, string | undefined>): string | null {
+  const e = env ?? (typeof process !== "undefined" ? process.env : undefined) ?? {};
+  const stateDir = typeof e.OPENCLAW_STATE_DIR === "string" ? e.OPENCLAW_STATE_DIR.trim() : "";
+  if (stateDir) return stateDir;
+  const configDir = typeof e.OPENCLAW_CONFIG_DIR === "string" ? e.OPENCLAW_CONFIG_DIR.trim() : "";
+  if (configDir) return configDir;
+  const configPath = typeof e.OPENCLAW_CONFIG_PATH === "string" ? e.OPENCLAW_CONFIG_PATH.trim() : "";
+  if (configPath) {
+    const dir = configPath.replace(/\/+$/, "").split("/").slice(0, -1).join("/");
+    if (dir) return dir;
+  }
+  const xdg = typeof e.XDG_CONFIG_HOME === "string" ? e.XDG_CONFIG_HOME.trim() : "";
+  if (xdg) return `${xdg.replace(/\/+$/, "")}/.openclaw`;
+  const home = typeof e.HOME === "string" ? e.HOME.trim() : "";
+  if (home) return `${home.replace(/\/+$/, "")}/.openclaw`;
+  return null;
+}
+
+/** Verified host DB layout (agent-database-path-discovery-B_nrhsNg.mjs:16 + state). */
+export function buildOriginWorkspaceDatabasePaths(
+  stateDir: string,
+  agentId: unknown,
+): { agentDb: string; projectsDb: string } | null {
+  const dir = typeof stateDir === "string" ? stateDir.replace(/\/+$/, "") : "";
+  const aid = sanitizeAgentId(agentId);
+  if (!dir || !aid) return null;
+  return {
+    agentDb: `${dir}/agents/${aid}/agent/openclaw-agent.sqlite`,
+    projectsDb: `${dir}/state/openclaw.sqlite`
+  };
+}
+
+/**
+ * Picks the workspace facts out of a session_nodes.entry_json row (verified
+ * live: dashboard sessions carry `sessionRoot` and `projectId`; main/acp rows
+ * carry neither). Accepts an already-parsed object or a JSON string; returns
+ * null on garbage.
+ */
+export function parseOriginWorkspaceEntryJson(entryJson: unknown): { sessionRoot?: string; projectId?: string } | null {
+  let value: unknown = entryJson;
+  if (typeof value === "string") {
+    if (!value.trim()) return null;
+    try {
+      value = JSON.parse(value);
+    } catch {
+      return null;
+    }
+  }
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const record = value as Record<string, unknown>;
+  const sessionRoot = typeof record.sessionRoot === "string" && record.sessionRoot.trim() ? record.sessionRoot.trim() : undefined;
+  const projectId = typeof record.projectId === "string" && record.projectId.trim() ? record.projectId.trim() : undefined;
+  return sessionRoot || projectId ? { ...(sessionRoot ? { sessionRoot } : {}), ...(projectId ? { projectId } : {}) } : null;
+}
+
+/**
+ * Session-key fallback for threaded dashboard conversations: the binding ref
+ * may carry extra trailing segments (`agent:<id>:dashboard:<uuid>:thread`),
+ * while session_nodes keys the BASE conversation (`agent:<id>:dashboard:<uuid>`).
+ * Tries the base shape by trimming to the first four colon segments.
+ */
+export function trimOriginConversationKey(conversationId: string): string | null {
+  const raw = typeof conversationId === "string" ? conversationId.trim() : "";
+  if (!raw) return null;
+  const parts = raw.split(":");
+  if (parts.length <= 4) return raw;
+  const base = parts.slice(0, 4).join(":");
+  return base || null;
+}
+
+/**
+ * `deriveOriginWorkspace` (default TRUE): explicit `false` turns the origin
+ * derivation legs OFF (config `workspaces` map stays active; the agent-default
+ * cwd ladder applies as before). Kept as an escape hatch since it widens the
+ * plugin's read surface to the host agent DBs.
+ */
+export function resolveOriginWorkspaceDerivationEnabled(cfg: unknown): boolean {
+  return resolvePluginEntryConfig(cfg)?.deriveOriginWorkspace !== false;
+}
+
+export type OriginWorkspaceCwdSource =
+  | "config-conversation"
+  | "config-project"
+  | "origin-session-root"
+  | "origin-project-db";
+
+export type ResolvedOriginWorkspaceCwd = {
+  cwd: string;
+  source: OriginWorkspaceCwdSource;
+  projectId?: string;
+};
+
+/**
+ * Origin-cwd ladder for ONE dashboard conversation (sync, memoized through
+ * queryOriginWorkspace). Precedence BELOW the immutable harnessSessions
+ * override (which resolves the target key first in resolveHarnessTargetOrigin):
+ *
+ *   1. config `workspaces[<conversationId>]`   (explicit, no DB read needed)
+ *   2. config `workspaces[<projectId>]`        (explicit, projectId via reader)
+ *   3. origin sessionRoot                      (verbatim cwd of the ORIGIN session)
+ *   4. origin projects.repo_root               (project id → repo root)
+ *   5. null → caller falls back to the agent-default cwd ladder
+ *
+ * Only ABSOLUTE paths count (relative values are ignored like unset). Returns
+ * null when nothing applies — the caller then keeps the documented defaults.
+ */
+export function resolveOriginWorkspaceCwd(
+  cfg: unknown,
+  spec: Pick<HarnessAgentSpec, "agentId">,
+  conversation: { conversationId: unknown },
+): ResolvedOriginWorkspaceCwd | null {
+  const conversationId = typeof conversation?.conversationId === "string" ? conversation.conversationId.trim() : "";
+  if (!conversationId) return null;
+  const overrides = resolveWorkspaceOverrides(cfg);
+  const derivationEnabled = resolveOriginWorkspaceDerivationEnabled(cfg);
+  if (!overrides && !derivationEnabled) return null;
+  // One reader pass (memoized) feeds legs 2-4. Skipped when derivation is
+  // disabled (only the conversation-keyed config leg works without it) and
+  // for non-dashboard-class ids — provisioning pseudo ids (`harness:<agent>`,
+  // `harness:<agent>:ws:<hash>`) and main/acp-class keys must NEVER reach the
+  // reader (no session node exists for them; the legacy per-agent cascade leg
+  // answers the agent-default cwd instead).
+  const info = derivationEnabled && isBindEligibleConversationId(conversationId)
+    ? queryOriginWorkspace(spec.agentId, conversationId)
+    : null;
+  if (overrides?.[conversationId]) {
+    return { cwd: overrides[conversationId], source: "config-conversation" };
+  }
+  if (info?.projectId && overrides?.[info.projectId]) {
+    return { cwd: overrides[info.projectId], source: "config-project", projectId: info.projectId };
+  }
+  if (derivationEnabled && info?.sessionRoot && resolvedAbsoluteCwd(info.sessionRoot.trim())) {
+    return {
+      cwd: info.sessionRoot.trim(),
+      source: "origin-session-root",
+      ...(info.projectId ? { projectId: info.projectId } : {})
+    };
+  }
+  if (derivationEnabled && info?.repoRoot && resolvedAbsoluteCwd(info.repoRoot.trim())) {
+    return {
+      cwd: info.repoRoot.trim(),
+      source: "origin-project-db",
+      ...(info.projectId ? { projectId: info.projectId } : {})
+    };
+  }
+  return null;
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2.21 — auto-provisioning (GaRoN 11:59/12:30)
+//
+// harnessSessions (Phase 2.18b) stays as the manual override, but is no longer
+// REQUIRED: when no validated session is configured for a harness agent, the
+// plugin provisions ONE persistent ACP session per agent itself, through the
+// host's official configured-binding ensure contract —
+// `ensureConfiguredAcpBindingReady` (official plugin-sdk export
+// `openclaw/plugin-sdk/acp-binding-runtime`; no trust-gate, unlike
+// api.runtime.gateway.request) → `ensureConfiguredAcpBindingSession`
+// (dist/persistent-bindings.lifecycle-DU_YBswY.mjs) →
+// `acpManager.initializeSession` → `runtime.ensureSession` (real backend
+// spawn) + session-meta write (manager.utils: afterwards resolveStoredAcpSession
+// returns kind:"ready", so the synthetic-key ACP_SESSION_INIT_FAILED gap from
+// Phase 2.18b never happens for provisioned keys).
+//
+// Determinism: the provisioned key is DERIVED per agent (not minted randomly),
+// so the sync derives stay byte-stable across resolve → touch → re-resolve
+// (stability check) and regenerate identically after a restart.
+//
+// The SDK ensure call itself lives in index.ts (it needs api.config + the
+// dynamic SDK import); this module keeps the SDK-free plumbing: provisioner
+// registration, dedupe, spec-signature caching, and the target cascade.
+// ---------------------------------------------------------------------------
+
+/**
+ * conversationId under the webchat:default scope that names the persistent
+ * per-agent harness session (`harness:<agentId>`). Deliberately NOT a real
+ * dashboard conversation; only used to derive the stable session key.
+ */
+export function buildHarnessProvisionedConversationId(agentId: unknown): string {
+  return `harness:${sanitizeAgentId(agentId)}`;
+}
+
+/**
+ * Deterministic session key of the auto-provisioned per-agent harness session:
+ * `agent:<agentId>:acp:binding:webchat:default:<sha16("webchat:default:harness:<agentId>")>`
+ * — exact buildConfiguredAcpSessionKey grammar (same builder the host's
+ * ensure contract derives the key from), so host `isAcpSessionKey` is true and
+ * `parseConfiguredAcpSessionKey` reads it as a webchat:default configured
+ * binding. Deterministic per agent; regenerate-safe.
+ *
+ * Phase 2.22 (origin-workspace): when an origin cwd is known
+ * (`cwdScope`), the pseudo conversation id becomes
+ * `harness:<agentId>:ws:<sha16(cwd).slice(0,12)>` — the key differs per
+ * cwd-scope. Persistent ACP sessions keep their spawn cwd, so different origin
+ * workspaces MUST get different sessions; sharing one per-agent key across
+ * workspaces would make them close/reopen-fight over a single cwd.
+ */
+export function buildHarnessProvisionedSessionKey(
+  spec: Pick<HarnessAgentSpec, "agentId">,
+  cwdScope?: string,
+): string {
+  const scope = typeof cwdScope === "string" ? cwdScope.trim() : "";
+  const conversationId = scope
+    ? `${buildHarnessProvisionedConversationId(spec.agentId)}:ws:${createHash("sha256").update(scope, "utf8").digest("hex").slice(0, 12)}`
+    : buildHarnessProvisionedConversationId(spec.agentId);
+  return buildAcpBindingSessionKey({
+    channel: BINDING_CHANNEL,
+    accountId: BINDING_ACCOUNT_ID,
+    conversationId,
+    agentId: spec.agentId
+  });
+}
+
+/** True when `sessionKey` is the auto-provisioned per-agent key of `agentId`. */
+export function isHarnessProvisionedSessionKey(agentId: unknown, sessionKey: unknown, cwdScope?: string): boolean {
+  if (!agentId || typeof sessionKey !== "string") return false;
+  return sessionKey === buildHarnessProvisionedSessionKey({ agentId: sanitizeAgentId(agentId) }, cwdScope);
+}
+
+/**
+ * `plugins.entries['<CHANNEL_ID>'].config.autoProvision` — Phase 2.21. Default
+ * is `true` (the plugin provisions persistent harness sessions itself); only
+ * an explicit boolean `false` opts out (then the cascade falls back to the
+ * synthetic per-conversation target, exactly the pre-2.21 behavior).
+ */
+export function resolveAutoProvisionEnabled(cfg: unknown): boolean {
+  const value = resolvePluginEntryConfig(cfg)?.autoProvision;
+  return value !== false;
+}
+
+/**
+ * The provisioning seam: async ensure callback (runs the SDK ensure contract
+ * for the agent's derived session key). Registered in index.ts at registerFull
+ * with the plugin-api-backed implementation; null clears it (dispose).
+ */
+export type DashboardHarnessProvisioner = (spec: HarnessAgentSpec, targetSessionKey: string) => Promise<unknown>;
+
+let harnessProvisioner: DashboardHarnessProvisioner | null = null;
+/**
+ * In-flight ensure promises per TARGET SESSION KEY (Phase 2.22: keys differ
+ * per cwd-scope, so the dedupe key must be the full key — a per-agentId map
+ * would mix cwd scopes of the same agent).
+ */
+const provisioningInFlight = new Map<string, Promise<boolean>>();
+/** Spec signature of the LAST SUCCESSFUL ensure per target session key (skip re-ensure). */
+const provisionedSignatures = new Map<string, string>();
+
+function harnessSpecSignature(spec: HarnessAgentSpec): string {
+  return JSON.stringify({
+    agentId: spec.agentId,
+    harness: spec.harness ?? null,
+    mode: spec.mode,
+    cwd: spec.cwd ?? null,
+    backend: spec.backend ?? null
+  });
+}
+
+/** Registers (or clears with null) the SDK-backed provisioner. Idempotent per call. */
+export function setDashboardBindingProvisioner(provisioner: DashboardHarnessProvisioner | null): void {
+  harnessProvisioner = provisioner;
+}
+
+/** Test reset for the whole provisioning state (vitest module isolation). */
+export function resetDashboardBindingProvisionerForTest(): void {
+  harnessProvisioner = null;
+  provisioningInFlight.clear();
+  provisionedSignatures.clear();
+}
+
+/** The registered provisioner, or null while unset (cascade stays synthetic). */
+export function getDashboardBindingProvisioner(): DashboardHarnessProvisioner | null {
+  return harnessProvisioner;
+}
+
+/**
+ * Kicks (or joins) the ensure for ONE persistent session. Fire-and-forget by
+ * design — resolves answer with the deterministic key immediately.
+ * Phase 2.22: `cwdScope` (resolved origin cwd) BAKES the origin workspace into
+ * the spawn — the ensure spec's cwd REPLACES the agent-default for this call,
+ * and the dedupe key/target is the cwd-scoped session key (one key per
+ * agent × cwd-scope). Returns the in-flight/settled status promise, or null
+ * when autoProvision is disabled, no provisioner is registered, or the target
+ * was already ensured with the identical spec signature (skip).
+ */
+export function ensureDashboardHarnessProvisioning(cfg: unknown, spec: HarnessAgentSpec, cwdScope?: string): Promise<boolean> | null {
+  if (!resolveAutoProvisionEnabled(cfg) || !harnessProvisioner) return null;
+  const agentId = sanitizeAgentId(spec.agentId);
+  const targetKey = buildHarnessProvisionedSessionKey({ agentId }, cwdScope);
+  const ensureSpec: HarnessAgentSpec = cwdScope ? { ...spec, cwd: cwdScope } : spec;
+  const signature = harnessSpecSignature(ensureSpec);
+  const existing = provisioningInFlight.get(targetKey);
+  if (existing) return existing;
+  // Last success with the same spec: nothing to (re)ensure.
+  if (provisionedSignatures.get(targetKey) === signature) return null;
+  const provisioner = harnessProvisioner;
+  // Dedupe note: a second ensure while one is in flight ALWAYS joins the
+  // existing run (same targetSessionKey), so at most one run per target exists
+  // at a time and the unconditional finally-delete cannot clobber a newer run.
+  const run = (async () => {
+    try {
+      await provisioner(ensureSpec, targetKey);
+      provisionedSignatures.set(targetKey, signature);
+      return true;
+    } catch {
+      // No signature — the next consult retries; the deterministic target meanwhile
+      // surfaces the host's ACP init error to the conversation (handled there).
+      return false;
+    } finally {
+      provisioningInFlight.delete(targetKey);
+    }
+  })();
+  provisioningInFlight.set(targetKey, run);
+  return run;
+}
+
+/**
+ * The pending provision for one target (null when none in flight). The reply-
+ * claim barrier awaits this BEFORE starting the harness turn, so the first
+ * dashboard message does not race the session initialization. Accepts EITHER
+ * the exact target session key (Phase 2.22 — cwd-scoped keys) OR, for backward
+ * compatibility, a bare agent id (→ the legacy per-agent key).
+ */
+export function pendingDashboardHarnessProvisioning(targetOrAgentId: unknown): Promise<boolean> | null {
+  const raw = typeof targetOrAgentId === "string" ? targetOrAgentId.trim() : "";
+  if (!raw) return null;
+  if (isAcpShapedSessionKey(raw)) return provisioningInFlight.get(raw) ?? null;
+  return provisioningInFlight.get(buildHarnessProvisionedSessionKey({ agentId: sanitizeAgentId(raw) })) ?? null;
+}
+
+export type HarnessTargetOrigin = "configured" | "provisioned" | "synthetic";
+
+/**
+ * Target cascade for harness agent conversations (Phase 2.21 → 2.22) — ONE
+ * derivation shared by the binding-adapter derive and the dashboard-bridge
+ * synthesis so both halves hand out the same session key:
+ *
+ *   1. `harnessSessions` (manual override, highest priority — unchanged 2.18b)
+ *   2. auto-provisioned session (fire-and-forget ensure + deterministic key;
+ *      skipped when `autoProvision: false` or no provisioner registered).
+ *      Phase 2.22: when an origin cwd resolves for THIS conversation
+ *      (resolveOriginWorkspaceCwd ladder), the ensure spec's cwd is the ORIGIN
+ *      workspace and the key is the cwd-scoped variant — one persistent
+ *      session per agent × cwd-scope. Without an origin cwd the legacy
+ *      per-agent key and the agent-default cwd apply, exactly as pre-2.22.
+ *   3. synthetic per-conversation key (pre-2.21 fallback, never initialized
+ *      host-side — documented Phase 2.18b limitation)
+ *
+ * The synthetic leg needs the conversation; the provisioned leg derives its
+ * cwd-scope from it (Phase 2.22) — hence `conversation` is now expected on the
+ * provisioned leg, too.
+ */
+export function resolveHarnessTargetOrigin(
+  cfg: unknown,
+  spec: HarnessAgentSpec,
+  conversation: { channel: string; accountId: string; conversationId: string }
+): { targetKey: string; origin: HarnessTargetOrigin; cwd?: string; cwdSource?: OriginWorkspaceCwdSource } {
+  const configured = resolveHarnessSessionTargetKey(cfg, spec);
+  if (configured) return { targetKey: configured, origin: "configured" };
+  if (resolveAutoProvisionEnabled(cfg) && harnessProvisioner) {
+    // Fire-and-forget: the resolve answer is deterministic regardless of when
+    // (or whether) the ensure completes — see the module comment above. The
+    // cwd resolution is sync + memoized, so the answered key never flips
+    // within one dispatch (resolve → touch → re-resolve stability).
+    const ws = resolveOriginWorkspaceCwd(cfg, spec, conversation);
+    ensureDashboardHarnessProvisioning(cfg, spec, ws?.cwd);
+    return {
+      targetKey: buildHarnessProvisionedSessionKey({ agentId: spec.agentId }, ws?.cwd),
+      origin: "provisioned",
+      ...(ws ? { cwd: ws.cwd, cwdSource: ws.source } : {})
+    };
+  }
+  return {
+    targetKey: buildAcpBindingSessionKey({
+      channel: conversation.channel,
+      accountId: conversation.accountId,
+      conversationId: conversation.conversationId,
+      agentId: spec.agentId
+    }),
+    origin: "synthetic"
+  };
+}
+
+/** Disposes the whole provisioning seam (plugin dispose / tests). */
+export function clearDashboardHarnessProvisions(): void {
+  setDashboardBindingProvisioner(null);
+  provisioningInFlight.clear();
+  provisionedSignatures.clear();
 }
