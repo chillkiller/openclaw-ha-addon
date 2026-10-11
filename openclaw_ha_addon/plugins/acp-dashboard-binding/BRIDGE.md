@@ -973,3 +973,29 @@ Bündel ist kompiliert (kein TS-Stripping) und die Store-Öffnung geht jetzt
 über den trusted Proxy; ob die 64s verschwinden, zeigt der nächste
 Restart-Log (`gateway_startup_trace: true` → per-Plugin-Breakdown). Der
 Terminal-Write-Ownership-Race (Agenda Punkt 1) bleibt davon UNBERÜHRT.
+
+### 16.1. "Bundled channel"-WARN-Kette (Scan-Befund, 2026-10-11)
+
+Der Vormittags-Run (9a45bc46) meldete 11×
+`[channels] failed to load bundled channel acp-dashboard-binding: Stripping
+types is currently unsupported … index.ts` (ab ~16:35). Ursachen-Chain
+(dist `bundled-CMChYPbG.mjs`:
+
+- `listBundledChannelMetadata` scannt ein `channels[]`-Feld im
+  `openclaw.plugin.json` und klassifiziert das Plugin additionally als
+  Bundled Channel — das ist die Channel-Discovery selbst, KEINE
+  Misclassification: ein Channel-Plugin MUSS diesen Weg haben.
+- Die LOAD-Warns entstanden, weil der Discovery-Entry auf ein TS-Stück
+  lief (Probe-Phase: frisch kopierte .ts-Quelle bzw. leere package.json
+  im Bundled-Dir) → der node-side Loader verweigert TS-Strip unter
+  node_modules.
+- Stand nach dem Trust-Deploy: Bundled-Dir trägt NUR `index.mjs` +
+  package.json mit `openclaw.extensions=["./index.mjs"]` (0-Byte-legacy
+  der manuellen Probe korrigiert) — der Scanner lädt es als Bundled
+  Channel MIT Trust; die WARNs müssen beim nächsten Boot ausbleiben.
+  Smoke-Check (6b) bewacht das.
+- Manifest-Change bewusst NICHT: `channels[]` ist der
+  Registrations-Contract der Channel-Plugin-Discovery. Erst beobachten;
+  nur falls der Restart Double-Registration-Artefakte zeigt (normale
+  Plugin-Pipeline + Bundled-Channel-Pfad gleichzeitig), dann gezielt
+  fixen + auditieren.
