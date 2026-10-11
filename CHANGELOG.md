@@ -2,6 +2,14 @@
 
 Release-facing summary. Detailed per-release engineering notes: [openclaw_ha_addon/CHANGELOG.md](openclaw_ha_addon/CHANGELOG.md).
 
+## 0.7.13.14 (2026-10-11) — session-key clone mode
+
+- **Per-conversation ACP sessions (owner design, GaRoN 04:16 + GO 05:09):** every dashboard conversation gets its OWN persistent ACP session — the ACP key is a deterministic clone of the origin session key's conversation identity. New UI session ⇒ new ACP session (persistent until host retention); existing session ⇒ existing key. One acp-binding window per conversation, trivially debuggable.
+- **Provisioned leg now answers the origin conversation directly** (the former synthetic grammar, now initialized by the ensure contract on exactly that key) — the `ACP_SESSION_INIT_FAILED` class from synthetic keys dies structurally.
+- **Cwd flows only into the ensure spec** (spawn process), never into key identity — the origin-workspace reader stays as the cwd source; the phase-2.23 `:ws:` reverse-parse is gone entirely.
+- Legacy helpers stay exported with `@deprecated` jsdoc; the binding gate (main/acp-class never bind) and `harnessSessions` overrides are untouched.
+- Tests: 152/152 vitest, strict TypeScript clean.
+
 ## 0.7.13.13 (2026-10-11) — ensure/resolve key harmonization
 
 - **Fixed — per-cwd binding keys now get real sessions:** the provisioner discarded the cascade's target-session key and passed a legacy `harness:<agent>` conversation id to the host ensure contract, so `acp_sessions` rows landed on the legacy per-agent key while resolves answered the cwd-scoped key — dashboard-bound turns perished with `ACP_SESSION_INIT_FAILED (metadata missing)`. The provisioner now carries the target key; the scoped conversation id (`harness:<agent>:ws:<hash>`) goes into the ensure spec, making ensure-key ≡ resolve-key bit-for-bit.

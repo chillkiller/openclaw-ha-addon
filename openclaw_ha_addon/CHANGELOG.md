@@ -1,3 +1,16 @@
+## [0.7.13.14] - 2026-10-11
+
+### Added
+- **Session-key clone mode (owner design, GaRoN 04:16 proposal + GO 05:09):** every dashboard conversation gets its OWN persistent ACP session. The ACP key is a deterministic clone of the origin session key's conversation identity (`buildAcpBindingSessionKey` over the origin conversation id) — new UI session ⇒ new ACP session (persistent until host retention); existing session ⇒ existing key. The 1:1 binding window per conversation is trivially debuggable.
+### Changed
+- **Provisioner signature upgraded to object params** (`DashboardHarnessProvisionerParams {spec, conversation, targetSessionKey, cwd?}`) — the cascade passes the origin conversation directly; the previous positional `(spec, targetSessionKey)` form is gone.
+- **Cwd flows ONLY into the ensure spec** (spawn process) — never into key identity. The origin-workspace reader stays unchanged as the cwd source; the phase-2.23 `:ws:`-reverse-parse in index.ts is removed entirely (no key-text parsing anymore).
+- Legacy helpers (`buildHarnessProvisionedConversationId`/`SessionKey` in the scope-free grammar) stay exported with `@deprecated` jsdoc for config-leg and test compatibility.
+### Fixed
+- **The synthetic-leg `ACP_SESSION_INIT_FAILED` class dies structurally:** the provisioned leg now answers `buildAcpBindingSessionKey` over the ORIGIN conversation — exactly the key shape the night's failing turns routed to — and the ensure contract mints the `acp_sessions` row on that same key (ensure-key ≡ resolve-key by construction, no text parsing).
+- The binding gate (`agent:<id>:main`/`acp`-class never bind) and the `harnessSessions` override leg are untouched.
+### Verified
+- 152/152 vitest (4 files), tsc strict clean; new clone-isolation tests: two conversations of the same agent ⇒ different keys, same conversation ⇒ stable key, ensure-spec carries origin-key + origin-cwd.
 ## [0.7.13.13] - 2026-10-11
 
 ### Fixed
