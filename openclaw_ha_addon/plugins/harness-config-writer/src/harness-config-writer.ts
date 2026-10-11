@@ -4,7 +4,7 @@
  * bzw. OpenAI-kompatible Backends (Ollama/vLLM/LocalAI/llama.cpp) aus der
  * normalisierten Section
  *
- *   plugins.entries['acp-dashboard-binding'].config.harnesses
+ *   plugins.entries['harness-config-writer'].config.harnesses
  *     = { <harnessId>: { model, baseUrl?, apiKey?, thinking?, smallModel?,
  *                        trustProjects? } }
  *
@@ -47,7 +47,29 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 
-import { resolveOpenClawStateDir } from "./agent-map.js";
+// Repo-Split A2 (2026-10-11): resolveOpenClawStateDir lebt hier als EIGENE
+// Kopie (origin: acp-dashboard-binding/src/agent-map.ts, Byte-identisch).
+// Absichtlich dupliziert statt Cross-Import — die beiden Plugins sind
+// unabhängig pflegbar (GaRoN-Split-Idee); Änderungen an der ENV-Ladder
+// müssen in BEIDEN Kopien synchron gezogen werden (dieselbe
+// acpx/agent-maps-ENV-Konvention, origin Doku: agent-map.ts).
+function resolveOpenClawStateDir(env?: Record<string, string | undefined>): string | null {
+  const e = env ?? (typeof process !== "undefined" ? process.env : undefined) ?? {};
+  const stateDir = typeof e.OPENCLAW_STATE_DIR === "string" ? e.OPENCLAW_STATE_DIR.trim() : "";
+  if (stateDir) return stateDir;
+  const configDir = typeof e.OPENCLAW_CONFIG_DIR === "string" ? e.OPENCLAW_CONFIG_DIR.trim() : "";
+  if (configDir) return configDir;
+  const configPath = typeof e.OPENCLAW_CONFIG_PATH === "string" ? e.OPENCLAW_CONFIG_PATH.trim() : "";
+  if (configPath) {
+    const dir = configPath.replace(/\/+$/, "").split("/").slice(0, -1).join("/");
+    if (dir) return dir;
+  }
+  const xdg = typeof e.XDG_CONFIG_HOME === "string" ? e.XDG_CONFIG_HOME.trim() : "";
+  if (xdg) return `${xdg.replace(/\/+$/, "")}/.openclaw`;
+  const home = typeof e.HOME === "string" ? e.HOME.trim() : "";
+  if (home) return `${home.replace(/\/+$/, "")}/.openclaw`;
+  return null;
+}
 
 /** Normalisierter per-Harness-Eintrag (configSchema: `harnesses.<id>`). */
 export type HarnessConfigEntry = {
@@ -59,7 +81,7 @@ export type HarnessConfigEntry = {
   trustProjects?: string[];
 };
 
-/** plugins.entries['acp-dashboard-binding'].config.harnesses (roh geparsed). */
+/** plugins.entries['harness-config-writer'].config.harnesses (roh geparsed). */
 export type HarnessConfigs = Record<string, HarnessConfigEntry>;
 
 /** Zielwurzel-Layout, identisch zu den Helper-Konstanten (oc_acpx_helper.py). */
@@ -100,8 +122,9 @@ export type HarnessWriterLogger = {
 };
 
 // ---------------------------------------------------------------------------
-// Pfadauflösung — dieselbe ENV-Ladder wie agent-map.resolveOpenClawStateDir
-// (nur importiert, KEINE Cross-Edits: channel/agent-map gehören claude-harness).
+// Pfadauflösung — dieselbe ENV-Ladder wie acp-dashboard-binding/agent-map
+// (Repo-Split A2: EIGENE Kopie oben, kein Cross-Import — beide Plugins
+// unabhängig pflegbar).
 // Auf dem Host ist STATE /config/.openclaw → codexSourceHome /config/.codex,
 // opencodeGlobalDir /config/opencode — exakt die Helper-Konstanten
 // CODEX_SOURCE_HOME / OPENCODE_GLOBAL_DIR (oc_acpx_helper.py:35-48).
@@ -404,7 +427,7 @@ export function buildCodexConfigToml(entry: HarnessConfigEntry): string {
     `sandbox_mode = "workspace-write"`,
     ``,
     `[model_providers.${providerId}]`,
-    `name = "acp-dashboard-binding (${baseUrl})"`,
+    `name = "harness-config-writer (${baseUrl})"`,
     `base_url = ${tomlString(baseUrl)}`,
     `wire_api = "responses"`,
     `requires_openai_auth = true`,
@@ -478,7 +501,7 @@ export function buildOpencodeConfigJsonc(entry: HarnessConfigEntry): string {
     provider: {
       [providerId]: {
         npm: "@ai-sdk/openai-compatible",
-        name: `acp-dashboard-binding (${withV1Suffix(baseUrl)})`,
+        name: `harness-config-writer (${withV1Suffix(baseUrl)})`,
         options: {
           baseURL: withV1Suffix(baseUrl),
           apiKey: entry.apiKey ?? "ollama",
@@ -499,7 +522,7 @@ export const OPENCODE_LEGACY_PLACEHOLDER =
   "# Neutralisiert (comment-only): OpenCode liest Config-Dateien als JSON(C),\n" +
   '# unabhaengig von der Dateiendung ("config.toml is not valid JSON(C)",\n' +
   "# verifiziert 2026-10-09). Die echte Provider-Config steht in opencode.jsonc\n" +
-  "# neben dieser Datei — generiert vom acp-dashboard-binding Plugin (Phase 3).\n";
+  "# neben dieser Datei — generiert vom harness-config-writer Plugin (Phase 3, Repo-Split A2).\n";
 
 /**
  * Deploy in BEIDE Dirs wie der Helper (opencode-home der ACPX_DIR + global
@@ -563,7 +586,7 @@ export function deployHarnessEnvFile(
   }
   const path = join(paths.acpxDir, HARNESS_ENV_DIR, `${harnessId}.env`);
   const header = [
-    `acp-dashboard-binding Phase 3 — harness env file (${harnessId}).`,
+    `harness-config-writer (Phase 3, Repo-Split A2) — harness env file (${harnessId}).`,
     "Gesourcet wrapperartig vom acpx-Command-Override",
     "plugins.entries.acpx.config.agents.<id>.command/args — BRIDGE.md §15.2.",
     "GENERIERT (Phase 3): Hand-Edits werden beim nächsten Boot überschrieben.",

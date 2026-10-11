@@ -1,0 +1,5 @@
+# Repo-Split A2 (2026-10-11): plugin npm payloads are plugin-local dev deps
+# and must never reach the image build context (Dockerfile COPY plugins would
+# otherwise bake them into the image).
+plugins/*/node_modules/
+plugins/*/package-lock.json

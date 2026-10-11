@@ -90,6 +90,20 @@ export ACP_ADDITIONAL_ALLOWED_AGENTS=$(jq -r '.acp_additional_allowed_agents // 
 # ACP_ADDITIONAL_ALLOWED_AGENTS. Default (unset/false) = acp-dashboard-binding
 # is NOT deployed to openclaw.json.
 export ACP_DASHBOARD_BINDING_ENABLED=$(jq -r '.acp_dashboard_binding_enabled // empty' "$OPTIONS_FILE" 2>/dev/null)
+# Repo-Split A2 (2026-10-11): the harness-config-writer is its own plugin.
+# UNSET default in the helper = follows acp_dashboard_binding_enabled (so
+# existing setups keep the previous bundled behavior); explicit true/false
+# overrides it (true = writer runs even with the channel plugin off).
+export HARNESS_CONFIG_WRITER_ENABLED=$(jq -r '.harness_config_writer_enabled // empty' "$OPTIONS_FILE" 2>/dev/null)
+
+# Add-on-Level-Harness-Defaults (GaRoN 2026-10-11): shared writer defaults.
+# base_url is the ACTIVATOR (empty = no generation); model applies to all
+# non-excluded harnesses (codex/opencode keep their ollama_acp_*_model
+# defaults unless set); excluded_agents is comma-separated harness ids.
+export HARNESS_WRITER_BASE_URL=$(jq -r '.harness_base_url // empty' "$OPTIONS_FILE" 2>/dev/null)
+export HARNESS_WRITER_MODEL=$(jq -r '.harness_model // empty' "$OPTIONS_FILE" 2>/dev/null)
+export HARNESS_WRITER_API_KEY=$(jq -r '.harness_api_key // empty' "$OPTIONS_FILE" 2>/dev/null)
+export HARNESS_WRITER_EXCLUDED_AGENTS=$(jq -r '.harness_excluded_agents // empty' "$OPTIONS_FILE" 2>/dev/null)
 
 # Local-model provider routing for ACP harnesses (verified 2026-10-09):
 # The acpx generated codex/claude wrappers passthrough this ambient env, so

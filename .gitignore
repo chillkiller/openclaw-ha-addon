@@ -19,3 +19,8 @@ nul
 INVESTIGATION-*
 *findings*
 *FINDING*
+
+# Repo-Split A2 (2026-10-11): Plugin node_modules/lockfiles sind npm-lokal und
+# dürfen weder ins Repo noch ins Image (ausgeschlossen via openclaw_ha_addon/.dockerignore).
+openclaw_ha_addon/plugins/*/node_modules/
+openclaw_ha_addon/plugins/*/package-lock.json

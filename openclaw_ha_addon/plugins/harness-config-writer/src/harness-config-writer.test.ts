@@ -28,6 +28,7 @@ import {
   resolveHarnessWriterPaths,
   withV1Suffix,
   type HarnessConfigEntry,
+  type HarnessWriterPaths,
 } from "./harness-config-writer.js";
 
 let root: string;

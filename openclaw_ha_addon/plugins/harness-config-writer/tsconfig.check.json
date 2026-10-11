@@ -1,0 +1,18 @@
+{
+  // Audit-Helper (Repo-Split A2, kein Build-Target): strict tsc check, der das
+  // im Add-on-Image gepinnte OpenClaw nach /usr/lib/node_modules/openclaw
+  // auflöst. Pfad ist im Image stabil (OpenClaw ist dort ge-fixed), daher
+  // bleibt die Datei portabel über alle lokalen Audit-Umgebungen.
+  //   npx tsc -p tsconfig.check.json
+  "compilerOptions": {
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "target": "es2023",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "paths": { "openclaw": ["/usr/lib/node_modules/openclaw/dist/index.d.ts"], "openclaw/*": ["/usr/lib/node_modules/openclaw/dist/*"] },
+    "types": ["node"]
+  },
+  "include": ["index.ts", "src/**/*.ts"]
+}

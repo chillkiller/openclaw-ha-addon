@@ -1,25 +1,33 @@
 {
   "id": "acp-dashboard-binding",
-  "channels": ["acp-dashboard-binding"],
+  "channels": [
+    "acp-dashboard-binding"
+  ],
   "name": "ACP Dashboard Binding",
-  "description": "SessionBindingAdapter for the internal webchat channel: resolves agent-qualified dashboard conversation keys to ACP harness session targets (codex/claude/opencode).",
+  "description": "SessionBindingAdapter for the internal webchat channel: resolves agent-qualified dashboard conversation keys to ACP harness session targets (codex/claude/opencode). Harness-config deployment lives in the standalone harness-config-writer feature plugin (Repo-Split A2, 2026-10-11).",
   "configSchema": {
     "type": "object",
     "additionalProperties": false,
     "properties": {
       "boundAgents": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "description": "Explicit allowlist of agent ids that may be auto-bound. Overrides the orchestrator safe-default exclusion."
       },
       "excludedAgents": {
         "type": "array",
-        "items": { "type": "string" },
+        "items": {
+          "type": "string"
+        },
         "description": "Replaces the default orchestrator exclusion when boundAgents is unset."
       },
       "harnessSessions": {
         "type": "object",
-        "additionalProperties": { "type": "string" },
+        "additionalProperties": {
+          "type": "string"
+        },
         "description": "Per-harness mapping to a real persistent ACP session key (created by /acp spawn). Dashboard conversations route to these instead of synthetic binding keys."
       },
       "harnessReplyWaitMs": {
@@ -28,7 +36,9 @@
       },
       "workspaces": {
         "type": "object",
-        "additionalProperties": { "type": "string" },
+        "additionalProperties": {
+          "type": "string"
+        },
         "description": "Explicit cwd override map: keys are exact dashboard conversation ids (agent:<id>:dashboard:<uuid>) or project ids, values are absolute workspace paths. Wins over the origin derivation; below the harnessSessions override."
       },
       "deriveOriginWorkspace": {
@@ -38,22 +48,6 @@
       "bindMainSessions": {
         "type": "boolean",
         "description": "Default true (Phase 2.24b session-key clone mode): also bind the MAIN conversation of a roster harness agent (agent:<id>:main) to a deterministic clone ACP session (the ghost key shape becomes ensured). Set false to keep main conversations on untouched builtin dispatch. The roster gates (boundAgents/excludedAgents/default orchestrator exclusion) always apply."
-      },
-      "harnesses": {
-        "type": "object",
-        "description": "Phase 3 (additive to bundled acpx, NOT a replacement): normalized per-harness config. The plugin generates the harness-native file/env config for ONLY the harnesses listed here (codex+opencode: config files for OpenAI-compatible local backends; claude/gemini/droid/qwen/kimi/kiro/iflow: harness-env/<id>.env, sourced by the plugins.entries.acpx.config.agents.<id>.command/args override — BRIDGE.md §15). ABSENCE of a harness id (or this whole section) = plugin writes NOTHING for it: native subscriptions (Claude Pro, ChatGPT Plus, Copilot-OAuth) run unchanged via bundled acpx vendor auth. Changes apply on next boot.",
-        "additionalProperties": {
-          "type": "object",
-          "properties": {
-            "model": { "type": "string", "description": "Required, non-empty: the model id to claim for this harness." },
-            "baseUrl": { "type": "string", "description": "OpenAI-compatible backend base URL (Ollama/vLLM/LocalAI/llama.cpp). Required for codex/opencode (file mechanism); appended with /v1 exactly once where the CLI expects it." },
-            "apiKey": { "type": "string", "description": "API key/token the harness backend expects (auth.json OPENAI_API_KEY for codex, apiKey option for opencode, ANTHROPIC_AUTH_TOKEN/KIRO_API_KEY/... for env harnesses). Placeholder 'ollama' when omitted." },
-            "thinking": { "type": "string", "description": "Codex only: model_reasoning_effort written when non-empty." },
-            "smallModel": { "type": "string", "description": "opencode small_model / claude ANTHROPIC_SMALL_FAST_MODEL." },
-            "trustProjects": { "type": "array", "items": { "type": "string" }, "description": "Codex only: [projects.\"<path>\"] trust_level=trusted entries (deduped, sorted)." }
-          },
-          "required": ["model"]
-        }
       }
     }
   },

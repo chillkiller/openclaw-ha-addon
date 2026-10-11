@@ -1,0 +1,28 @@
+{
+  "name": "harness-config-writer",
+  "version": "0.1.0",
+  "type": "module",
+  "description": "OpenClaw feature plugin: deploys harness-native file/env config for configured local-provider harnesses (additive to bundled acpx)",
+  "license": "MIT",
+  "peerDependencies": {
+    "openclaw": "*"
+  },
+  "peerDependenciesMeta": {
+    "openclaw": {
+      "optional": false
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^26.6.4",
+    "typescript": "^5.6.0",
+    "vitest": "^2.1.0"
+  },
+  "scripts": {
+    "test": "vitest run"
+  },
+  "openclaw": {
+    "extensions": [
+      "./index.ts"
+    ]
+  }
+}
