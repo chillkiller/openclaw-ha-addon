@@ -2,6 +2,12 @@
 
 Release-facing summary. Detailed per-release engineering notes: [openclaw_ha_addon/CHANGELOG.md](openclaw_ha_addon/CHANGELOG.md).
 
+## 0.7.13.15 (2026-10-11) — main-klon completion + bindMainSessions flag
+
+- **Fixed — bindMainSessions flag enforced:** the phase-2.24b gate `isMainConversationEligible` ignored the `bindMainSessions` config flag (default TRUE worked, but explicit `false` had no effect) — the claude child run shipped the gate without the flag check. Now enforced **before** the shape match: flag-off ⇒ no main-klon binding, the agent keeps builtin dispatch.
+- **MAIN-klon binding completed:** `agent:<harnessId>:main` (exact 3-part shape) of roster harness agents now binds to its own clone key (`agent:<id>:acp:binding:webchat:default:sha16("webchat:default:agent:<id>:main")`), with `bindMainSessions` (default TRUE) declared in the manifest configSchema per the reload-deadlock rule.
+- Orchestrator test-session work (main-klon gate, manifest, binding-adapter routes, tests) landed: 162/162 vitest, tsc strict clean.
+
 ## 0.7.13.14 (2026-10-11) — session-key clone mode
 
 - **Per-conversation ACP sessions (owner design, GaRoN 04:16 + GO 05:09):** every dashboard conversation gets its OWN persistent ACP session — the ACP key is a deterministic clone of the origin session key's conversation identity. New UI session ⇒ new ACP session (persistent until host retention); existing session ⇒ existing key. One acp-binding window per conversation, trivially debuggable.

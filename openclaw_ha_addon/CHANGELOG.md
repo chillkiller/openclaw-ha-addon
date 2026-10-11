@@ -1,4 +1,14 @@
-## [0.7.13.14] - 2026-10-11
+## [0.7.13.15] - 2026-10-11
+
+### Added
+- **Phase 2.24b — session-key clone mode for MAIN conversations (owner 'B GO', GaRoN 06:26):** the MAIN conversation of a roster ACP agent (`agent:<id>:main`, exact 3-segment shape) now binds too. The adapter's derive answers a binding record whose target is the deterministic clone of the origin session-key text (conversation 1:1): for claude exactly `agent:claude:acp:binding:webchat:default:60bac3d65e697154` — live-verified `sha16("webchat:default:agent:claude:main")`, the night's `acp_error:acp_session_init_failed` "ghost" key becomes the ENSURED key (the ensure contract carries no conversationId shape gate — dist-verified).
+### Changed
+- New separate gate `isMainConversationEligible(agent-map)` beside the UNTOUCHED dashboard gate (`isBindEligibleConversationId`, 18:03 rule): main binds only for roster agents (Phase-2.17 precedence ladder + `runtime.type==='acp'`) and only while `plugins.entries['acp-dashboard-binding'].config.bindMainSessions !== false` (default true).
+- Manifest `configSchema` declares `bindMainSessions` (boolean, default true).
+- Origin-workspace cwd ladder: eligible main conversations now consult the fail-soft reader; **live-verified 2026-10-11:** `agent:claude:main` session_nodes row carries NO cwd/sessionRoot/projectId → null → agent-default cwd (`runtime.acp.cwd`); forward-compat ladder leg `origin-entry-cwd` added for a future host `entry_json.cwd`.
+- Bridge (`resolveDashboardBindingDecision`) stays dashboard-only — main clone records come from the adapter derive; reply-claim barrier + `pendingDashboardHarnessProvisioning` work unchanged on the raw main clone key.
+### Verified
+- 162/162 vitest (--cache=false, was 152), tsc strict clean (tsconfig.scratch); new tests: main gate matrix (dashboard gate byte-unchanged), adapter record with the literal 60bac key + ensure kick + stability, non-roster/bindMainSessions-off rejections, harnessSessions override precedence for main, ensure-spec carries the origin key text, cwd ladder for main, main claim barrier; BRIDGE.md §14 documents decision/risks. NOT deployed (report-only per phase rules).
 
 ### Added
 - **Session-key clone mode (owner design, GaRoN 04:16 proposal + GO 05:09):** every dashboard conversation gets its OWN persistent ACP session. The ACP key is a deterministic clone of the origin session key's conversation identity (`buildAcpBindingSessionKey` over the origin conversation id) — new UI session ⇒ new ACP session (persistent until host retention); existing session ⇒ existing key. The 1:1 binding window per conversation is trivially debuggable.
