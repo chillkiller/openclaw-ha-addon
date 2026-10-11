@@ -336,13 +336,16 @@ export function createHarnessReplyClaimHandler(options: HarnessReplyClaimOptions
       const waitMs = readWaitMs(cfg);
       log.debug?.(`[${CHANNEL_ID}] inbound_claim: dispatching harness turn to ${target}`);
 
-      // Phase 2.21 barrier: when the target is the auto-provisioned per-agent
-      // session, its initialization may still be in flight (the resolve hands
-      // out the deterministic key fire-and-forget). Await it BEFORE starting
-      // the turn — a not-yet-initialized key would dispatch into the host's
-      // "stale" ACP error. Failure does not block the claim: the turn start in
-      // the target surfaces the host's ACP init error (handled:true), so the
-      // origin dispatch cannot process it twice.
+      // Phase 2.21 barrier: when the target is an auto-provisioned session, its
+      // initialization may still be in flight (the resolve hands out the
+      // deterministic key fire-and-forget). Await it BEFORE starting the turn —
+      // a not-yet-initialized key would dispatch into the host's "stale" ACP
+      // error. Phase 2.24 (Klon-Modus): clone keys fire via the record's
+      // `metadata.provisioned` flag (binding-adapter/bridge set it on the
+      // provisioned leg); `isHarnessProvisionedSessionKey` stays as the legacy
+      // fallback for pre-2.24 keys. Failure does not block the claim: the turn
+      // start in the target surfaces the host's ACP init error (handled:true),
+      // so the origin dispatch cannot process it twice.
       if (provisioned || isHarnessProvisionedSessionKey(agentId, target)) {
         // Phase 2.22: barrier keyed by the TARGET session key (cwd-scoped
         // provisioned keys are not derivable from the agent id).

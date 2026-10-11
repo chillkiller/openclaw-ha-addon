@@ -1238,25 +1238,37 @@ describe("dashboard-bridge: Phase 2.21 auto-provisioning — bridge roster path"
     expect(synthesizeDashboardBindingRecord(decision!)?.metadata?.provisioned).toBeUndefined();
   });
 
-  it("roster mit Provisioner: deterministischer per-agent Key, Kick gefeuert (deduped), targetOrigin provisioniert", () => {
+  it("roster mit Provisioner: Klon-Key der Konversation, Kick gefeuert (deduped), targetOrigin provisioniert", () => {
     const kicks: string[] = [];
     setDashboardBindingProvisioner(async () => {
       kicks.push("ensure");
     });
     const roster = harnessRoster();
+    // Phase 2.24: die conversational bridge-leg (harnessProvisionedTarget im
+    // decision path) klont die ORIGIN-Konversation — der decision target ist
+    // ihr eigener Klon-Key.
+    const cloneKey = buildDashboardAcpTargetSessionKey({
+      agentId: "codex",
+      conversationId: CODEX_DASHBOARD_KEY,
+    });
+    // Die (deprecated) Legacy-Roster-Methode läuft weiterhin über den
+    // per-Agent-Pseudo-Key (`harness:<agent>`-Klon) — unverändertes Verhalten.
     const provisionedKey = buildHarnessProvisionedSessionKey({ agentId: "codex" });
     expect(roster.harnessProvisionedTargetKey?.("codex")).toBe(provisionedKey);
-    // Deterministisch + Kick deduped (Signature-Cache nach Erfolg).
     expect(roster.harnessProvisionedTargetKey?.("codex")).toBe(provisionedKey);
     expect(kicks).toHaveLength(1);
 
     const decision = resolveDashboardBindingDecision(ref, roster);
     expect(decision?.targetOrigin).toBe("provisioned");
-    expect(decision?.targetSessionKey).toBe(provisionedKey);
+    expect(decision?.targetSessionKey).toBe(cloneKey);
+    // (Die legacy pseudo-id-leg kickt EINEN eigenen Ensure; die conversational
+    // decision-leg einen zweiten auf ihrem Klon-Key.)
+    expect(kicks).toHaveLength(2);
     const record = synthesizeDashboardBindingRecord(decision!);
     expect(record.metadata?.provisioned).toBe(true);
     // Stabilität: resolve → re-resolve identisch (host stability check).
     expect(resolveDashboardBinding(ref, { roster })).toEqual(record);
+    expect(kicks).toHaveLength(2);
   });
 
   it("autoProvision:false oder de-rostered Agent: kein Kick, kein provisioniertes Target", () => {
@@ -1284,18 +1296,22 @@ describe("dashboard-bridge: Phase 2.21 auto-provisioning — bridge roster path"
     expect(decision?.targetSessionKey).toBe(REAL_CODEX_KEY);
   });
 
-  it("§4.2-Parität: Bridge-Resolver UND Adapter-Derive handen denselben provisionierten Key aus", async () => {
+  it("§4.2-Parität: Bridge-Resolver UND Adapter-Derive handen denselben provisionierten Klon-Key aus", async () => {
     setDashboardBindingProvisioner(async () => {});
     const roster = harnessRoster();
     const shared = resolveDashboardBinding(ref, { roster });
     const derived = deriveDashboardBindingRecord(ref, harnessRosterConfig());
     expect(derived?.targetSessionKey).toBe(shared?.targetSessionKey);
     expect(derived?.metadata?.provisioned).toBe(true);
-    expect(shared?.targetSessionKey).toBe(buildHarnessProvisionedSessionKey({ agentId: "codex" }));
+    // Phase 2.24: der Klon-Key der origin conversation.
+    expect(shared?.targetSessionKey).toBe(buildDashboardAcpTargetSessionKey({
+      agentId: "codex",
+      conversationId: CODEX_DASHBOARD_KEY,
+    }));
   });
 
-  // --- Phase 2.22: origin-workspace cwd (GaRoN Phase B) ---
-  it("roster.harnessProvisionedTarget mit Origin-Workspace: cwd-scoped Key + cwd in Decision und Metadata", () => {
+  // --- Phase 2.22/2.24: origin-workspace cwd (GaRoN Phase B) — cwd im Ensure-Spec, NICHT im Key ---
+  it("roster.harnessProvisionedTarget mit Origin-Workspace: Klon-Key + cwd in Decision und Metadata", () => {
     setDashboardBindingProvisioner(async () => {});
     setOriginWorkspaceReader(() => ({ projectId: "openclaw-ha-addon", sessionRoot: ORIGIN_WS_CWD }));
     const roster = createConfigHarnessRoster(harnessRosterConfig());
@@ -1303,13 +1319,19 @@ describe("dashboard-bridge: Phase 2.21 auto-provisioning — bridge roster path"
     const target = roster.harnessProvisionedTarget?.("codex", ref);
     expect(target).not.toBeNull();
     expect(target?.cwd).toBe(ORIGIN_WS_CWD);
-    expect(target?.targetKey).toBe(
-      buildHarnessProvisionedSessionKey({ agentId: "codex" }, ORIGIN_WS_CWD),
-    );
+    // Klon-Modus: der Key ist der Klon der origin conversation; der cwd liegt
+    // NUR im Ergebnis/Ensure-Spec, nicht in der Key-Identität.
+    expect(target?.targetKey).toBe(buildDashboardAcpTargetSessionKey({
+      agentId: "codex",
+      conversationId: CODEX_DASHBOARD_KEY,
+    }));
 
     const decision = resolveDashboardBindingDecision(ref, roster)!;
     expect(decision.targetOrigin).toBe("provisioned");
-    expect(decision.targetSessionKey).toBe(buildHarnessProvisionedSessionKey({ agentId: "codex" }, ORIGIN_WS_CWD));
+    expect(decision.targetSessionKey).toBe(buildDashboardAcpTargetSessionKey({
+      agentId: "codex",
+      conversationId: CODEX_DASHBOARD_KEY,
+    }));
     expect(decision.provisionedCwd).toBe(ORIGIN_WS_CWD);
     expect(decision.provisionedCwdSource).toBe("origin-session-root");
 
@@ -1326,14 +1348,18 @@ describe("dashboard-bridge: Phase 2.21 auto-provisioning — bridge roster path"
     expect(roster.harnessProvisionedTargetKey?.("codex")).toBe(buildHarnessProvisionedSessionKey({ agentId: "codex" }));
   });
 
-  it("§4.2-Parität mit Origin-Workspace: Bridge-Resolver und Adapter-Derive teilen denselben cwd-scoped Key", async () => {
+  it("§4.2-Parität mit Origin-Workspace: Bridge-Resolver und Adapter-Derive teilen denselben Klon-Key (cwd in Metadata)", async () => {
     setDashboardBindingProvisioner(async () => {});
     setOriginWorkspaceReader(() => ({ projectId: "openclaw-ha-addon", sessionRoot: ORIGIN_WS_CWD }));
     const roster = createConfigHarnessRoster(harnessRosterConfig());
     const shared = resolveDashboardBinding(ref, { roster });
     const derived = deriveDashboardBindingRecord(ref, harnessRosterConfig());
     expect(shared?.targetSessionKey).toBe(derived?.targetSessionKey);
-    expect(shared?.targetSessionKey).toBe(buildHarnessProvisionedSessionKey({ agentId: "codex" }, ORIGIN_WS_CWD));
+    // Klon-Key (identisch wie OHNE Origin-Treffer); der cwd lebt nur im Metadata/Ensure-Spec.
+    expect(shared?.targetSessionKey).toBe(buildDashboardAcpTargetSessionKey({
+      agentId: "codex",
+      conversationId: CODEX_DASHBOARD_KEY,
+    }));
     expect(derived?.metadata?.cwd).toBe(ORIGIN_WS_CWD);
     expect(shared?.metadata?.cwd).toBe(ORIGIN_WS_CWD);
     expect(shared?.metadata?.originWorkspace).toBe("origin-session-root");

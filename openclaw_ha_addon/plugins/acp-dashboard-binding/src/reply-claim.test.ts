@@ -27,7 +27,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   CHANNEL_ID,
-  buildHarnessProvisionedSessionKey,
+  buildAcpBindingSessionKey,
   getDashboardBindingPluginRoot,
   resetDashboardBindingPluginRootForTest,
   resetDashboardBindingProvisionerForTest,
@@ -89,6 +89,18 @@ function isPluginOwnedSessionBindingRecordLike(record: SessionBindingRecordLike 
 }
 
 const CODEX_REF = { channel: "webchat", accountId: "default", conversationId: CODEX_DASHBOARD_KEY };
+
+/**
+ * Phase 2.24 (Klon-Modus): der provisionierte Target-Key ist der Klon der
+ * ORIGIN-Dashboard-Konversation (Host-Grammatik) — der cwd fließt NICHT in den
+ * Key, nur in den Ensure-Spec.
+ */
+const CODEX_CLONE_KEY = buildAcpBindingSessionKey({
+  channel: "webchat",
+  accountId: "default",
+  conversationId: CODEX_DASHBOARD_KEY,
+  agentId: "codex",
+});
 
 const claimContextCodex = (pluginRoot: string): InboundClaimContextLike => ({
   pluginBinding: {
@@ -461,8 +473,8 @@ describe("inbound_claim: auto-provisioning barrier (Phase 2.21)", () => {
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const events: string[] = [];
-    setDashboardBindingProvisioner(async (spec, targetSessionKey) => {
-      events.push(`ensure-start:${targetSessionKey}`);
+    setDashboardBindingProvisioner(async (params) => {
+      events.push(`ensure-start:${params.targetSessionKey}`);
       await gate;
       events.push("ensure-done");
     });
@@ -486,7 +498,8 @@ describe("inbound_claim: auto-provisioning barrier (Phase 2.21)", () => {
     // Ensure hängt am Gate; der Claim wartet (kann nicht abschließen, BEVOR der
     // Ensure fertig ist — genau die Barrier-Semantik).
     await new Promise<void>((resolve) => setTimeout(resolve, 0));
-    const provKey = buildHarnessProvisionedSessionKey({ agentId: "codex" });
+    // Phase 2.24: der Target ist der Klon-Key der origin Dashboard-Konversation.
+    const provKey = CODEX_CLONE_KEY;
     expect(events).toEqual([`ensure-start:${provKey}`]);
     expect(settled).toBe(false);
     release();
@@ -513,13 +526,16 @@ describe("inbound_claim: auto-provisioning barrier (Phase 2.21)", () => {
     });
     setDashboardBindingPluginRoot(PLUGIN_ROOT);
     const result = await handler(event, claimContextCodex(PLUGIN_ROOT));
-    expect(runKeys).toEqual([buildHarnessProvisionedSessionKey({ agentId: "codex" })]);
+    expect(runKeys).toEqual([CODEX_CLONE_KEY]);
     expect(result.handled).toBe(true);
     expect(result.reply?.text).toBe("harness ready");
   });
 
   it("autoProvision:false → Barrier/Provision-Seam unangetastet, Target bleibt synthetisch", async () => {
-    setDashboardBindingProvisioner(async () => {});
+    let ensureKicks = 0;
+    setDashboardBindingProvisioner(async () => {
+      ensureKicks += 1;
+    });
     const runKeys: string[] = [];
     const subagent = stubRunRecording(runKeys);
     const handler = createHarnessReplyClaimHandler({
@@ -533,19 +549,22 @@ describe("inbound_claim: auto-provisioning barrier (Phase 2.21)", () => {
     setDashboardBindingPluginRoot(PLUGIN_ROOT);
     const result = await handler(event, claimContextCodex(PLUGIN_ROOT));
     expect(runKeys).toHaveLength(1);
-    expect(runKeys[0]).not.toBe(buildHarnessProvisionedSessionKey({ agentId: "codex" }));
+    // Phase 2.24: ohne Provisionierung synthetisiert die Kaskade denselben
+    // Klon-Key-Grammatik-Key (nur OHNE den Host-Ensure/metadata.provisioned) —
+    // der Barrier/ensure-Seam bleibt vollständig unangetastet.
+    expect(runKeys[0]).toBe(CODEX_CLONE_KEY);
+    expect(ensureKicks).toBe(0);
     expect(result.handled).toBe(true);
   });
 
-  // --- Phase 2.22: origin-workspace cwd → cwd-scoped provisionierter Target ---
-  it("Barrier mit Origin-cwd: scoped Ensure wartet am Claim-Gate, Turn startet im cwd-scoped Target", async () => {
+  // --- Phase 2.22/2.24: origin-workspace cwd → cwd im Ensure-Spec, NICHT im Key ---
+  it("Barrier mit Origin-cwd: Ensure wartet am Claim-Gate, Turn startet im Klon-Key (cwd nur im Ensure-Spec)", async () => {
     const ORIGIN_CWD = "/share/projekte/github/openclaw-ha-addon";
-    const scopedKey = buildHarnessProvisionedSessionKey({ agentId: "codex" }, ORIGIN_CWD);
     let release!: () => void;
     const gate = new Promise<void>((resolve) => { release = resolve; });
     const events: string[] = [];
-    setDashboardBindingProvisioner(async (spec, targetSessionKey) => {
-      events.push(`ensure-start:${targetSessionKey}:${spec.cwd}`);
+    setDashboardBindingProvisioner(async (params) => {
+      events.push(`ensure-start:${params.targetSessionKey}:${params.spec.cwd}`);
       await gate;
       events.push("ensure-done");
     });
@@ -566,17 +585,18 @@ describe("inbound_claim: auto-provisioning barrier (Phase 2.21)", () => {
       setDashboardBindingPluginRoot(PLUGIN_ROOT);
       const claimed = handler(event, claimContextCodex(PLUGIN_ROOT));
       await new Promise<void>((resolve) => setTimeout(resolve, 0));
-      // Der Ensure läuft am cwd-scoped Key mit dem ORIGIN-cwd im Spec — und der
-      // Claim wartet (Barrier keyed auf den scoped target key, nicht agentId).
-      expect(events).toEqual([`ensure-start:${scopedKey}:${ORIGIN_CWD}`]);
+      // Der Ensure läuft am Klon-Key mit dem ORIGIN-cwd im Spec — und der Claim
+      // wartet (Barrier keyed auf den target key, nicht agentId). Der Key bleibt
+      // exakt der Klon der origin Konversation: der cwd fließt NICHT in den Key.
+      expect(events).toEqual([`ensure-start:${CODEX_CLONE_KEY}:${ORIGIN_CWD}`]);
       release();
       const result = await claimed;
       expect(events).toEqual([
-        `ensure-start:${scopedKey}:${ORIGIN_CWD}`,
+        `ensure-start:${CODEX_CLONE_KEY}:${ORIGIN_CWD}`,
         "ensure-done",
-        `run:${scopedKey}`,
+        `run:${CODEX_CLONE_KEY}`,
       ]);
-      expect(runKeys).toEqual([scopedKey]);
+      expect(runKeys).toEqual([CODEX_CLONE_KEY]);
       expect(result.handled).toBe(true);
     } finally {
       resetOriginWorkspaceReaderForTest();

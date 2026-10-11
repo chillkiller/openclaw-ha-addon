@@ -19,8 +19,6 @@ import {
   setDashboardBindingPluginRoot,
   setDashboardBindingProvisioner,
   setOriginWorkspaceReader,
-  buildHarnessProvisionedConversationId,
-  isHarnessProvisionedSessionKey,
   type DashboardHarnessProvisioner,
 } from "./src/agent-map.js";
 import {
@@ -59,13 +57,22 @@ type AcpBindingRuntimeModule = {
 };
 
 /**
- * Maps a HarnessAgentSpec onto the host ensure contract's ConfiguredAcpBindingSpec.
+ * Maps a HarnessAgentSpec + the origin conversation onto the host ensure
+ * contract's ConfiguredAcpBindingSpec.
  *
- * Phase 2.23: `targetSessionKey` (the cascade's cwd-scoped per-cwd key) is
- * reverse-parsed back into the SAME conversationId the key was built from —
+ * Phase 2.24 (Klon-Modus, GaRoN 05:09): the spec's conversationId is the
+ * ORIGIN dashboard conversation key itself — the provisioner passes the origin
+ * conversation straight through from the cascade, so a NEW dashboard session
+ * (new conversation id) means a NEW ensure-spec conversationId, and
  * `buildConfiguredAcpSessionKey(spec)` (dist persistent-bindings.lifecycle) is
  * bit-for-bit `sha16("webchat:default:<conversationId>")` over the binding
- * grammar, so carrying the scoped id here makes ensure-key ≡ resolve-key.
+ * grammar → ensure-key ≡ resolve-key (one persistent ACP session per
+ * dashboard conversation, up to the host's default retention). The Phase-2.23
+ * `:ws:`-reverse-parse of the target key is GONE — no key text is parsed here
+ * anymore; the cwd continues to ride in `spec.cwd` (origin workspace when one
+ * resolved). The legacy `harness:<agent>` id only reaches this function via
+ * the deprecated bridge roster leg, where the conversation IS the pseudo id —
+ * consistent there too.
  */
 function configuredBindingSpecFromHarnessSpec(
   spec: {
@@ -75,33 +82,12 @@ function configuredBindingSpecFromHarnessSpec(
     cwd?: string;
     backend?: string;
   },
-  targetSessionKey?: string,
+  conversation: { channel: string; accountId: string; conversationId: string },
 ): Record<string, unknown> {
-  const base = buildHarnessProvisionedConversationId(spec.agentId);
-  let conversationId = base;
-  if (typeof targetSessionKey === "string" && targetSessionKey.includes(":ws:")) {
-    // Only the cwd-scoped per-cwd keys carry the `:ws:` marker; the legacy
-    // per-agent key (no scope) keeps the plain conversation id.
-    const scopedTarget = isHarnessProvisionedSessionKey(spec.agentId, targetSessionKey, spec.cwd);
-    const legacyTarget = isHarnessProvisionedSessionKey(spec.agentId, targetSessionKey);
-    if (scopedTarget || !legacyTarget) {
-      const wsMarker = ":ws:";
-      const start = base.length + wsMarker.length;
-      const colonAt = targetSessionKey.indexOf(`:ws:`, base.length);
-      if (colonAt === base.length) {
-        const tail = targetSessionKey.slice(colonAt + wsMarker.length);
-        const end = tail.indexOf(":");
-        const scopeHash = end === -1 ? tail : tail.slice(0, end);
-        if (scopeHash && /^[0-9a-f]{12}$/.test(scopeHash)) {
-          conversationId = `${base}:ws:${scopeHash}`;
-        }
-      }
-    }
-  }
   return {
     channel: BINDING_CHANNEL,
     accountId: BINDING_ACCOUNT_ID,
-    conversationId,
+    conversationId: conversation.conversationId,
     agentId: spec.agentId,
     acpAgentId: spec.harness ?? spec.agentId,
     mode: spec.mode,
@@ -126,14 +112,15 @@ function configuredBindingSpecFromHarnessSpec(
  * priority) and is no longer required.
  */
 function registerHarnessAutoProvision(api: OpenClawPluginApi): void {
-  // Phase 2.23 (key harmonization, GaRoN test 03:22): the provisioner receives
-  // the TARGET session key from the cascade (agent-map:969) — the cwd-scoped
-  // conversationId of that key MUST also go into the host ensure spec, so
+  // Phase 2.24 (Klon-Modus, GaRoN 05:09): the provisioner receives the origin
+  // conversation + target session key from the cascade and passes the origin
+  // conversationId STRAIGHT THROUGH into the host ensure spec —
   // `buildConfiguredAcpSessionKey(spec)` mints the acp_sessions row on the
-  // SAME key the resolve answers. Previously the target key was discarded and
-  // the legacy `harness:<agent>` id went into the spec — rows landed on
-  // `…:eb7bc…` while the UI routed to `…:ws:<hash>` (ACP_SESSION_INIT_FAILED).
-  const provisioner: DashboardHarnessProvisioner = async (spec, targetSessionKey) => {
+  // SAME key the resolve answers (ensure-key ≡ resolve-key), one persistent
+  // ACP session per dashboard conversation. The cwd rides in the spec too
+  // (origin workspace when one resolved); no key-text parsing here anymore
+  // (the Phase-2.23 `:ws:`-reverse-parse section was removed).
+  const provisioner: DashboardHarnessProvisioner = async (params) => {
     // Variable specifier: the module ships without .d.ts (excluded from the
     // npm package) — a non-literal import stays untyped and resolves at runtime.
     const sdk = (await import(ACP_BINDING_RUNTIME_SPECIFIER).catch(() => undefined)) as
@@ -145,7 +132,9 @@ function registerHarnessAutoProvision(api: OpenClawPluginApi): void {
     }
     const result = await ensure({
       cfg: api.config,
-      configuredBinding: { spec: configuredBindingSpecFromHarnessSpec(spec, targetSessionKey) },
+      configuredBinding: {
+        spec: configuredBindingSpecFromHarnessSpec(params.spec, params.conversation),
+      },
     });
     if (!result?.ok) {
       throw new Error(result?.error ?? "harness session provisioning failed");

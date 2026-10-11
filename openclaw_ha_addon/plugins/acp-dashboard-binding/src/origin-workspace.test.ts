@@ -22,7 +22,7 @@ const { DatabaseSync } = process.getBuiltinModule("node:sqlite") as {
 };
 
 import {
-  buildHarnessProvisionedSessionKey,
+  buildAcpBindingSessionKey,
   queryOriginWorkspace,
   resolveHarnessAgentSpec,
   resolveHarnessTargetOrigin,
@@ -131,11 +131,11 @@ describe("Phase 2.22 origin-workspace reader (echtes sqlite)", () => {
     });
   });
 
-  it("End-to-End: Resolve/Ensure herleitet cwd aus dem ORIGIN-Kontext und scopet den Key", () => {
+  it("End-to-End: Resolve/Ensure herleitet cwd aus dem ORIGIN-Kontext und klont den Origin-Key", () => {
     setOriginWorkspaceReader(readOriginWorkspaceRow);
-    const kicks: Array<{ cwd?: string; targetSessionKey: string }> = [];
-    setDashboardBindingProvisioner(async (spec, targetSessionKey) => {
-      kicks.push({ cwd: spec.cwd, targetSessionKey });
+    const kicks: Array<{ cwd?: string; targetSessionKey: string; conversationId?: string }> = [];
+    setDashboardBindingProvisioner(async (params) => {
+      kicks.push({ cwd: params.cwd ?? params.spec.cwd, targetSessionKey: params.targetSessionKey, conversationId: params.conversation.conversationId });
     });
     const spec = resolveHarnessAgentSpec(HARNESS_CFG, "claude")!;
     const resolved = resolveHarnessTargetOrigin(HARNESS_CFG, spec, CONV);
@@ -143,11 +143,14 @@ describe("Phase 2.22 origin-workspace reader (echtes sqlite)", () => {
     // Beweislauf-cwd (/share/temp/acp-rebuild) — exakt der GaRoN-Defekt.
     expect(resolved.cwd).toBe("/share/projekte/github/openclaw-ha-addon");
     expect(resolved.cwdSource).toBe("origin-session-root");
+    // Klon-Modus (Phase 2.24): der Key ist der Klon der ORIGIN-Konversation;
+    // der cwd liegt NUR im Ensure-Spec, nicht in der Key-Identität.
     expect(resolved.targetKey).toBe(
-      buildHarnessProvisionedSessionKey({ agentId: "claude" }, "/share/projekte/github/openclaw-ha-addon")
+      buildAcpBindingSessionKey({ channel: "webchat", accountId: "default", conversationId: CONV.conversationId, agentId: "claude" })
     );
     expect(kicks[0].cwd).toBe("/share/projekte/github/openclaw-ha-addon");
     expect(kicks[0].cwd).not.toBe("/share/temp/acp-rebuild");
+    expect(kicks[0].conversationId).toBe(CONV.conversationId);
 
     // Stabilität: zweiter Consult identisch, kein zweiter Ensure.
     expect(resolveHarnessTargetOrigin(HARNESS_CFG, spec, CONV)).toEqual(resolved);

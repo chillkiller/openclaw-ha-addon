@@ -849,6 +849,12 @@ export function resolveOriginWorkspaceCwd(
  * expression inside buildHarnessProvisionedSessionKey — so the host ensure
  * contract mints the acp_sessions row on the SAME key the resolve answers.
  * The legacy no-scope call keeps the pre-2.22 grammar untouched.
+ *
+ * @deprecated Phase 2.24 (Klon-Modus, GaRoN 05:09): the target cascade does NOT
+ * derive dashboard provisioning keys from this pseudo id anymore — the
+ * provisioned target is now the deterministic clone of the ORIGIN dashboard
+ * conversation key (resolveHarnessTargetOrigin). Kept exported unchanged for
+ * legacy keys minted by installs ≤ 0.7.13.13 and for the legacy-key tests.
  */
 export function buildHarnessProvisionedConversationId(agentId: unknown, cwdScope?: string): string {
   const base = `harness:${sanitizeAgentId(agentId)}`;
@@ -872,6 +878,13 @@ export function buildHarnessProvisionedConversationId(agentId: unknown, cwdScope
  * cwd-scope. Persistent ACP sessions keep their spawn cwd, so different origin
  * workspaces MUST get different sessions; sharing one per-agent key across
  * workspaces would make them close/reopen-fight over a single cwd.
+ *
+ * @deprecated Phase 2.24 (Klon-Modus, GaRoN 05:09): LEGACY grammar only — the
+ * ladder (resolveHarnessTargetOrigin) does NOT use this helper for dashboard
+ * conversations anymore (the clone of the origin dashboard key took over, which
+ * carries the cwd in the ensure spec, NOT in the key). Kept exported for
+ * legacy keys minted by installs ≤ 0.7.13.13 and backward-compat tests
+ * (notably the bridge roster's single-arg harnessProvisionedTargetKey leg).
  */
 export function buildHarnessProvisionedSessionKey(
   spec: Pick<HarnessAgentSpec, "agentId">,
@@ -887,7 +900,15 @@ export function buildHarnessProvisionedSessionKey(
   });
 }
 
-/** True when `sessionKey` is the auto-provisioned per-agent key of `agentId`. */
+/**
+ * True when `sessionKey` is the auto-provisioned per-agent key of `agentId`.
+ *
+ * @deprecated Phase 2.24 (Klon-Modus): only matches the LEGACY per-agent /
+ * `:ws:`-scoped grammar the ladder no longer mints for dashboard conversations.
+ * Still used downstream (reply-claim barrier) to recognize legacy keys of
+ * installs ≤ 0.7.13.13; clone keys are recognized via the record's
+ * `metadata.provisioned` flag instead.
+ */
 export function isHarnessProvisionedSessionKey(agentId: unknown, sessionKey: unknown, cwdScope?: string): boolean {
   if (!agentId || typeof sessionKey !== "string") return false;
   return sessionKey === buildHarnessProvisionedSessionKey({ agentId: sanitizeAgentId(agentId) }, cwdScope);
@@ -906,10 +927,30 @@ export function resolveAutoProvisionEnabled(cfg: unknown): boolean {
 
 /**
  * The provisioning seam: async ensure callback (runs the SDK ensure contract
- * for the agent's derived session key). Registered in index.ts at registerFull
- * with the plugin-api-backed implementation; null clears it (dispose).
+ * for the target session key). Registered in index.ts at registerFull with the
+ * plugin-api-backed implementation; null clears it (dispose).
+ *
+ * Phase 2.24 (Klon-Modus, GaRoN 05:09): single object param — ONE new field
+ * beats another positional slot, and the ensure implementation can destructure
+ * only what it uses. The object carries everything the host ensure contract
+ * needs in one place: the spec (with the EFFECTIVE spawn cwd already merged
+ * in), the ORIGIN conversation (its conversationId is the ensure-spec
+ * conversationId under the clone design — `buildConfiguredAcpSessionKey(spec)`
+ * is bit-identical with `targetSessionKey`), the target key itself, and the
+ * effective origin cwd (informational; duplicates spec.cwd when set).
  */
-export type DashboardHarnessProvisioner = (spec: HarnessAgentSpec, targetSessionKey: string) => Promise<unknown>;
+export type DashboardHarnessProvisionerParams = {
+  /** Ensure spec — carries the EFFECTIVE cwd (origin workspace when one resolved). */
+  spec: HarnessAgentSpec;
+  /** The ORIGIN dashboard conversation the provisioning consult came from. */
+  conversation: { channel: string; accountId: string; conversationId: string };
+  /** The target session key the resolve answers with (the origin-key clone). */
+  targetSessionKey: string;
+  /** Effective origin cwd (undefined = the spec's agent-default cwd applies). */
+  cwd?: string;
+};
+
+export type DashboardHarnessProvisioner = (params: DashboardHarnessProvisionerParams) => Promise<unknown>;
 
 let harnessProvisioner: DashboardHarnessProvisioner | null = null;
 /**
@@ -951,18 +992,25 @@ export function getDashboardBindingProvisioner(): DashboardHarnessProvisioner | 
 /**
  * Kicks (or joins) the ensure for ONE persistent session. Fire-and-forget by
  * design — resolves answer with the deterministic key immediately.
- * Phase 2.22: `cwdScope` (resolved origin cwd) BAKES the origin workspace into
- * the spawn — the ensure spec's cwd REPLACES the agent-default for this call,
- * and the dedupe key/target is the cwd-scoped session key (one key per
- * agent × cwd-scope). Returns the in-flight/settled status promise, or null
- * when autoProvision is disabled, no provisioner is registered, or the target
- * was already ensured with the identical spec signature (skip).
+ *
+ * Phase 2.24 (Klon-Modus, GaRoN 05:09): the TARGET key is passed in by the
+ * cascade (`targetSessionKey` — the clone of the origin dashboard key) instead
+ * of being derived here from agent id / cwd scope; the cwd does NOT partake in
+ * the key identity anymore, it only rides along into the ensure spec (spawn
+ * cwd) via `cwd`. Dedupe stays per target session key (signatures/spec cache
+ * unchanged) — the same conversation therefore always maps to the same ensure.
  */
-export function ensureDashboardHarnessProvisioning(cfg: unknown, spec: HarnessAgentSpec, cwdScope?: string): Promise<boolean> | null {
+export function ensureDashboardHarnessProvisioning(
+  cfg: unknown,
+  spec: HarnessAgentSpec,
+  conversation: { channel: string; accountId: string; conversationId: string },
+  targetSessionKey: string,
+  cwd?: string,
+): Promise<boolean> | null {
   if (!resolveAutoProvisionEnabled(cfg) || !harnessProvisioner) return null;
-  const agentId = sanitizeAgentId(spec.agentId);
-  const targetKey = buildHarnessProvisionedSessionKey({ agentId }, cwdScope);
-  const ensureSpec: HarnessAgentSpec = cwdScope ? { ...spec, cwd: cwdScope } : spec;
+  const targetKey = targetSessionKey.trim();
+  if (!targetKey || !isAcpShapedSessionKey(targetKey)) return null;
+  const ensureSpec: HarnessAgentSpec = cwd ? { ...spec, cwd } : spec;
   const signature = harnessSpecSignature(ensureSpec);
   const existing = provisioningInFlight.get(targetKey);
   if (existing) return existing;
@@ -974,12 +1022,21 @@ export function ensureDashboardHarnessProvisioning(cfg: unknown, spec: HarnessAg
   // at a time and the unconditional finally-delete cannot clobber a newer run.
   const run = (async () => {
     try {
-      await provisioner(ensureSpec, targetKey);
+      await provisioner({
+        spec: ensureSpec,
+        conversation,
+        targetSessionKey: targetKey,
+        ...(cwd ? { cwd } : {})
+      });
       provisionedSignatures.set(targetKey, signature);
       return true;
-    } catch {
+    } catch (ensureError) {
       // No signature — the next consult retries; the deterministic target meanwhile
       // surfaces the host's ACP init error to the conversation (handled there).
+      // Phase 2.23 diagnostics (GaRoN night session 04:0x): the ensure error was
+      // previously swallowed silently — surface it verbatim so the failed leg
+      // is debuggable from the log alone.
+      console.warn?.(`[acp-dashboard-binding] harness ensure failed for ${targetKey}: ${ensureError instanceof Error ? `${ensureError.name}: ${ensureError.message}` : String(ensureError)}`);
       return false;
     } finally {
       provisioningInFlight.delete(targetKey);
@@ -992,9 +1049,11 @@ export function ensureDashboardHarnessProvisioning(cfg: unknown, spec: HarnessAg
 /**
  * The pending provision for one target (null when none in flight). The reply-
  * claim barrier awaits this BEFORE starting the harness turn, so the first
- * dashboard message does not race the session initialization. Accepts EITHER
- * the exact target session key (Phase 2.22 — cwd-scoped keys) OR, for backward
- * compatibility, a bare agent id (→ the legacy per-agent key).
+ * dashboard message does not race the session initialization. Accepts the
+ * exact target session key (Phase 2.24: the raw clone key — works unchanged
+ * because the in-flight map is keyed by the full target key regardless of
+ * which grammar minted it), or, for backward compatibility, a bare agent id
+ * (→ the legacy per-agent key).
  */
 export function pendingDashboardHarnessProvisioning(targetOrAgentId: unknown): Promise<boolean> | null {
   const raw = typeof targetOrAgentId === "string" ? targetOrAgentId.trim() : "";
@@ -1006,24 +1065,32 @@ export function pendingDashboardHarnessProvisioning(targetOrAgentId: unknown): P
 export type HarnessTargetOrigin = "configured" | "provisioned" | "synthetic";
 
 /**
- * Target cascade for harness agent conversations (Phase 2.21 → 2.22) — ONE
+ * Target cascade for harness agent conversations (Phase 2.21 → 2.24) — ONE
  * derivation shared by the binding-adapter derive and the dashboard-bridge
  * synthesis so both halves hand out the same session key:
  *
  *   1. `harnessSessions` (manual override, highest priority — unchanged 2.18b)
- *   2. auto-provisioned session (fire-and-forget ensure + deterministic key;
- *      skipped when `autoProvision: false` or no provisioner registered).
- *      Phase 2.22: when an origin cwd resolves for THIS conversation
- *      (resolveOriginWorkspaceCwd ladder), the ensure spec's cwd is the ORIGIN
- *      workspace and the key is the cwd-scoped variant — one persistent
- *      session per agent × cwd-scope. Without an origin cwd the legacy
- *      per-agent key and the agent-default cwd apply, exactly as pre-2.22.
+ *   2. auto-provisioned session (fire-and-forget ensure + the deterministic
+ *      TARGET key; skipped when `autoProvision: false` or no provisioner
+ *      registered). Phase 2.24 (Klon-Modus, GaRoN 05:09): EVERY dashboard
+ *      conversation gets ITS OWN persistent ACP session — the target key is a
+ *      deterministic CLONE of the origin dashboard conversation's own
+ *      conversation key (`buildAcpBindingSessionKey` over the conversation
+ *      itself; host `buildConfiguredAcpSessionKey` grammar as always). A new
+ *      UI session ⇒ a new conversation id ⇒ a new ACP session key ⇒ a NEW
+ *      ACP session (persistent up to the host's default retention); an
+ *      existing conversation keeps its key/session. The cwd does NOT partake
+ *      in the key identity — it flows into the ensure spec (spawn cwd) via
+ *      the resolveOriginWorkspaceCwd ladder, which stays unchanged as the cwd
+ *      provider.
  *   3. synthetic per-conversation key (pre-2.21 fallback, never initialized
  *      host-side — documented Phase 2.18b limitation)
  *
- * The synthetic leg needs the conversation; the provisioned leg derives its
- * cwd-scope from it (Phase 2.22) — hence `conversation` is now expected on the
- * provisioned leg, too.
+ * NOTE: under the clone design the provisioned leg answers the SAME key the
+ * synthetic leg derives — the difference is the host-side ensure (the row IS
+ * minted on it), the metadata cwd/provisioned markers, and the reply-claim
+ * barrier. The synthetic leg remains for autoProvision:false / no-provisioner
+ * configs only.
  */
 export function resolveHarnessTargetOrigin(
   cfg: unknown,
@@ -1038,9 +1105,15 @@ export function resolveHarnessTargetOrigin(
     // cwd resolution is sync + memoized, so the answered key never flips
     // within one dispatch (resolve → touch → re-resolve stability).
     const ws = resolveOriginWorkspaceCwd(cfg, spec, conversation);
-    ensureDashboardHarnessProvisioning(cfg, spec, ws?.cwd);
+    const targetKey = buildAcpBindingSessionKey({
+      channel: conversation.channel,
+      accountId: conversation.accountId,
+      conversationId: conversation.conversationId,
+      agentId: sanitizeAgentId(spec.agentId)
+    });
+    ensureDashboardHarnessProvisioning(cfg, spec, conversation, targetKey, ws?.cwd);
     return {
-      targetKey: buildHarnessProvisionedSessionKey({ agentId: spec.agentId }, ws?.cwd),
+      targetKey,
       origin: "provisioned",
       ...(ws ? { cwd: ws.cwd, cwdSource: ws.source } : {})
     };
