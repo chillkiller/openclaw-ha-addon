@@ -1,3 +1,16 @@
+## [0.7.13.12] - 2026-10-11
+
+### Added
+- **Origin-workspace cwd derivation (Phase 2.22, owner GO GaRoN 03:10):** bound harness sessions inherit the origin dashboard conversation's working directory instead of a fixed one. Read-only `node:sqlite` ladder: `workspaces[<conversationId>]` > `workspaces[<projectId>]` > `session_nodes.entry_json.sessionRoot` > `projects.repo_root` > agent-default. Fail-soft everywhere (missing state dir/degraded node drops the cached handle and retries on a later turn; misses memoized with a 30 s TTL, hits permanently).
+- **Per-cwd deterministic session keys:** `harness:<agentId>:ws:<sha16(cwd)[0..12]>` — one persistent ACP session per agent × workspace; the ensure spec carries the resolved cwd directly into `acpManager.initializeSession` (meta-cwd ≠ spec-cwd would close+reinit, now impossible per scope).
+- **Plugin-config surface (manifest `configSchema`, reload-deadlock-safe):** `workspaces` (explicit cwd map, conversation-id keys beat project-id keys), `deriveOriginWorkspace` (default on, opt-out), plus previously-undeclared `harnessReplyWaitMs`.
+- **Binding eligibility gate (owner design rule 18:03):** only dashboard-class conversations (`agent:<id>:dashboard:<uuid>`, ≥4 parts) are auto-bound; `agent:<id>:main`, `acp`-class and unknown keys keep untouched builtin dispatch. The explicit `harnessSessions` override and explicit binding rows stay above the gate.
+- **E2E evidence (live-verified):** `resolveOriginWorkspaceCwd('claude', 'agent:claude:dashboard:65d8c362…')` → `{cwd: /share/projekte/github/openclaw-ha-addon, source: origin-session-root}` against the real claude agent DB.
+### Changed
+- Ensure dedupe/signature cache keyed per target key (per-cwd scope); legacy agent-id keys stay compatible.
+- Metadata parity: `metadata.cwd` (effective) + `metadata.originWorkspace` (ladder leg) on both synthesis paths.
+### Fixed
+- The synthetic-leg bootstrap trap for fresh dashboard conversations (the 17:51/20:56 `ACP_SESSION_INIT_FAILED` class): with derivation on, fresh conversations get a provisioned per-cwd key instead of an uninitialized synthetic key.
 ## [0.7.13.11] - 2026-10-10
 
 ### Fixed

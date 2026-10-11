@@ -2,6 +2,14 @@
 
 Release-facing summary. Detailed per-release engineering notes: [openclaw_ha_addon/CHANGELOG.md](openclaw_ha_addon/CHANGELOG.md).
 
+## 0.7.13.12 (2026-10-11) — origin-workspace cwd derivation
+
+- **Dashboard-bound harness sessions now inherit the origin session's working directory:** a new read-only `node:sqlite` reader derives the cwd from the origin dashboard conversation (`session_nodes.entry_json.sessionRoot` → `projects.repo_root` fallback). Sessions are spawned with `cwd = <repo>` instead of a fixed workspace, so harness agents (claude/codex/opencode) work inside the project folder they were opened from.
+- **Per-cwd deterministic session keys:** `harness:<agent>:ws:<sha16(cwd)[0..12]>` — one persistent ACP session per agent × workspace, no close/reopen thrash on cwd change.
+- **Config surface (all plugin-config):** `workspaces` (explicit cwd map by conversation id or project id), `deriveOriginWorkspace` (default on), `harnessReplyWaitMs` — declared in the plugin manifest `configSchema` (reload-deadlock-safe).
+- **Binding eligibility gate:** only real dashboard-class conversations (`agent:<id>:dashboard:<uuid>`) bind to harness sessions; `agent:<id>:main`, `acp`-class and unknown keys keep their builtin dispatch (owner design rule). Explicit `harnessSessions` overrides still win.
+- Tests: 149/149 vitest, strict TypeScript clean.
+
 ## 0.7.13.4 (2026-10-09) — audit hotfix: injection & data-loss hardening
 
 - **Security — verified root command-execution via `gateway_remote_url` removed:** the remote-URL parser was `eval`'d shell code; shell metacharacters inside the user-controlled URL executed as root at boot. Replaced with plain-data hand-off (no `eval`), plus character-validated hostnames.
