@@ -71,6 +71,7 @@ import {
   resolveHarnessTargetOrigin,
   type HarnessAgentSpec,
   isBindEligibleConversationId,
+  isMainConversationEligible,
   isAcpShapedSessionKey,
   normalizeAccountId,
   normalizeChannelId,
@@ -186,7 +187,11 @@ export type DashboardBindingAdapterOptions = {
  * Derives a deterministic binding record for the conversation.
  *
  * Returns null when the conversation does not map to a harness agent —
- * main/unknown agents keep their untouched dispatch (acceptance #4).
+ * unknown/non-roster agents keep their untouched dispatch (acceptance #4).
+ * Phase 2.24b (Klon-Modus MAIN, GaRoN 06:26 'B GO'): the MAIN conversation of
+ * a roster harness agent (`agent:<id>:main` EXACT, `bindMainSessions !==
+ * false`) binds too — `isMainConversationEligible`; the dashboard gate
+ * (18:03-Regel) stays untouched and answers dashboard-class ids only.
  */
 function deriveBindingRecord(ref: BindingConversationRef, options: DashboardBindingAdapterOptions): DashboardBindingRecord | null {
   const channel = normalizeChannelId(ref.channel) || BINDING_CHANNEL;
@@ -194,9 +199,11 @@ function deriveBindingRecord(ref: BindingConversationRef, options: DashboardBind
   const conversationId = typeof ref.conversationId === "string" ? ref.conversationId.trim() : "";
   if (!conversationId) return null;
 
-  // GaRoN binding-eligibility gate: only real dashboard-class conversations
-  // (or explicit binds, handled above) may link to a harness agent.
-  if (!isBindEligibleConversationId(conversationId)) return null;
+  // GaRoN binding-eligibility gates (BOTH, SEPArate shapes): real dashboard-
+  // class conversations (Phase 2.10 18:03-Regel, UNVERÄNDERT) and — Phase
+  // 2.24b (Klon-Modus MAIN) — the main conversation of a roster harness
+  // agent. Explicit binds were handled above (they arrive via bind()).
+  if (!isBindEligibleConversationId(conversationId) && !isMainConversationEligible(options.getConfig?.(), conversationId)) return null;
 
   const agentId = parseAgentIdFromConversationId(conversationId);
   if (!agentId) return null;

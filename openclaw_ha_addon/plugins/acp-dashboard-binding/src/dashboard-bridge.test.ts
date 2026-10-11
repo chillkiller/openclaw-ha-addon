@@ -248,6 +248,20 @@ describe("dashboard-bridge: decision + synthesized plain record", () => {
       roster,
     )).toBeNull();
   });
+
+  it("Phase 2.24b: die Bridge-Entscheidung bleibt DASHBOARD-only — agent:<id>:main läuft über den Adapter-Derive (isMainConversationEligible)", () => {
+    const roster = createConfigHarnessRoster({
+      agents: {
+        entries: {
+          claude: { runtime: { type: "acp", acp: { backend: "acpx", cwd: "/config/clawd/agents/claude" } } },
+        },
+      },
+    });
+    expect(resolveDashboardBindingDecision(
+      { channel: "webchat", accountId: "default", conversationId: "agent:claude:main" },
+      roster,
+    )).toBeNull();
+  });
 });
 
 describe("dashboard-bridge: standalone webchat adapter", () => {

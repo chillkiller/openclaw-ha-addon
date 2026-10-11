@@ -21,6 +21,8 @@ import {
   resolveHarnessAgentSpec,
   resolveHarnessAgentSpecs,
   isBindEligibleConversationId,
+  isMainConversationEligible,
+  resolveBindMainSessionsEnabled,
   resolveHarnessSessionTargetKey,
   resolveHarnessTargetOrigin,
   resolveOpenClawStateDir,
@@ -307,15 +309,10 @@ describe("Phase 2.18b harnessSessions (F3 Weg A)", () => {
     expect(record?.metadata?.pluginBindingOwner).toBeUndefined();
   });
 
-  it("ignores agent:<harness>:main conversations", async () => {
-    const adapter = createDashboardBindingAdapter({ getConfig: () => HARNESS_CFG });
-    const record = await adapter.resolveByConversationAsync!({
-      channel: BINDING_CHANNEL,
-      accountId: "default",
-      conversationId: "agent:claude:main",
-    });
-    expect(record).toBeNull();
-  });
+  // Phase 2.24b (GaRoN 06:26 'B GO'): `agent:<id>:main` binds NOW (MAIN-Klon)
+  // for roster agents with `bindMainSessions !== false` — the dedicated
+  // describe block "Phase 2.24b — MAIN-Klon" below proofs it. acp-class keys
+  // keep the rejection (next test).
 
   it("ignores acp-class conversation ids", async () => {
     const adapter = createDashboardBindingAdapter({ getConfig: () => HARNESS_CFG });
@@ -1023,6 +1020,176 @@ describe("Phase 2.24: Klon-Modus — Klon-Keys pro Dashboard-Konversation", () =
     expect(resolved.targetKey).toBe(
       buildAcpBindingSessionKey({ channel: "webchat", accountId: "default", conversationId: KEY_A, agentId: "codex" })
     );
+  });
+});
+
+// --- Phase 2.24b: MAIN-Klon (GaRoN 06:26 'B GO') — agent:<id>:main wird gebunden.
+// Nachweis-Kontext (Orchestrator, Nacht): agent:claude:main-Turns WERDEN über die
+// Binding-Service-Kette konsultiert (conversationId 'agent:claude:main'), das
+// Phase-2.10-Gate lehnte 3-Tel-Keys ab → resolve null → Host builtin. Der neue
+// Gate (isMainConversationEligible) bindet die MAIN-Konversation von
+// Roster-agents; der Klon-Key ist für claude EXAKT der "Nachtklassiker"
+// agent:claude:acp:binding:webchat:default:60bac3d65e697154
+// (live-verified: sha256("webchat:default:agent:claude:main")[0..16]).
+describe("Phase 2.24b: MAIN-Klon (agent:<id>:main)", () => {
+  const MAIN_KEY_CLAUDE = "agent:claude:main";
+  // Der Nachtklassiker — Klon-Regel 1:1 über die Host-Grammatik:
+  const CLAUDE_MAIN_CLONE_KEY = buildAcpBindingSessionKey({
+    channel: "webchat",
+    accountId: "default",
+    conversationId: MAIN_KEY_CLAUDE,
+    agentId: "claude"
+  });
+
+  afterEach(() => {
+    resetDashboardBindingProvisionerForTest();
+    resetOriginWorkspaceReaderForTest();
+  });
+
+  const mainRef = (agentId: string) => ({ channel: BINDING_CHANNEL, accountId: "default", conversationId: `agent:${agentId}:main` });
+
+  it("(1) Gate-Matrix isMainConversationEligible: exakter Shape, Flag, Roster", () => {
+    expect(isMainConversationEligible(HARNESS_CFG, MAIN_KEY_CLAUDE)).toBe(true);
+    expect(isMainConversationEligible(HARNESS_CFG, "agent:codex:main")).toBe(true);
+    expect(isMainConversationEligible(HARNESS_CFG, "agent:root:main")).toBe(false);       // native entry = kein Roster
+    expect(isMainConversationEligible(HARNESS_CFG, "agent:nosuchagent:main")).toBe(false); // unbekannter agent
+    expect(isMainConversationEligible(HARNESS_CFG, "agent:main:main")).toBe(false);        // safe-default exclusion (Orchestrator)
+    expect(isMainConversationEligible(HARNESS_CFG, "agent:coding-main:main")).toBe(false); // ebenso Coding-Orchestratoren
+    expect(isMainConversationEligible(HARNESS_CFG, "agent:claude:main:thread")).toBe(false); // 4-Tel = NICHT der exakte Shape
+    expect(isMainConversationEligible(HARNESS_CFG, "agent:claude:dashboard:uuid")).toBe(false); // dashboard-Gate-Domäne, NICHT main-Gate
+    expect(isMainConversationEligible(HARNESS_CFG, "telegram:claude:main")).toBe(false);
+    expect(isMainConversationEligible(HARNESS_CFG, "agent:claude:acp:bogus")).toBe(false);
+    expect(isMainConversationEligible(HARNESS_CFG, "agentClaudeMain")).toBe(false);
+    expect(isMainConversationEligible(HARNESS_CFG, "")).toBe(false);
+    expect(isMainConversationEligible(HARNESS_CFG, null)).toBe(false);
+    // Der dashboard-Gate SELBST bleibt UNVERÄNDERT (18:03-Regel-Geschichte):
+    expect(isBindEligibleConversationId(MAIN_KEY_CLAUDE)).toBe(false);
+    expect(isBindEligibleConversationId("agent:codex:dashboard:xyz")).toBe(true);
+
+    // bindMainSessions:false — Config-Flag (default TRUE).
+    const off = {
+      agents: HARNESS_CFG.agents,
+      plugins: { entries: { [CHANNEL_ID]: { config: { bindMainSessions: false } } } },
+    } as const;
+    expect(isMainConversationEligible(off, MAIN_KEY_CLAUDE)).toBe(false);
+    // …und der dashboard-Gate bleibt davon UNBERÜHRT (separate Regeln!):
+    expect(isBindEligibleConversationId("agent:codex:dashboard:xyz")).toBe(true);
+    // Escape-Hatch: boundAgents positive list bindet main auch für ansonsten
+    // ausgeschlossene Orchestratoren (Phase-2.17-Präzedenz gilt unverändert).
+    const explicit = {
+      agents: HARNESS_CFG.agents,
+      plugins: { entries: { [CHANNEL_ID]: { config: { boundAgents: ["codex"] } } } },
+    } as const;
+    expect(isMainConversationEligible(explicit, "agent:codex:main")).toBe(true);
+  });
+
+  it("(2) MAIN-Klon bindet: Adapter-Record mit EXAKT dem Ghost-Key 60bac3d65e697154 als ensured Target", async () => {
+    const ensured: string[] = [];
+    setDashboardBindingProvisioner(async (params) => {
+      ensured.push(params.targetSessionKey);
+    });
+    const adapter = createDashboardBindingAdapter({ getConfig: () => HARNESS_CFG });
+    const record = await adapter.resolveByConversationAsync!({
+      channel: BINDING_CHANNEL,
+      accountId: "default",
+      conversationId: MAIN_KEY_CLAUDE,
+    });
+    expect(record).not.toBeNull();
+    expect(record?.targetSessionKey).toBe(CLAUDE_MAIN_CLONE_KEY);
+    // Der Nachtklassiker LITERALLY:
+    expect(record?.targetSessionKey).toBe("agent:claude:acp:binding:webchat:default:60bac3d65e697154");
+    expect(record?.targetSessionKey).toBe(`agent:claude:acp:binding:webchat:default:${expectedHostHash("webchat", "default", MAIN_KEY_CLAUDE)}`);
+    // Provisioned leg: ensure gekickt auf dem Klon-Key (der alte Ghost wird zum geensurten Key).
+    expect(record?.metadata?.provisioned).toBe(true);
+    expect(record?.metadata?.agentId).toBe("claude");
+    // Kein Origin-cwd (main-Zeile trägt keines, live-verifiziert) → Agent-Default-cwd aus der Entry.
+    expect(record?.metadata?.cwd).toBe("/share/temp/claude-ws");
+    expect(record?.metadata?.originWorkspace).toBeUndefined();
+    // Klon-Regel 1:1: der ensure-spec conversationId IST der origin session-key-Text.
+    expect(ensured).toEqual([CLAUDE_MAIN_CLONE_KEY]);
+    // Host-Stabilitätsvertrag: identischer Record über resolve → touch → re-resolve.
+    const rec2 = await adapter.resolveByConversationAsync!({
+      channel: BINDING_CHANNEL,
+      accountId: "default",
+      conversationId: MAIN_KEY_CLAUDE,
+    });
+    expect(rec2).toEqual(record);
+  });
+
+  it("(3) MAIN-Klon für NICHT-Roster-agents bindet NICHT", async () => {
+    setDashboardBindingProvisioner(async () => {});
+    const adapter = createDashboardBindingAdapter({ getConfig: () => HARNESS_CFG });
+    expect(await adapter.resolveByConversationAsync!({ ...DASHBOARD_REF, conversationId: "agent:root:main" })).toBeNull();
+    expect(await adapter.resolveByConversationAsync!({ ...DASHBOARD_REF, conversationId: "agent:nosuchagent:main" })).toBeNull();
+    expect(await adapter.resolveByConversationAsync!({ ...DASHBOARD_REF, conversationId: "agent:main:main" })).toBeNull();
+    expect(await adapter.resolveByConversationAsync!({ ...DASHBOARD_REF, conversationId: "agent:coding-main:main" })).toBeNull();
+    // Dashboard-Leg UNBERÜHRT: gültige dashboard-Konversationen binden weiter.
+    expect(await adapter.resolveByConversationAsync!(DASHBOARD_REF)).not.toBeNull();
+  });
+
+  it("(4) bindMainSessions:false → MAIN-Klon bindet NICHT (dashboard-Leg UNBERÜHRT)", async () => {
+    const cfgOff = {
+      agents: HARNESS_CFG.agents,
+      plugins: { entries: { [CHANNEL_ID]: { config: { bindMainSessions: false } } } },
+    } as const;
+    setDashboardBindingProvisioner(async () => {});
+    const adapter = createDashboardBindingAdapter({ getConfig: () => cfgOff });
+    expect(await adapter.resolveByConversationAsync!({
+      channel: BINDING_CHANNEL, accountId: "default", conversationId: MAIN_KEY_CLAUDE,
+    })).toBeNull();
+    // Dashboard-Konversationen binden WEITER (separate gates, separate flags).
+    const record = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
+    expect(record).not.toBeNull();
+    expect(resolveBindMainSessionsEnabled(cfgOff)).toBe(false);
+    expect(resolveBindMainSessionsEnabled(HARNESS_CFG)).toBe(true);
+  });
+
+  it("(5) harnessSessions-Override gilt auch für main (dokumentiert: Override bleibt oberste Kaskaden-Prio)", () => {
+    const cfg = withHarnessSessions({ claude: REAL_CODEX_SESSION_KEY });
+    const spec = resolveHarnessAgentSpec(cfg, "claude")!;
+    const resolved = resolveHarnessTargetOrigin(cfg, spec, {
+      channel: BINDING_CHANNEL, accountId: "default", conversationId: MAIN_KEY_CLAUDE,
+    });
+    expect(resolved.origin).toBe("configured");
+    expect(resolved.targetKey).toBe(REAL_CODEX_SESSION_KEY);
+  });
+
+  it("(6) Ensure-Spec für main: conversationId = der origin session-key-Text 'agent:claude:main' (KEINE Reverse-Parse)", () => {
+    const seen: Array<{ conversationId?: string; targetSessionKey?: string; cwd?: string }> = [];
+    setDashboardBindingProvisioner(async (params) => {
+      seen.push({ conversationId: params.conversation.conversationId, targetSessionKey: params.targetSessionKey, cwd: params.cwd });
+    });
+    const spec = resolveHarnessAgentSpec(HARNESS_CFG, "claude")!;
+    const resolved = resolveHarnessTargetOrigin(HARNESS_CFG, spec, {
+      channel: BINDING_CHANNEL, accountId: "default", conversationId: MAIN_KEY_CLAUDE,
+    });
+    expect(resolved.origin).toBe("provisioned");
+    expect(seen).toEqual([{
+      conversationId: MAIN_KEY_CLAUDE,      // ← der Text SELBST (Klon-Regel 1:1)
+      targetSessionKey: CLAUDE_MAIN_CLONE_KEY,
+      cwd: undefined,                        // ← kein origin-cwd (verifiziert 2026-10-11) → agent-default
+    }]);
+    // ensure-key ≡ resolve-key by construction (host buildConfiguredAcpSessionKey).
+    expect(resolved.targetKey).toBe(`agent:claude:acp:binding:webchat:default:${expectedHostHash("webchat", "default", MAIN_KEY_CLAUDE)}`);
+  });
+
+  it("(7) cwd-Ladder für main: reader miss (live-verifiziert) → Agent-Default; entry_json.cwd-Bein (forward-compat) greift, wenn vorhanden", () => {
+    setDashboardBindingProvisioner(async () => {});
+    const spec = resolveHarnessAgentSpec(HARNESS_CFG, "claude")!;
+    // Kein Reader → kein origin-cwd (live 2026-10-11: die main-Zeile trägt
+    // kein cwd in entry_json) → Agent-Default (metadata.cwd = entry.cwd).
+    expect(resolveOriginWorkspaceCwd(HARNESS_CFG, spec, { conversationId: MAIN_KEY_CLAUDE })).toBeNull();
+    // Reader mit cwd-Feld (forward-compat): die MAIN-Konversation erreicht den
+    // Reader NUN (Phase 2.24b) und das neue Bein `origin-entry-cwd` greift.
+    setOriginWorkspaceReader(() => ({ cwd: "/config/clawd/agents/claude" }));
+    const resolved = resolveOriginWorkspaceCwd(HARNESS_CFG, spec, { conversationId: MAIN_KEY_CLAUDE });
+    expect(resolved).toEqual({ cwd: "/config/clawd/agents/claude", source: "origin-entry-cwd" });
+    // Dashboard-Beine bleiben UNVERÄNDERT: sessionRoot schlägt entry-cwd.
+    setOriginWorkspaceReader(() => ({ sessionRoot: "/share/projekte/github/openclaw-ha-addon", cwd: "/other" }));
+    expect(resolveOriginWorkspaceCwd(HARNESS_CFG, spec, { conversationId: "agent:claude:dashboard:uuid" })).toEqual({
+      cwd: "/share/projekte/github/openclaw-ha-addon",
+      source: "origin-session-root"
+    });
   });
 });
 

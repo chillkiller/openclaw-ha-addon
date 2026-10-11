@@ -23,9 +23,11 @@ const { DatabaseSync } = process.getBuiltinModule("node:sqlite") as {
 
 import {
   buildAcpBindingSessionKey,
+  parseOriginWorkspaceEntryJson,
   queryOriginWorkspace,
   resolveHarnessAgentSpec,
   resolveHarnessTargetOrigin,
+  resolveOriginWorkspaceCwd,
   resetDashboardBindingProvisionerForTest,
   resetOriginWorkspaceReaderForTest,
   setDashboardBindingProvisioner,
@@ -159,5 +161,46 @@ describe("Phase 2.22 origin-workspace reader (echtes sqlite)", () => {
     // Memoized seam: queryOriginWorkspace hit, kein erneuter DB-Read nötig.
     expect(queryOriginWorkspace("claude", CONV.conversationId)?.sessionRoot)
       .toBe("/share/projekte/github/openclaw-ha-addon");
+  });
+
+  it("Phase 2.24b MAIN-Zeile: heute KEIN cwd in entry_json (live 2026-10-11) → Agent-Default; forward-compat-Bein greift, sobald eins dasteht", () => {
+    const spec = resolveHarnessAgentSpec(HARNESS_CFG, "claude")!;
+    setOriginWorkspaceReader(readOriginWorkspaceRow);
+    // Live-Befund: die agent:claude:main-Zeile (entry_json NULL, project_id NULL)
+    // → reader-Antwort null → resolveOriginWorkspaceCwd null → Agent-Default-cwd.
+    expect(readOriginWorkspaceRow("claude", "agent:claude:main")).toBeNull();
+    expect(resolveOriginWorkspaceCwd(HARNESS_CFG, spec, { conversationId: "agent:claude:main" })).toBeNull();
+
+    // Forward-compat: sobald eine main-Zeile ein cwd in entry_json trägt, liest
+    // der Reader es; das neue Ladder-Bein `origin-entry-cwd` antwortet.
+    const agentDb = new DatabaseSync(join(stateDir, "agents", "claude", "agent", "openclaw-agent.sqlite"));
+    agentDb.prepare("DELETE FROM session_nodes WHERE session_key = ?").run("agent:claude:main");
+    agentDb.prepare(
+      "INSERT INTO session_nodes (session_key, project_id, entry_json) VALUES (?, ?, ?)"
+    ).run(
+      "agent:claude:main",
+      null,
+      JSON.stringify({ sessionId: "0f285da9", cwd: "/config/clawd/agents/claude" })
+    );
+    agentDb.close();
+    // Cache der null-Miss-Phase (permanent/30s-TTL) leeren UND den Seam neu setzen.
+    resetOriginWorkspaceReaderForTest();
+    setOriginWorkspaceReader(readOriginWorkspaceRow);
+    expect(readOriginWorkspaceRow("claude", "agent:claude:main")).toEqual({ cwd: "/config/clawd/agents/claude" });
+    expect(parseOriginWorkspaceEntryJson(JSON.stringify({ sessionId: "x", cwd: "/tmp/x-y-z" }))).toEqual({ cwd: "/tmp/x-y-z" });
+    expect(parseOriginWorkspaceEntryJson(JSON.stringify({ sessionId: "x" }))).toBeNull();
+    expect(resolveOriginWorkspaceCwd(HARNESS_CFG, spec, { conversationId: "agent:claude:main" })).toEqual({
+      cwd: "/config/clawd/agents/claude",
+      source: "origin-entry-cwd",
+    });
+    // Relative/garbage-cwd-Werte zählen NICHT (nur absolute Pfade).
+    const agentDb2 = new DatabaseSync(join(stateDir, "agents", "claude", "agent", "openclaw-agent.sqlite"));
+    agentDb2.prepare("UPDATE session_nodes SET entry_json = ? WHERE session_key = ?").run(
+      JSON.stringify({ cwd: "relative/path" }), "agent:claude:main"
+    );
+    agentDb2.close();
+    resetOriginWorkspaceReaderForTest();
+    setOriginWorkspaceReader(readOriginWorkspaceRow);
+    expect(resolveOriginWorkspaceCwd(HARNESS_CFG, spec, { conversationId: "agent:claude:main" })).toBeNull();
   });
 });

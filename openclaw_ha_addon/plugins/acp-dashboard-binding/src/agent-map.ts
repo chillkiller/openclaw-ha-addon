@@ -284,6 +284,8 @@ type PluginEntryLike = {
   config?: {
     boundAgents?: unknown;
     excludedAgents?: unknown;
+    /** Phase 2.24b (MAIN-Klon): boolean, default true. */
+    bindMainSessions?: unknown;
   };
 };
 
@@ -367,6 +369,74 @@ export function isRosterEligibleAgentId(cfg: unknown, agentId: string): boolean 
   const excluded = resolveExcludedAgentIds(cfg);
   if (excluded !== null) return !excluded.includes(agentId);
   return !ORCHESTRATOR_AGENT_ID_SET.has(agentId);
+}
+
+// ---------------------------------------------------------------------------
+// Phase 2.24b (Klon-Modus MAIN, GaRoN 06:26 'B GO') — die MAIN-Konversation
+// eines Roster-harness-agents (agent:<id>:main) wird NUN auch gebunden: der
+// adapter liefert einen BINDING-RECORD, deren Target der deterministische Klon
+// des origin session-keys ist (resolveHarnessTargetOrigin → Klon-Regel 1:1:
+// der origin session-key-Text IST die conversationId des ACP-keys; für claude
+// exakt `agent:claude:acp:binding:webchat:default:60bac3d65e697154` — der
+// "Nachtklassiker": sha16("webchat:default:agent:claude:main"), der alte
+// Ghost-Key wird zum geensurten Key). Live-Beweis des Orchestrators (Nacht):
+// agent:claude:main-Turns wurden über die Binding-Service-Kette konsultiert,
+// scheiterten aber am Phase-2.10-Gate (3-Teile-Key abgelehnt → resolve null →
+// Host builtin). Der dashboard-Gate (isBindEligibleConversationId, 18:03-
+// Regel) bleibt DAVON UNBERÜHRT — hier nur ein SEPARATER Gate.
+// ---------------------------------------------------------------------------
+
+/**
+ * `plugins.entries['<CHANNEL_ID>'].config.bindMainSessions` — Phase 2.24b.
+ * Default TRUE; nur ein explizites boolean `false` schaltet die
+ * MAIN-Klon-Binding aus (dann behält `agent:<id>:main` sein builtin dispatch).
+ */
+export function resolveBindMainSessionsEnabled(cfg: unknown): boolean {
+  return resolvePluginEntryConfig(cfg)?.bindMainSessions !== false;
+}
+
+/**
+ * Phase 2.24b second gate — SEPARAT von `isBindEligibleConversationId`
+ * (dieses bleibt für die dashboard-Klassen UNVERÄNDERT und lehnt 3-Tel-Keys
+ * weiter ab). Dieser Gate bindet die MAIN-Konversation eines harness-agents:
+ *
+ *   - EXAKTER 3-Tel-Shape `agent:<agentId>:main` — 4+-Tel-Keys
+ *     (`agent:<id>:main:<thread>`) und jede andere Klasse bleiben unbebunden
+ *     (der dashboard-Gate deckt SEINEN Shape, dieser nur seinen eigenen).
+ *   - NUR für Roster-agents: der PHASE-2.17-Ladder (`boundAgents` >
+ *     `excludedAgents` > safe-default exclusion) muss das Lassen, UND die
+ *     entry muss `runtime.type === "acp"` tragen (`resolveHarnessAgentSpec`
+ *     ist die Definition des Rosters; unbekannte/nicht-acp agents haben kein
+ *     spec → KEIN binding).
+ *   - NUR wenn `bindMainSessions !== false` (default TRUE).
+ *
+ * Das Gate ist bewusst defensiv (akzeptiert `unknown`) und wird von
+ * `binding-adapter.ts` (derive) und der cwd-Ladder (reader-Gate von
+ * `resolveOriginWorkspaceCwd`) geteilt.
+ */
+export function isMainConversationEligible(cfg: unknown, conversationId: unknown): boolean {
+  // bindMainSessions-Config-Flag (Phase 2.24b): default TRUE; ein explizites
+  // false schaltet die MAIN-Klon-Binding ab (der Agent behält builtin).
+  // Geprüft VOR dem Shape-Match — kein Flag-Off ⇒ kein main-Klon, egal wie.
+  if (!resolveBindMainSessionsEnabled(cfg)) return false;
+  if (typeof conversationId !== "string") return false;
+  const raw = conversationId.trim();
+  if (!raw) return false;
+  const parts = raw.split(":");
+  if (parts.length !== 3) return false;
+  if ((parts[0] ?? "").toLowerCase() !== "agent") return false;
+  if ((parts[2] ?? "").toLowerCase() !== "main") return false;
+  const agentSegment = typeof parts[1] === "string" ? parts[1] : "";
+  if (!agentSegment.trim()) return false;
+  // Flag: bindMainSessions !== false (default TRUE) — nur ein explizites
+  // boolean false schaltet die MAIN-Klon-Binding ab.
+  if (!resolveBindMainSessionsEnabled(cfg)) return false;
+  const agentId = sanitizeAgentId(agentSegment);
+  // safe-default: der Host-eigene main-agent (id "main", z. B. `agent:main:main`)
+  // und die übrigen Orchestratoren binden NUR mit explizitem Escape-Hatch.
+  if (!isRosterEligibleAgentId(cfg, agentId)) return false;
+  const spec = resolveHarnessAgentSpec(cfg, agentId);
+  return spec !== null;
 }
 
 /** Exclusion + positive-list filter shared by both resolvers (codex-R1). */
@@ -557,9 +627,13 @@ export function isAcpShapedSessionKey(sessionKey: unknown): boolean {
 // Fallback contract (GaRoN rules): `workspaces` config map (explicit, highest
 // precedence below the immutable harnessSessions override) > origin
 // derivation > the untouched agent-default cwd ladder (runtime.acp.cwd >
-// entry.cwd > entry.workspace > DEFAULT_CWD_PREFIX). Nothing here touches
-// `agent:<id>:main`/acp-class conversations (isBindEligibleConversationId in
-// binding-adapter.ts stays the gate).
+// entry.cwd > entry.workspace > DEFAULT_CWD_PREFIX). Dashboards bind strictly
+// per the dashboard gate (isBindEligibleConversationId in binding-adapter.ts
+// stays the gate); Phase 2.24b additionally binds roster agents' MAIN
+// conversations (isMainConversationEligible) — their cwd goes the SAME ladder
+// (live-verified 2026-10-11: a `agent:<id>:main` session_nodes row carries NO
+// cwd/sessionRoot/projectId in entry_json → null → agent-default cwd; the
+// `cwd` parse leg exists as forward-compat for a future host field).
 // ---------------------------------------------------------------------------
 
 /** What the injected reader may report about an origin conversation. */
@@ -567,6 +641,13 @@ export type OriginWorkspaceInfo = {
   projectId?: string;
   sessionRoot?: string;
   repoRoot?: string;
+  /**
+   * Phase 2.24b (MAIN-Klon): `session_nodes.entry_json.cwd` (forward-compat
+   * leg). Live-verifiziert 2026-10-11: NEITHER dashboard nor main rows of the
+   * current host carry it (dashboards carry sessionRoot/projectId, main rows
+   * carry neither) — the leg answers only if a future host adds the field.
+   */
+  cwd?: string;
 };
 
 /**
@@ -701,10 +782,12 @@ export function buildOriginWorkspaceDatabasePaths(
 /**
  * Picks the workspace facts out of a session_nodes.entry_json row (verified
  * live: dashboard sessions carry `sessionRoot` and `projectId`; main/acp rows
- * carry neither). Accepts an already-parsed object or a JSON string; returns
- * null on garbage.
+ * carry neither — 2026-10-11 re-verified for `agent:claude:main` plus 2.24b:
+ * a `cwd` field is parsed when present, but today's rows carry none, so main
+ * conversations answer null and fall back to the agent-default cwd).
+ * Accepts an already-parsed object or a JSON string; returns null on garbage.
  */
-export function parseOriginWorkspaceEntryJson(entryJson: unknown): { sessionRoot?: string; projectId?: string } | null {
+export function parseOriginWorkspaceEntryJson(entryJson: unknown): { sessionRoot?: string; projectId?: string; cwd?: string } | null {
   let value: unknown = entryJson;
   if (typeof value === "string") {
     if (!value.trim()) return null;
@@ -718,7 +801,14 @@ export function parseOriginWorkspaceEntryJson(entryJson: unknown): { sessionRoot
   const record = value as Record<string, unknown>;
   const sessionRoot = typeof record.sessionRoot === "string" && record.sessionRoot.trim() ? record.sessionRoot.trim() : undefined;
   const projectId = typeof record.projectId === "string" && record.projectId.trim() ? record.projectId.trim() : undefined;
-  return sessionRoot || projectId ? { ...(sessionRoot ? { sessionRoot } : {}), ...(projectId ? { projectId } : {}) } : null;
+  const cwd = typeof record.cwd === "string" && record.cwd.trim() ? record.cwd.trim() : undefined;
+  return sessionRoot || projectId || cwd
+    ? {
+        ...(sessionRoot ? { sessionRoot } : {}),
+        ...(projectId ? { projectId } : {}),
+        ...(cwd ? { cwd } : {})
+      }
+    : null;
 }
 
 /**
@@ -750,7 +840,8 @@ export type OriginWorkspaceCwdSource =
   | "config-conversation"
   | "config-project"
   | "origin-session-root"
-  | "origin-project-db";
+  | "origin-project-db"
+  | "origin-entry-cwd";
 
 export type ResolvedOriginWorkspaceCwd = {
   cwd: string;
@@ -767,10 +858,17 @@ export type ResolvedOriginWorkspaceCwd = {
  *   2. config `workspaces[<projectId>]`        (explicit, projectId via reader)
  *   3. origin sessionRoot                      (verbatim cwd of the ORIGIN session)
  *   4. origin projects.repo_root               (project id → repo root)
- *   5. null → caller falls back to the agent-default cwd ladder
+ *   5. origin entry_json.cwd                   (forward-compat leg, Phase 2.24b —
+ *      live-verifiziert 2026-10-11: main rows tragen es NICHT)
+ *   6. null → caller falls back to the agent-default cwd ladder
  *
  * Only ABSOLUTE paths count (relative values are ignored like unset). Returns
  * null when nothing applies — the caller then keeps the documented defaults.
+ *
+ * Phase 2.24b: roster-agents' MAIN conversations (isMainConversationEligible)
+ * consult the reader on the SAME fail-soft legs — the live-verified answer
+ * for `agent:<id>:main` rows is null (no cwd/sessionRoot/projectId), so main
+ * clones spawn with the agent-default cwd (runtime.acp.cwd).
  */
 export function resolveOriginWorkspaceCwd(
   cfg: unknown,
@@ -782,13 +880,13 @@ export function resolveOriginWorkspaceCwd(
   const overrides = resolveWorkspaceOverrides(cfg);
   const derivationEnabled = resolveOriginWorkspaceDerivationEnabled(cfg);
   if (!overrides && !derivationEnabled) return null;
-  // One reader pass (memoized) feeds legs 2-4. Skipped when derivation is
+  // One reader pass (memoized) feeds legs 2-5. Skipped when derivation is
   // disabled (only the conversation-keyed config leg works without it) and
-  // for non-dashboard-class ids — provisioning pseudo ids (`harness:<agent>`,
-  // `harness:<agent>:ws:<hash>`) and main/acp-class keys must NEVER reach the
-  // reader (no session node exists for them; the legacy per-agent cascade leg
-  // answers the agent-default cwd instead).
-  const info = derivationEnabled && isBindEligibleConversationId(conversationId)
+  // for non-eligible ids — provisioning pseudo ids (`harness:<agent>`,
+  // `harness:<agent>:ws:<hash>`) and acp-class keys still NEVER reach the
+  // reader. Phase 2.24b: eligible main conversations DO (fail-soft; live
+  // 2026-10-11 the main row carries no cwd → null → agent-default cwd).
+  const info = derivationEnabled && (isBindEligibleConversationId(conversationId) || isMainConversationEligible(cfg, conversationId))
     ? queryOriginWorkspace(spec.agentId, conversationId)
     : null;
   if (overrides?.[conversationId]) {
@@ -808,6 +906,16 @@ export function resolveOriginWorkspaceCwd(
     return {
       cwd: info.repoRoot.trim(),
       source: "origin-project-db",
+      ...(info.projectId ? { projectId: info.projectId } : {})
+    };
+  }
+  // Phase 2.24b (MAIN-Klon): forward-compat leg — entry_json.cwd of the
+  // origin row. Today's rows carry it nowhere (live 2026-10-11), so main
+  // conversations answer null here → agent-default cwd.
+  if (derivationEnabled && info?.cwd && resolvedAbsoluteCwd(info.cwd.trim())) {
+    return {
+      cwd: info.cwd.trim(),
+      source: "origin-entry-cwd",
       ...(info.projectId ? { projectId: info.projectId } : {})
     };
   }

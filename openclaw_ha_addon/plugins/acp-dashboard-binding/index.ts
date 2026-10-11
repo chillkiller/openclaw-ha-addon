@@ -73,6 +73,17 @@ type AcpBindingRuntimeModule = {
  * resolved). The legacy `harness:<agent>` id only reaches this function via
  * the deprecated bridge roster leg, where the conversation IS the pseudo id —
  * consistent there too.
+ *
+ * Phase 2.24b (Klon-Modus MAIN, GaRoN 06:26 'B GO'): main conversations flow
+ * through UNVERÄNDERT — the cascade passes the main conversation
+ * (`agent:<id>:main`) as the origin conversation, so the ensure spec's
+ * conversationId IS the origin session-key text (Klon-Regel 1:1) and
+ * `buildConfiguredAcpSessionKey(spec)` mints the acp_sessions row on the SAME
+ * key the adapter's main-clone record answers (for claude:
+ * `agent:claude:acp:binding:webchat:default:60bac3d65e697154`). Dist-verified
+ * (persistent-bindings.lifecycle-DU_YBswY.mjs): the ensure contract puts NO
+ * shape/gate on `spec.conversationId` — the key is built from
+ * channel/accountId/conversationId and passed to initializeSession as-is.
  */
 function configuredBindingSpecFromHarnessSpec(
   spec: {

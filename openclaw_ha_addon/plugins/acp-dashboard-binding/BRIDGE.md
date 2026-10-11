@@ -769,3 +769,124 @@ Target-Key), dashboard-bridge.test (4 neue: Provisioned-Roster-Shape + Legacy,
 (Barrier am cwd-scoped Key), origin-workspace.test (3 Integrationstests gegen
 ECHTE sqlite-Dateien im tmp-Layout: sessionRoot/Thread-Fallback/Fail-soft,
 projects.repo_root-Fallback, End-to-End Resolve/Ensure mit Scope-Key).
+
+---
+
+## 14. Phase 2.24b — Session-key clone mode: MAIN-Konversation (GaRoN 'B GO', 06:26, 2026-10-11)
+
+### 14.1 Befund (Orchestrator, Nacht)
+
+agent:claude:main-Turns WERDEN über die Binding-Service-Kette konsultiert
+(`resolveDispatchConversationBinding → getSessionBindingService()
+.resolveByConversationAsync(bindingContext)`, conversationId
+`agent:claude:main`) — Beweis 17:10:52: sessionKey `agent:claude:main`,
+outcome completed, `acp_error:acp_session_init_failed` (die Bindung stammte
+dann noch aus dem Generic-Store auf dem 60bac-Key). Das Phase-2.10-Gate
+(`isBindEligibleConversationId`) lehnt 3-Tel-Keys ab → resolve null → Host
+wählt builtin. 2.24b: der Adapter liefert EINEN Binding-Record für main.
+
+### 14.2 Der Gate (SEPARAT — dashboard-Gate bleibt UNVERÄNDERT)
+
+`isMainConversationEligible(cfg, conversationId)` (agent-map.ts), geteilt von
+Adapter-Derive und cwd-Ladder-Reader-Gate:
+
+  1. EXAKTER 3-Tel-Shape `agent:<agentId>:main` (`agent:<id>:main:<thread>`,
+     4-Tel, andere Klassen → nein).
+  2. Roster: Phase-2.17-Ladder (boundAgents > excludedAgents >
+     safe-default exclus.) UND `runtime.type === "acp"`
+     (`resolveHarnessAgentSpec` — Hauptagent `agent:main:main` bindet ohne
+     expliziten Escape-Hatch NIE).
+  3. Flag: `plugins.entries['acp-dashboard-binding'].config
+     .bindMainSessions !== false` (default TRUE; Manifest
+     openclaw.plugin.json configSchema deklariert das Feld — Regel 4).
+
+`isBindEligibleConversationId` (dashboard 18:03-Regel) ist BYTE-UNVERÄNDERT.
+
+### 14.3 Klon-Key (dist-verifiziert, live gezeigt)
+
+Target = Kaskade unverändert; Klon-Regel 1:1: der origin session-key-Text IST
+die conversationId des ACP-Keys. Für claude:
+
+  buildAcpBindingSessionKey({conversationId: "agent:claude:main",
+                             agentId: "claude", channel: "webchat",
+                             accountId: "default"})
+    = agent:claude:acp:binding:webchat:default:60bac3d65e697154
+
+Live verifiziert: sha256("webchat:default:agent:claude:main")[0..16] =
+`60bac3d65e697154` — der "Nachtklassiker"-Ghost-Key wird zum geensurten Key
+(ensure-spec conversationId = `agent:claude:main`, dist
+persistent-bindings.lifecycle-DU_YBswY.mjs: der ensure-Contract setzt KEINE
+Shape/Gate auf spec.conversationId; buildConfiguredAcpSessionKey baut den Key
+aus channel:accountId:conversationId und initializeSession erhält nur
+agentId/mode/cwd/backend — ensure-key ≡ resolve-key by construction).
+Ensure-Regeln (dedupe, signature, stabil, boundAt 0) teilen sich die
+Dashboard-Klone unverändert; `metadata.provisioned` markiert der Leg.
+
+### 14.4 cwd-Ladder für main (EHRLICH — live geprüft, 2026-10-11)
+
+Die MAIN-session_nodes-Zeile von agent:claude:main in
+/config/.openclaw/agents/claude/agent/openclaw-agent.sqlite:
+
+  - project_id = NULL,
+  - entry_json: sessionId/createdAt/lifecycleRevision/usageFamilyKey/… —
+    **KEIN cwd**, auch kein sessionRoot/projectId (parseOriginWorkspaceEntryJson
+    → null).
+
+→ Der Reader wird für MAIN-Keys NUN angerufen (fail-soft, memoized, gleiche
+TTL-Regel), antwortet aber HEUTE immer null → `resolveOriginWorkspaceCwd`
+null → **Agent-Default-cwd** (runtime.acp.cwd aus der Entry; live für claude:
+`/config/clawd/agents/claude`). Forward-compat-Bein eingebaut: sobald eine
+Zeile ein absolutes `cwd`-Feld in entry_json trägt, greift das neue
+Ladder-Bein `origin-entry-cwd` (NACH sessionRoot/repoRoot, dashboard-Verhalten
+unberührt). Konsequenz: der ensure für main spawnt eine persistent-session
+mit Agent-Default-cwd (GaRoN weiß das).
+
+### 14.5 Unverändert (verifiziert)
+
+  - Bridge (`resolveDashboardBindingDecision`) bleibt DASHBOARD-only:
+    parseDashboardConversationKey lehnt `agent:<id>:main` ab → §4.2-Delegation
+    antwortet null → Adapter-Derive erzeugt den main-Record (keine §4.2-Rows
+    für main). dashboard-bridge.test beweist beides Beine.
+  - reply-claim Barrier: `pendingDashboardHarnessProvisioning(<raw key>)`
+    (isAcpShapedSessionKey-Pfad) — der main-Klon-Key ist acp-geformt; Barrier
+    keyed auf metadata.provisioned + target key, verifiziert auf dem
+    60bac-Key. bindMainSessions:false → Claim handled:false, kein Ensure/Run.
+  - Kaskaden-Reihenfolge auch für main: harnessSessions-Override >
+    auto-provisioned Klon > synthetisch (dokumentiert: der Override gilt auch
+    für main — live steht harnessSessions = {} → Klon-Leg aktiv).
+  - `acp`-Klassen, 4-Tel-`agent:<id>:main:<x>`, andere Kanäle: nie gebunden.
+
+### 14.6 Tests (162/162 grün, --cache=false; tsc strict clean)
+
+channel.test (7 neue in "Phase 2.24b: MAIN-Klon"): Gate-Matrix (Shape/Flag/
+Roster/Escape-Hatch + dashboard-Gate byte-unverändert), Adapter-Record mit
+LITERALLY 60bac3d65e697154 + Ensure-Kick + Stabilität, Nicht-Roster-Agenten
+null, bindMainSessions:false (dashboard-Leg unberührt),
+harnessSessions-Override-Präzedenz für main, Ensure-Spec trägt den origin
+session-key-Text ohne Reverse-Parse, cwd-Ladder für main.
+reply-claim.test (2 neue): Barrier auf dem main-Klon-Key (raw-key-Pfad,
+Reihenfolge ensure→run beweisbar), Flag-off → handled:false.
+origin-workspace.test (1 neuer, ECHTES sqlite): main-Zeile ohne cwd → null →
+Agent-Default; cwd-Feld → `origin-entry-cwd`; relative Werte zählen nicht.
+dashboard-bridge.test (1 neuer): Bridge-Entscheidung bleibt dashboard-only.
+
+### 14.7 Ehrliche Risiken / fehlende Steine
+
+1. **Agent-Default-cwd für main-Klone** (14.4) — die persistent main-Klon-
+   Session läuft im Workspace der ENTRY, nicht im Projekt-Workspace irgendeines
+   Dashboard-Fensters. Kein cwd-Bein vom Host heute; upstream-Kandidat wie §13.5.1.
+2. **Eine session pro agent**: alle main-turns des agents teilen SICH den einen
+   Klon-Key (`agent:<id>:acp:binding:<hash von agent:<id>:main>`) — Klon-Regel
+   ist "agent × main = 1 Session", NICHT "ein session pro main-turn".
+   Persistente Session, Host-Retention wie gehabt.
+3. **Generic-Store-Ghost**: der alte Generic-Store-Record auf 60bac bleibt im
+   Host-Store, ist aber während des plugin Ladens gespiegelt (Phase-2.10-
+   Limitation) — der Derive gewinnt. Nach plugin-Disable würde der Ghost
+   (wieder ohne acp_sessions-Zeile NACH Retention) sichtbar; heute liegt die
+   Zeile auf dem Key (ensure) — dann ists kein Ghost mehr.
+4. **main-Record ohne Provisioner/autoProvision:false** → synthetische main-Leg
+   (gleicher Key, kein ensure) → ACP_SESSION_INIT_FAILED wie die 2.24-Note
+   für dashboards. Vor-2.21-Verhalten, dokumentiert.
+5. bindMainSessions:false betrifft NUR den Adapter-Derive; die Kaskade selbst
+   (harnessProvisionedTarget etc.) bleibt shape-agnostisch — konsistent mit
+   der Dashboard-Kaskade (Gate liegt IMMER upstream im Derive).

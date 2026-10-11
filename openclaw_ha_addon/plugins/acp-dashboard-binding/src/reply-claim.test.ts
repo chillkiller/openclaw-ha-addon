@@ -603,3 +603,108 @@ describe("inbound_claim: auto-provisioning barrier (Phase 2.21)", () => {
     }
   });
 });
+
+// --- Phase 2.24b: MAIN-Klon (GaRoN 06:26 'B GO') — die MAIN-Konversation des
+// Roster-agents kommt durch denselben Claim-Pfad wie die Dashboard-Klone.
+describe("inbound_claim: MAIN-Klon barrier (Phase 2.24b)", () => {
+  const MAIN_KEY = "agent:claude:main";
+  // Der "Nachtklassiker" (live-verifiziert): sha16("webchat:default:agent:claude:main").
+  const CLAUDE_MAIN_CLONE_KEY = buildAcpBindingSessionKey({
+    channel: "webchat",
+    accountId: "default",
+    conversationId: MAIN_KEY,
+    agentId: "claude",
+  });
+
+  const claudeConfig = () => ({
+    agents: {
+      entries: {
+        claude: {
+          runtime: { type: "acp", acp: { mode: "persistent", backend: "acpx", cwd: "/config/clawd/agents/claude" } },
+        },
+      },
+    },
+  });
+
+  const claimContextClaude = (): InboundClaimContextLike => ({
+    pluginBinding: {
+      bindingId: "plugin-binding:derived:webchat:default:<hash>",
+      pluginId: CHANNEL_ID,
+      pluginRoot: PLUGIN_ROOT,
+      channel: "webchat",
+      accountId: "default",
+      conversationId: MAIN_KEY,
+    },
+  });
+
+  afterEach(() => {
+    resetDashboardBindingProvisionerForTest();
+    resetOriginWorkspaceReaderForTest();
+  });
+
+  it("MAIN-Klon: Barrier keyed auf den Klon-Key (raw-key-Pfad unverändert), Turn startet im Ziel", async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => { release = resolve; });
+    const events: string[] = [];
+    setDashboardBindingProvisioner(async (params) => {
+      events.push(`ensure-start:${params.targetSessionKey}`);
+      await gate;
+      events.push("ensure-done");
+    });
+    const subagent: HarnessSubagentApi = {
+      run: async (params) => {
+        events.push(`run:${params.sessionKey}`);
+        return { runId: "run-main", sessionKey: params.sessionKey };
+      },
+      waitForRun: async () =>
+        ({ status: "ok", terminalReply: { disposition: "visible", text: "main ready" } }) as never,
+    };
+    const handler = createHarnessReplyClaimHandler({
+      getConfig: claudeConfig,
+      subagent,
+      isGatewayAvailable: async () => true,
+    });
+    // Kein Plugin-Root-Set nötig: der Claim liest die conversation aus
+    // ctx.pluginBinding — ownership-Marker im Record sind hier orthogonal.
+    const claimed = handler(event, claimContextClaude());
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    // Der Ensure hängt am Gate: der Claim wartet (Barrier), kein run-Start.
+    expect(events).toEqual([`ensure-start:${CLAUDE_MAIN_CLONE_KEY}`]);
+    release();
+    const result = await claimed;
+    expect(events).toEqual([
+      `ensure-start:${CLAUDE_MAIN_CLONE_KEY}`,
+      "ensure-done",
+      `run:${CLAUDE_MAIN_CLONE_KEY}`,
+    ]);
+    // Der Nachtklassiker LITERALLY: `agent:claude:acp:binding:webchat:default:60bac3d65e697154`.
+    expect(CLAUDE_MAIN_CLONE_KEY).toBe("agent:claude:acp:binding:webchat:default:60bac3d65e697154");
+    expect(result.handled).toBe(true);
+    expect(result.reply?.text).toBe("main ready");
+  });
+
+  it("MAIN-Klon mit bindMainSessions:false → Claim nicht übernommen (handled:false), kein Ensure, kein Run", async () => {
+    const eventsNoBind: string[] = [];
+    setDashboardBindingProvisioner(async (params) => {
+      eventsNoBind.push(`ensure-start:${params.targetSessionKey}`);
+    });
+    const subagent: HarnessSubagentApi = {
+      run: async () => {
+        eventsNoBind.push("run");
+        return { runId: "run-should-not-happen" };
+      },
+      waitForRun: async () => ({ status: "error" }) as never,
+    };
+    const handler = createHarnessReplyClaimHandler({
+      getConfig: () => ({
+        ...claudeConfig(),
+        plugins: { entries: { [CHANNEL_ID]: { config: { bindMainSessions: false } } } },
+      }),
+      subagent,
+      isGatewayAvailable: async () => true,
+    });
+    const result = await handler(event, claimContextClaude());
+    expect(eventsNoBind).toEqual([]);
+    expect(result.handled).toBe(false);
+  });
+});

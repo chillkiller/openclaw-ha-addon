@@ -119,6 +119,9 @@ export function readOriginWorkspaceRow(agentId: string, conversationId: string):
     const candidates = [...new Set([convId, ...(baseKey && baseKey !== convId ? [baseKey] : [])])];
     let projectId: string | undefined;
     let sessionRoot: string | undefined;
+    // Phase 2.24b (MAIN-Klon): entry_json.cwd (forward-compat; today's rows
+    // carry no cwd — dashboard rows carry sessionRoot/projectId instead).
+    let cwd: string | undefined;
     for (const key of candidates) {
       let row: unknown = null;
       try {
@@ -134,13 +137,15 @@ export function readOriginWorkspaceRow(agentId: string, conversationId: string):
         typeof record.project_id === "string" && record.project_id.trim() ? record.project_id.trim() : undefined;
       projectId = parsed?.projectId ?? columnProject ?? undefined;
       sessionRoot = parsed?.sessionRoot;
+      cwd = parsed?.cwd;
       break;
     }
     const info: OriginWorkspaceInfo = {
       ...(projectId ? { projectId } : {}),
-      ...(sessionRoot ? { sessionRoot } : {})
+      ...(sessionRoot ? { sessionRoot } : {}),
+      ...(cwd ? { cwd } : {})
     };
-    if (sessionRoot || !projectId) return Object.keys(info).length > 0 ? info : null;
+    if (sessionRoot || cwd || !projectId) return Object.keys(info).length > 0 ? info : null;
     // Fallback leg: project id → repo_root from the host state DB.
     const stateDb = openReadOnlyDb(paths.projectsDb);
     if (!stateDb) return Object.keys(info).length > 0 ? info : null;

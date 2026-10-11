@@ -34,6 +34,10 @@
       "deriveOriginWorkspace": {
         "type": "boolean",
         "description": "Default true: derive the origin conversation's workspace cwd from the host agent DB (read-only) and spawn/ensure the bound harness session in that cwd with a per-cwd-scoped session key. Set false to keep the agent-default cwd ladder only."
+      },
+      "bindMainSessions": {
+        "type": "boolean",
+        "description": "Default true (Phase 2.24b session-key clone mode): also bind the MAIN conversation of a roster harness agent (agent:<id>:main) to a deterministic clone ACP session (the ghost key shape becomes ensured). Set false to keep main conversations on untouched builtin dispatch. The roster gates (boundAgents/excludedAgents/default orchestrator exclusion) always apply."
       }
     }
   },
