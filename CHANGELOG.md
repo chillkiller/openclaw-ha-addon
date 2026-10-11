@@ -1,3 +1,11 @@
+## 0.7.13.17 (2026-10-11) — repo-split: standalone harness-config-writer + backup-rewrite + add-on harness defaults
+
+- **Two runtime plugins instead of one (Repo-Split A2, owner GO):** `harness-config-writer` is now a standalone feature plugin (own config surface `config.harnesses`, no channel code) — the writer and the dashboard/webchat binding channel plugin fail independently. Both are baked into the add-on image and deployed/registered per option.
+- **Add-on-level harness defaults (request GaRoN):** new options `harness_base_url` (activator — empty = nothing generated), `harness_model` (shared), `harness_api_key` (shared), `harness_excluded_agents` (comma-separated). Operator hand-entries in `openclaw.json` always win; stale generated entries are cleaned up only when untouched. codex/opencode keep their `ollama_acp_*_model` defaults unless `harness_model` is set.
+- **Backup-rewrite (request GaRoN):** first writer-enabled boot snapshots the pre-writer state of every managed harness config file; turning the option OFF restores the originals automatically and consumes the snapshot; re-enable snapshots fresh. Quarantined manifests veto re-snapshots.
+- **Fixed (audit):** legacy `harnesses` migration never flips an operator `enabled:false` opt-out; the writer honors an ENV gate so an off-restore survives gateway boots; corrected v0.7.13.16's over-stated "22-harness catalog" claim (18 acpx adapters installed, 9 writer-configurable with docs-verified env/file surfaces; OAuth/non-verified/identity harnesses deliberately excluded).
+- Tests: python 30/30 · vitest writer 34/34 · vitest binding 161+1 · strict tsc clean. Audited by the ACP-Codex coding-review harness (GO after one fix round).
+
 # Changelog — OpenClaw Assistant (Home Assistant App)
 
 Release-facing summary. Detailed per-release engineering notes: [openclaw_ha_addon/CHANGELOG.md](openclaw_ha_addon/CHANGELOG.md).

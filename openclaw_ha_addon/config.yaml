@@ -1,7 +1,7 @@
 # OpenClaw Home Assistant App v0.7.13.11 Configuration
 # OpenClaw 2026.9.9 — failed-update recovery, session archive repairs, Docker upgrade-loop fix
 name: OpenClaw Assistant
-version: "0.7.13.16"
+version: "0.7.13.17"
 slug: openclaw_ha_addon
 description: Agentic AI assistant for Home Assistant — full OpenClaw runtime with Ingress Web UI, web terminal, Assist pipeline and MCP integration
 url: https://github.com/chillkiller/openclaw-ha-addon
@@ -190,6 +190,36 @@ options:
   # runs WITHOUT this feature unless explicitly enabled here.
   acp_dashboard_binding_enabled: false
 
+  # Optional (Repo-Split A2, 2026-10-11): deploy + register the bundled
+  # harness-config-writer plugin in OpenClaw (generates the harness-native
+  # file/env config for local-provider harnesses from its config.harnesses
+  # surface). UNSET follows acp_dashboard_binding_enabled (existing setups
+  # keep the previous bundled behavior); true runs it even with the channel
+  # plugin off; false keeps it off. The legacy
+  # plugins.entries['acp-dashboard-binding'].config.harnesses key is
+  # migrated to plugins.entries['harness-config-writer'].config.harnesses
+  # once at boot (idempotent, before the gateway reads the config).
+  # Backup-Rewrite: the first enabled boot snapshots the pre-writer state of
+  # all managed harness config files; when the option goes off again the
+  # originals are restored automatically (snapshot in
+  # /config/.openclaw/harness-config-writer-backup/).
+  harness_config_writer_enabled:
+
+  # Optional (Writer, GaRoN 2026-10-11): geteilte Harness-Defaults für den
+  # harness-config-writer — je eine Zeile, gilt für ALLE nicht-excluded
+  # Harnesses (codex/opencode übernehmen base_url/api_key; ihr Modell
+  # bleibt auf ollama_acp_codex_model / ollama_acp_opencode_model, außer
+  # harness_model ist gesetzt). base_url ist der AKTIVATOR: leer → nichts
+  # wird generiert (ADDITIV bleibt). Operator-Handeinträge in openclaw.json
+  # werden nie angetastet; entfernte Optionen räumen generierte Entries auf.
+  harness_base_url: ""
+  harness_model: ""
+  harness_api_key: ""
+
+  # Optional: Kommagetrennte Harness-Ids, die von obigen Defaults
+  # AUSGESCHLOSSEN werden (z.B. "codex,opencode").
+  harness_excluded_agents: ""
+
   # Optional: Space-separated list of apt packages to install at container startup.
   # Packages are reinstalled on each restart (not persistent in image).
   # Example: "ffmpeg postgresql-client"
@@ -242,6 +272,11 @@ schema:
   ollama_acp_opencode_model: str?
   acp_additional_allowed_agents: str?
   acp_dashboard_binding_enabled: bool?
+  harness_config_writer_enabled: bool?
+  harness_base_url: str?
+  harness_model: str?
+  harness_api_key: str?
+  harness_excluded_agents: str?
   runtime_apt_packages: str?
   custom_init_script: str?
   blocked_hostnames: str?
