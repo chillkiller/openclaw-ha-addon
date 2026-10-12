@@ -112,6 +112,12 @@ export HARNESS_WRITER_MODEL=$(jq -r '.harness_model // empty' "$OPTIONS_FILE" 2>
 export HARNESS_WRITER_API_KEY=$(jq -r '.harness_api_key // empty' "$OPTIONS_FILE" 2>/dev/null)
 export HARNESS_WRITER_EXCLUDED_AGENTS=$(jq -r '.harness_excluded_agents // empty' "$OPTIONS_FILE" 2>/dev/null)
 
+# V36.2 (2026-10-13): utility_model → agents.defaults.utilityModel (helper
+# merge_utility_model). Carries the gateway's internal utility callouts (the
+# session observer's strict-JSON run digests first among them). UNSET/empty =
+# no write — operator owns the value (never auto-cleared).
+export OPENCLAW_UTILITY_MODEL=$(jq -r '.utility_model // empty' "$OPTIONS_FILE" 2>/dev/null)
+
 # Local-model provider routing for ACP harnesses (verified 2026-10-09):
 # The acpx generated codex/claude wrappers passthrough this ambient env, so
 # Claude Code reaches the Ollama backend without any custom wrapper.

@@ -836,5 +836,67 @@ class BundledRootDeployTest(unittest.TestCase):
         self.assertIn(b"definePluginEntry", bundle)
 
 
+class UtilityModelMergeTest(unittest.TestCase):
+    """V36.2 (2026-10-13): agents.defaults.utilityModel aus der Option
+    utility_model gespiegelt — root-cause fix für "session observer returned
+    invalid JSON twice" (Utility-Modell lieferte kein strict-JSON-Digest).
+    UNSET = no-op; agent entries werden nie berührt; idempotenter Write."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.config_dir = Path(self.tmp.name)
+        self.path = self.config_dir / "openclaw.json"
+        os.environ.pop("OPENCLAW_UTILITY_MODEL", None)
+        self.addCleanup(lambda: os.environ.pop("OPENCLAW_UTILITY_MODEL", None))
+        patcher = mock.patch.object(helper, "CONFIG_DIR", self.config_dir)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+
+    def test_unset_is_noop(self) -> None:
+        self.path.write_text(json.dumps({"agents": {"entries": {"main": {}}}}))
+        self.assertTrue(helper.merge_utility_model())
+        cfg = json.loads(self.path.read_text())
+        self.assertEqual(cfg, {"agents": {"entries": {"main": {}}}})
+
+    def test_writes_defaults_and_is_idempotent(self) -> None:
+        self.path.write_text(json.dumps({"agents": {"entries": {"main": {}}}}))
+        os.environ["OPENCLAW_UTILITY_MODEL"] = "ollama/nemotron-3-super:cloud"
+        self.assertTrue(helper.merge_utility_model())
+        cfg = json.loads(self.path.read_text())
+        self.assertEqual(
+            cfg["agents"]["defaults"]["utilityModel"], "ollama/nemotron-3-super:cloud"
+        )
+        self.assertEqual(cfg["agents"]["entries"], {"main": {}})
+        mtime_first = self.path.stat().st_mtime_ns
+        # Idempotent: same value → no write.
+        self.assertTrue(helper.merge_utility_model())
+        self.assertEqual(self.path.stat().st_mtime_ns, mtime_first)
+
+    def test_creates_agents_and_defaults_when_missing(self) -> None:
+        self.path.write_text(json.dumps({}))
+        os.environ["OPENCLAW_UTILITY_MODEL"] = "ollama/deepseek-v4.1-flash:cloud"
+        self.assertTrue(helper.merge_utility_model())
+        cfg = json.loads(self.path.read_text())
+        self.assertEqual(
+            cfg["agents"]["defaults"]["utilityModel"],
+            "ollama/deepseek-v4.1-flash:cloud",
+        )
+
+    def test_never_replaces_non_object_defaults(self) -> None:
+        self.path.write_text(json.dumps({"agents": {"defaults": "garbage"}}))
+        os.environ["OPENCLAW_UTILITY_MODEL"] = "ollama/nemotron-3-super:cloud"
+        with mock.patch.object(helper, "log") as logged:
+            self.assertFalse(helper.merge_utility_model())
+            self.assertTrue(any("NOT merged" in str(call) for call in logged.call_args_list))
+        self.assertEqual(
+            json.loads(self.path.read_text())["agents"]["defaults"], "garbage"
+        )
+
+    def test_missing_openclaw_json_is_soft_noop(self) -> None:
+        os.environ["OPENCLAW_UTILITY_MODEL"] = "ollama/nemotron-3-super:cloud"
+        self.assertTrue(helper.merge_utility_model())
+
+
 if __name__ == "__main__":
     unittest.main()

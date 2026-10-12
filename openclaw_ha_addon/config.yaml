@@ -227,6 +227,17 @@ options:
   # AUSGESCHLOSSEN werden (z.B. "codex,opencode").
   harness_excluded_agents: ""
 
+  # Optional (V36.2, 2026-10-13): Utility-Modell-Override für
+  # agents.defaults.utilityModel in openclaw.json — das Modell hinter den
+  # internen Gateway-Utility-Callouten (u. a. der Session-Observer, der
+  # pro Turn ein strict-JSON-Digest liefert). UNSET = kein Write
+  # (operator owns the value); gesetzt → einmalig gemerged (operator wins
+  # on removal, never auto-cleared). Empfehlung bei "session observer
+  # returned invalid JSON twice"-Live-Logs: ein Modell mit sauberem
+  # strict-JSON-Output, z. B. "ollama/nemotron-3-super:cloud" oder
+  # "ollama/deepseek-v4.1-flash:cloud".
+  utility_model: ""
+
   # Optional: Space-separated list of apt packages to install at container startup.
   # Packages are reinstalled on each restart (not persistent in image).
   # Example: "ffmpeg postgresql-client"
@@ -285,6 +296,7 @@ schema:
   harness_model: str?
   harness_api_key: str?
   harness_excluded_agents: str?
+  utility_model: str?
   runtime_apt_packages: str?
   custom_init_script: str?
   blocked_hostnames: str?

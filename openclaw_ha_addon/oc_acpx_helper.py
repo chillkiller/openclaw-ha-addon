@@ -1022,6 +1022,56 @@ def _prune_stale_addon_defaults() -> None:
         log(f"WARN: stale add-on harness defaults cleanup failed (fail-soft): {e}")
 
 
+def merge_utility_model() -> bool:
+    """V36.2 (2026-10-13): Utility-Modell-Override → agents.defaults.utilityModel.
+
+    Das Utility-Modell trägt die internen Gateway-Utility-Callouten — foremost
+    der Session-Observer, dessen strict-JSON-Run-Digests an der Live-Lage
+    zerbrachen ("session observer returned invalid JSON twice",
+    session-observer-model-9BWdD-iY.mjs strictObject + headline.min(1)) — mit
+    Folge: Observer je After-Run disabled, `observerDigest` auf den Entries
+    stale (V36.2). Fix an der Wurzel: eine Config-Zeile statt Plugin-Code.
+
+    Semantik (GaRoN-Regeln der Harness-Defaults gespiegelt, ein Wert):
+      - OPENCLAW_UTILITY_MODEL unset/leer → NO-OP (operator owns the value,
+        wir löschen nie).
+      - Setzt → idempotenter Merge: schreibt nur bei Abweichung von
+        agents.defaults.utilityModel.
+      - agents.entries (Identity etc.) werden NIE berührt.
+    Fail-soft: Fehler → WARN, Boot läuft weiter. True bei success/no-op."""
+    value = (os.environ.get("OPENCLAW_UTILITY_MODEL") or "").strip()
+    if not value:
+        return True
+    config_path = CONFIG_DIR / "openclaw.json"
+    try:
+        if not config_path.exists():
+            log("INFO: openclaw.json does not exist; skipping utility_model merge")
+            return True
+        cfg = read_json(config_path)
+        agents = cfg.get("agents")
+        if not isinstance(agents, dict):
+            if agents is not None:
+                log("WARN: agents config is not an object; utility_model NOT merged")
+                return False
+            agents = cfg.setdefault("agents", {})
+        defaults = agents.get("defaults")
+        if not isinstance(defaults, dict):
+            if defaults is not None:
+                log("WARN: agents.defaults is not an object; utility_model NOT merged")
+                return False
+            defaults = agents.setdefault("defaults", {})
+        if defaults.get("utilityModel") == value:
+            log("INFO: agents.defaults.utilityModel already matches the option (no change)")
+            return True
+        defaults["utilityModel"] = value
+        write_json(config_path, cfg)
+        log(f"WROTE agents.defaults.utilityModel={value} (add-on option utility_model)")
+        return True
+    except Exception as e:
+        log(f"WARN: utility_model merge failed (fail-soft): {e}")
+        return False
+
+
 def _disable_binding_plugin() -> bool:
     """HA option off = REAL operator opt-out (GaRoN 2026-10-12).
 
@@ -1317,6 +1367,9 @@ def main() -> int:
     ok = deploy_plugins()
     ok = install_acpx_npm_project() and ok
     ok = patch_openclaw_config() and ok
+    # V36.2 (2026-10-13): agents.defaults.utilityModel from the utility_model
+    # option — agent entries stay untouched; unset = no write.
+    ok = merge_utility_model() and ok
     if ok:
         log("ACPX initialization complete")
     else:
