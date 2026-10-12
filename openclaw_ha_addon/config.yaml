@@ -1,7 +1,7 @@
 # OpenClaw Home Assistant App v0.7.13.11 Configuration
-# OpenClaw 2026.9.9 — failed-update recovery, session archive repairs, Docker upgrade-loop fix
+# OpenClaw 2026.10.2 — failed-update recovery, session archive repairs, Docker upgrade-loop fix
 name: OpenClaw Assistant
-version: "0.7.13.20"
+version: "0.7.13.21"
 slug: openclaw_ha_addon
 description: Agentic AI assistant for Home Assistant — full OpenClaw runtime with Ingress Web UI, web terminal, Assist pipeline and MCP integration
 url: https://github.com/chillkiller/openclaw-ha-addon
@@ -193,9 +193,9 @@ options:
 
   # Optional (Phase 2.15, GaRoN): deploy + register the bundled
   # acp-dashboard-binding plugin in OpenClaw (resolves dashboard/webchat
-  # conversations to ACP harness sessions). Default is false — the add-on
-  # runs WITHOUT this feature unless explicitly enabled here.
-  acp_dashboard_binding_enabled: false
+  # conversations to ACP harness sessions). Default is true — the binding is
+  # the add-on core surface; set to false for a real operator opt-out.
+  acp_dashboard_binding_enabled: true
 
   # Optional (Repo-Split A2, 2026-10-11): deploy + register the bundled
   # harness-config-writer plugin in OpenClaw (generates the harness-native

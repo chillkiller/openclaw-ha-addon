@@ -1,3 +1,13 @@
+## [0.7.13.21] - 2026-10-12
+
+### Changed
+- **OpenClaw 2026.10.2 pin bump** with dist verification.
+- **Dashboard binding default ON:** `acp_dashboard_binding_enabled` defaults to `true`; explicit `false` is a real opt-out that disables the plugin entry and strips the channel block.
+- **Activation manifest:** `openclaw.plugin.json` adds `activation:{"onStartup":true}` for bundled-channel startup qualification.
+
+### Fixed
+- **Protection chain:** off-switch no longer leaves stale `channels['acp-dashboard-binding']` keys that would refuse gateway boot.
+
 ## [0.7.13.20] - 2026-10-12
 
 ### Fixed
