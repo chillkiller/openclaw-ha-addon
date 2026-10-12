@@ -1086,7 +1086,19 @@ export async function createDashboardBridge(args: DashboardBridgeArgs): Promise<
   };
 
   if (api.registerHook) {
-    api.registerHook(["message_received", "before_dispatch"], onInboundHook);
+    // Registry contract (openclaw 2026.10.2, registry-854ZO8XT.mjs:2940):
+    // registerHook throws "hook registration missing name" unless
+    // entry.hook.name or opts.name is provided. This creation runs un-awaited
+    // async (void createDashboardBridge in registerFull), so the nameless
+    // call surfaced as a swallowed promise rejection and the bridge's inbound
+    // hooks were silently never installed; the SYNC register-time crash that
+    // dropped the whole plugin on 0.7.13.22/0.7.13.23 boots was the boot-sweep
+    // hook — this call gets a name (0.7.13.23), the sweep name (0.7.13.24)
+    // and the api-projection opts forwarding (0.7.13.24) complete the
+    // contract coverage.
+    api.registerHook(["message_received", "before_dispatch"], onInboundHook, {
+      name: "acp-dashboard-binding:inbound",
+    });
   } else {
     logger.warn?.(`[${CHANNEL_ID}] api.registerHook unavailable; bridge hooks not installed`);
   }

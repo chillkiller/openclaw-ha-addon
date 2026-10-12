@@ -310,7 +310,12 @@ function registerStuckSessionSweep(api: OpenClawPluginApi, sessionStore: Session
         api.logger?.warn?.(`[${CHANNEL_ID}] boot sweep failed — ${errorBrief(error)}`);
       }
     },
-    undefined,
+    // v0.7.13.24: registry contract (openclaw 2026.10.2, registry
+    // registry-854ZO8XT.mjs:2940) throws "hook registration missing name" for
+    // nameless registrations — undefined opts here was the SYNC register-time
+    // thrower that dropped the whole plugin on every 0.7.13.22 boot (the
+    // bridge's nameless call threw the same error, but un-awaited/async).
+    { name: "acp-dashboard-binding:boot-sweep" },
   );
 }
 
@@ -390,9 +395,13 @@ function dashboardBridgeApi(api: OpenClawPluginApi): DashboardBridgeApiLike {
       warn: (message: string) => api.logger.warn(message),
       error: (message: string) => api.logger.error(message),
     },
-    // The bridge never passes hook opts; hook events are the loose host shape.
-    registerHook: (events, handler) => {
-      api.registerHook(events, (event) => handler(event, undefined) as Promise<void> | void, undefined);
+    // Hook events are the loose host shape; hook opts must be FORWARDED —
+    // v0.7.13.24: the 2026.10.2 registry contract requires a hook name
+    // (opts.name), and a projection that silently dropped the third argument
+    // made the bridge's named call nameless again at the host boundary.
+    // handler(event, undefined): the bridge never uses the typed-hook ctx.
+    registerHook: (events, handler, opts) => {
+      api.registerHook(events, (event) => handler(event, undefined) as Promise<void> | void, opts);
     },
     runtime: {
       state: {

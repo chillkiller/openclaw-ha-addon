@@ -1,0 +1,167 @@
+import { describe, expect, it, vi } from "vitest";
+
+/**
+ * §9.2 register-crash forensics 2026-10-13 (agents/coding-review/findings/
+ * 2026-10-13-register-crash-forensics.md): the OpenClaw 2026.10.2 registry
+ * THROWS "hook registration missing name" for every api.registerHook
+ * registration without opts.name (registry-854ZO8XT.mjs:2937-2941), and the
+ * plugin-api wrapper forwards opts verbatim (:781). The pre-existing test
+ * mocks silently accepted anything (the forensics §7a gap) — which is how
+ * the nameless boot-sweep and bridge calls shipped through a green suite.
+ * These tests exercise registerFull against the FAITHFUL host contract.
+ */
+
+vi.mock("openclaw/plugin-sdk/session-store-runtime", () => ({
+  getSessionEntry: vi.fn(() => undefined),
+  patchSessionEntry: vi.fn(() => undefined),
+  listSessionEntries: vi.fn(() => []),
+}));
+
+type RegisteredHook = { events: string[]; name: string | undefined };
+
+/**
+ * Verbatim 2026.10.2 registry contract (names/semantics of
+ * registry-854ZO8XT.mjs:2937-2941, minus the entry-push bookkeeping the
+ * plugin never observes): unknown event names pass, opts?.name?.trim() is
+ * the only name source at this api level, duplicate names error.
+ */
+function createHostContractRegisterHook(registry: RegisteredHook[]) {
+  return (events: string | string[], handler: unknown, opts?: unknown): void => {
+    void handler;
+    const normalized = Array.isArray(events) ? events : [events];
+    const name = (opts as { name?: string } | undefined)?.name?.trim();
+    if (!name) throw new Error("hook registration missing name");
+    if (registry.some((hook) => hook.name === name)) {
+      throw new Error(`hook already registered: ${name}`);
+    }
+    registry.push({ events: normalized, name });
+  };
+}
+
+function createHookContractApi() {
+  const registry: RegisteredHook[] = [];
+  const typedHooks: string[] = [];
+  const unhandled: unknown[] = [];
+  const onUnhandled = (error: unknown) => unhandled.push(error);
+  process.on("unhandledRejection", onUnhandled);
+  const api = {
+    rootDir: "/tmp/hook-contract-root",
+    id: "acp-dashboard-binding",
+    config: { agents: { entries: {} } },
+    logger: {
+      debug: (_m: string) => undefined,
+      info: (_m: string) => undefined,
+      warn: (_m: string) => undefined,
+      error: (m: string) => {
+        throw new Error(`unexpected plugin error log at register time: ${m}`);
+      },
+    },
+    registerHook: createHostContractRegisterHook(registry),
+    on: (event: string, _handler: unknown) => {
+      typedHooks.push(event);
+    },
+    lifecycle: {
+      registerRuntimeLifecycle: (_reg: unknown) => undefined,
+    },
+    // registerHarnessReplyClaimHook resolves these at register time (the
+    // real api always carries them; the contract test only needs the shape).
+    runtime: {
+      subagent: {},
+      gateway: { isAvailable: () => false },
+    },
+  };
+  return {
+    api,
+    registry,
+    typedHooks,
+    unhandled,
+    offUnhandled: () => process.off("unhandledRejection", onUnhandled),
+  };
+}
+
+describe("registerFull vs host hook-name contract (§9.2, register-crash forensics)", () => {
+  it("registers every hook NAMED — boot sweep, bridge inbound, claim typed hook", async () => {
+    const { api, registry, typedHooks, unhandled, offUnhandled } = createHookContractApi();
+    try {
+      const entry = (await import("../index.js")).default;
+      expect(typeof entry.registerFull).toBe("function");
+      entry.registerFull(api);
+      // registerFull launches the bridge un-awaited; let its async body reach
+      // its own registerHook so the contract sees the complete inventory.
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(
+        registry.map((hook) => `${hook.name}`,
+        ),
+      ).toEqual(["acp-dashboard-binding:boot-sweep", "acp-dashboard-binding:inbound"]);
+      expect(registry[0].events).toEqual(["gateway_start"]);
+      expect(registry[1].events).toEqual(["message_received", "before_dispatch"]);
+      expect(typedHooks).toEqual(["inbound_claim"]);
+      expect(unhandled).toEqual([]);
+    } finally {
+      offUnhandled();
+    }
+  });
+});
+
+describe("registerHook call-site inventory (§9.2a static tripwire)", () => {
+  const FILES = ["../index.ts", "dashboard-bridge.ts", "channel.ts"];
+
+  /** Counts top-level arguments between the call's surrounding parens. */
+  function argumentCount(source: string, openIndex: number): { count: number; args: string[] } {
+    let depth = 0;
+    let current = "";
+    const args: string[] = [];
+    for (let i = openIndex; i < source.length; i += 1) {
+      const char = source[i];
+      if (char === "(") {
+        depth += 1;
+        if (depth === 1) continue;
+      }
+      if (char === ")") {
+        depth -= 1;
+        if (depth === 0) break;
+      }
+      if (char === "," && depth === 1) {
+        args.push(current);
+        current = "";
+        continue;
+      }
+      current += char;
+    }
+    args.push(current);
+    return { count: args.length, args };
+  }
+
+  /** Strips comments and string bodies so call sites scan reliably. */
+  function stripNoise(source: string): string {
+    return source
+      .replace(/\/\*[\s\S]*?\*\//g, " ")
+      .replace(/(^|[^:])\/\/[^\n]*/g, " ")
+      .replace(/(["'`])(?:\\.|(?!\1)[\s\S])*\1/g, '""');
+  }
+
+  it("every api.registerHook call site passes non-undefined hook opts", async () => {
+    const { readFileSync } = await import("node:fs");
+    const path = await import("node:path");
+    const violations: string[] = [];
+    const found: string[] = [];
+    for (const file of FILES) {
+      const source = stripNoise(readFileSync(path.join(import.meta.dirname, file), "utf8"));
+      const pattern = /registerHook\s*\(/g;
+      for (const match of source.matchAll(pattern)) {
+        const open = match.index + match[0].length - 1;
+        const { count, args } = argumentCount(source, open);
+        found.push(`${file}:call@${match.index} (arity ${count})`);
+        const last = args[count - 1] ?? "";
+        // arity 2 or a trailing `undefined` opts = the .22 register-crash shape.
+        if (count < 3 || last.trim() === "undefined") {
+          violations.push(`${file}: registerHook call with arity ${count}, last arg "${last.slice(0, 60)}"`);
+        }
+      }
+    }
+    // Guard the scanner itself: it must see both real call sites (sweep +
+    // bridge) plus the projection forward, otherwise this test proves nothing.
+    expect(found.length, JSON.stringify({ found, violations })).toBeGreaterThanOrEqual(3);
+    expect(violations).toEqual([]);
+  });
+});
