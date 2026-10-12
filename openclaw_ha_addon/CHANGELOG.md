@@ -1,3 +1,18 @@
+## [0.7.13.19] - 2026-10-12
+
+### Fixed
+- **Terminal-write owner race on claimed binding turns (Punkt 1, BRIDGE §17):** the claimed reply turn completes (host `finishPluginBindingDispatch` → `completeDispatchReplyOperation`, dist `dispatch-from-config-BG9rT_X3.mjs:3453/3461`) but the run-terminal session-entry persistence fails — `session-entry.patch` throws `Terminal write owner changed before commit` (`agent-run-terminal-writes-CZ5u4nvB.mjs:39`, `assertCurrent` guards owner/terminalWrites-entry/captured-context/delegatedAuthority; capture at `server-runtime-subscriptions-CLhV3Vvh.mjs:2707`, bind site `prepare.runtime-CraZtPFh.mjs:360`). Result: `session_nodes` row stays `status:"running"` with dangling `lifecycleRunId` despite `observerDigest: "Run completed"` — 3/3 deterministic (claimed turns 4fbefeb91c0aed3d etc., log `/tmp/openclaw/openclaw-2026-10-11.log`); healthy counter-example: main-clone session `60bac3d6` (no claim-mirror path). Hypotheses H1 (mirror/delivery writes rebind the owner between capture and commit — both hang in the same completion tick) leading; H2 (delegatedAuthority invalidation) weaker, no fallback/retry markers in log.
+- **Plugin fix = post-settle yield:** `reply-claim.ts` sleeps 500 ms (exported `DEFAULT_POST_SETTLE_YIELD_MS`, clamp 0..10000, option `postSettleYieldMs`) after a terminal `waitForRun` result — only ok/error-terminal; timeout/pending/wait-failure paths skip, so no added latency on non-terminal waits. No host patch, no manifest change.
+### Corrected
+- **`harnessReplyWaitMs` IS wired** (earlier claim retracted): live getter `getConfig: () => api.config` (`index.ts:189`), `readWaitMs` reads `plugins.entries['acp-dashboard-binding'].config.harnessReplyWaitMs`, clamp 1000..900000 default 120000; declared as number in `openclaw.plugin.json`. Live config simply has no key set — nothing to implement.
+### Added
+- `tsconfig.check.json` for the binding plugin: strict, noEmit, nodenext, explicit `openclaw/plugin-sdk/*` dist mapping (`plugin-sdk/*.d.ts`), typeRoots from the gateway's own @types; excludes `src/**/*.test.ts` (vitest types not vendored — tests run via vitest). Runs clean: 0 errors.
+- **Audit report artifact:** `agents/coding-review/findings/2026-10-12-punkt1-terminal-write-race-audit.md` (gitignored findings convention).
+### Verified
+- vitest binding file 28/28 (5 new post-settle-yield tests incl. skip-paths and disable-by-0), full suite 166 passed + 1 skipped, binding strict tsc 0, writer baseline tsc 0. Audited by the acpx-codex harness — explicit `/acp spawn codex` chain (persistent session `agent:codex:acp:3115ba34-5018-4e04-ac27-5a5720db3de9`, harness verified: `kimi-k2.7-code:cloud`, `model_control: "config_option"`, `--openclaw-run-configured`): all 7 brief checks ✅ — **VERDICT: GO**; INFO applied (timing assertions 60→100 ms to de-flake CI, re-run 28/28).
+- Docs: BRIDGE §17 (forensics + mechanism + hypotheses + fix + §12-Mirror kernel for upstream #149801/#163078); BACKLOG V34 rewritten with corrected evidence + audit block.
+- Live smoke outstanding: next claimed turn in a binding conversation must show the `Terminal write owner changed before commit` error gone (acp_smoke_check stuck-node guard covers follow-up).
+
 ## [0.7.13.18] - 2026-10-11
 
 ### Fixed
