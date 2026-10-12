@@ -1,3 +1,14 @@
+## [0.7.13.22] - 2026-10-13
+
+### Fixed
+- **Claim-path conversation settle (§19, Denken-Bug root):** the host never writes run-terminal entries for claimed turns — the ORIGIN conversation node stayed `running` with the claim's `lifecycleRunId` (live-DB proof 99d8daf5), the boot recovery mark was only the consequence. The plugin settles origin after every claim return and the clone target after terminal waits, mirroring the host's own settle shape (status + endedAt + runtimeMs + abortedLastRun outcome mapping; full 17-field restart-recovery claim set cleared only for our claim run). Boot sweep at gateway_start terminates orphaned `running` nodes in the plugin's key grammar.
+- **Claim-reply transcript persistence (§20, "flüchtige Antworten" root):** delivered claim replies were never transcribed into the origin conversation (only agent-run finals mirror to transcript) — re-renders lost them. The plugin mirrors every handled claim reply via `appendAssistantMirrorMessageByIdentity` (official plugin-sdk/session-transcript-runtime, Telegram-channel precedent) with `acp-claim-final:<runId>`, best-effort.
+
+### Added
+- **Hidden harness sub-session (V39):** `spawnedBy` provenance stamp hides harness clones from ControlUI lists (excludeSubagents).
+- **`runtime.acp.thinking` passthrough (d1):** operator config reaches the ensure-spec runtimeOptions, reconciled into live ACP sessions.
+- **`utility_model` option (V36.2):** merges `agents.defaults.utilityModel` (session-observer strict-JSON root fix); unset = no write.
+
 ## [0.7.13.21] - 2026-10-12
 
 ### Changed
