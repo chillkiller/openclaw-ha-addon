@@ -299,6 +299,22 @@ export type HarnessReplyClaimOptions = {
    * exactly as in v0.7.13.21.
    */
   sessionStore?: SessionStoreApi | null;
+  /**
+   * BRIDGE §20 (v0.7.13.22): mirrors the claim's terminal reply into the ORIGIN
+   * conversation transcript (appendAssistantMirrorMessageByIdentity — the host
+   * delivers the reply to the origin conversation but never transcribes it
+   * there, so re-renders lost it: the "Flüchtigkeit" root). Best-effort
+   * contract: never throws, never blocks the reply. Injected from index.ts
+   * (live: dynamic import of the types-less
+   * `openclaw/plugin-sdk/session-transcript-runtime` host export). Absent →
+   * re-render persistence stays the pre-§20 behavior.
+   */
+  mirrorClaimReply?: (params: {
+    originSessionKey: string;
+    agentId: string;
+    claimRunId: string;
+    replyText: string;
+  }) => Promise<void>;
   logger?: HarnessReplyClaimLogger;
 };
 
@@ -348,6 +364,26 @@ export function createHarnessReplyClaimHandler(options: HarnessReplyClaimOptions
     event: InboundClaimEventLike,
     ctx: InboundClaimContextLike,
   ): Promise<InboundClaimResultLike> => {
+    // BRIDGE §20: mirrors a handled claim's terminal reply into the origin
+    // transcript before the result leaves the handler. Same origin-key guard as
+    // §19; a broken/unset mirror never affects the reply itself.
+    const finishReply = async (
+      result: InboundClaimResultLike,
+      originSessionKey: string,
+      agentId: string,
+      claimRunId: string,
+    ): Promise<InboundClaimResultLike> => {
+      const replyText = (result.reply?.text ?? "").trim();
+      const mirror = options.mirrorClaimReply;
+      if (replyText && mirror && parseAgentIdFromConversationId(originSessionKey)) {
+        try {
+          await mirror({ originSessionKey, agentId, claimRunId, replyText });
+        } catch {
+          // The mirror contract is best-effort; the reply must not degrade.
+        }
+      }
+      return result;
+    };
     const log = options.logger ?? {};
     const cfg = options.getConfig?.();
     const binding = ctx.pluginBinding;
@@ -469,13 +505,18 @@ export function createHarnessReplyClaimHandler(options: HarnessReplyClaimOptions
             });
           }
         }
-        return {
-          handled: true,
-          reply: {
-            text:
-              `Harness turn dispatched to \`${target}\` (run \`${runId}\`) but waiting for its reply failed: ${note} — the turn is still running there.`,
+        return await finishReply(
+          {
+            handled: true,
+            reply: {
+              text:
+                `Harness turn dispatched to \`${target}\` (run \`${runId}\`) but waiting for its reply failed: ${note} — the turn is still running there.`,
+            },
           },
-        };
+          (binding?.conversationId ?? "").trim(),
+          agentId,
+          runId,
+        );
       }
       // §17 (Punkt 1): only a TERMINAL wait result schedules the host's
       // run-terminal entry persistence — yield before replying so that commit
@@ -518,7 +559,16 @@ export function createHarnessReplyClaimHandler(options: HarnessReplyClaimOptions
           });
         }
       }
-      return harnessWaitReply(target, runId, settled.wait);
+      // §20: mirror the terminal reply (answer or notice) into the origin
+      // transcript before the host delivers it — the agent-run finalization
+      // never transcribes claim replies (live-DB proof 048d96d7…: no assistant
+      // record), which is why re-renders lost them.
+      return await finishReply(
+        harnessWaitReply(target, runId, settled.wait),
+        (binding?.conversationId ?? "").trim(),
+        agentId,
+        runId,
+      );
     } catch (error) {
       const note = error instanceof Error ? error.message : String(error);
       log.warn?.(`[${CHANNEL_ID}] inbound_claim: claim error — ${note}`);

@@ -1225,3 +1225,55 @@ Restart-Log: die contract-WARN verschwindet UND der nächste Main-Turn loggt
 UNBERÜHRT — erst mit wieder-laufendem Binding wieder testbar (3/3
 Fehlschläge live am 2026-10-12 trotz .19 post-settle yield); das r2-Forensik-Redo
 läuft parallel weiter.
+
+## 19/20. Claim-Settle §19 + Claim-Reply-Transkript-Spiegel §20 (v0.7.13.22, 2026-10-12/13)
+
+### §19 — Claim-Path Conversation Settle (src/session-settle.ts, src/reply-claim.ts)
+
+Live belegt (sqlite claude-store, 99d8daf5/4fbefeb9): der Host schreibt nach
+`deliverBindingPayload` am Claim-Pfad NIE die Run-Terminal-Knoteneinträge — die
+ORIGIN-Konversation bleibt `status:"running"` mit dem Claim-`lifecycleRunId`
+(Denken-Spinner; Boot-Recovery-Mark = nur Folge), der Klon-Knoten kann beim
+§17-Race am Direkt-Pfad ebenfalls hängen. Fix: Plugin settled beide Knoten mit
+dem Host-Parity-Shape (`clearPendingFinalDeliveryAfterSuccess`-Spiegel: status
+done/failed/timeout/interrupted + endedAt + runtimeMs + abortedLastRun — die
+vollen 17 restartRecovery-Felder cleared NUR wenn `restartRecoveryDeliveryRunId
+=== claimRunId`; Terminal-Evidence-Merges unangetastet). Boot-Sweep an
+gateway_start: alle `running`-Entries unserer Key-Grammatiken
+(`dashboard:<uuid>`-Origins, `acp:binding:…`-Klone, Roster-Harness-Agents) mit
+Pre-Boot-`updatedAt` → `interrupted` (Host mark_interrupted-Parität). V39:
+`spawnedBy = <origin key>`-Stamp auf jedem Klon (ControlUI excludeSubagents →
+"versteckte Sub-Session"); idempotent, fremde Provenance bleibt. Bekannte
+Residual (bewusst nicht faked): ein Entry ohne Origin-Referenz (Klon-Entry
+trägt KEINE) kann nach einem Pre-Boot-Restempel nicht nachgestempelt werden.
+
+### §20 — Claim-Reply-Transkript-Spiegel (src/claim-reply-mirror.ts, NEU)
+
+**Live-DB-Befund (Root der "flüchtigen" Antworten):** die ORIGIN-Konversation
+(048d96d7…) enthält nach geclaimten Turns NUR das session-start-Event und die
+User-Message (seq=1, idempotencyKey `<turn>:user`, von
+`persistPluginBindingUserTurn`, dispatch-from-config:2528) — KEINE
+Assistant-Node. Der Host liefert die Reply aus (`deliverBindingPayload(reply,
+"terminal", transcriptOwner)` :3397), aber der einzige
+`mirrorDeliveredReplyToTranscript`-Writer lebt in der Agent-Run-Finalisierung
+(:800/:848) — am Claim-Pfad schreibt niemand. Re-Renders baute
+das UI aus dem Transkript → Antwort weg.
+
+Fix (plugin-seitig, Host-Präzedenz Telegram):
+`appendAssistantMirrorMessageByIdentity` (official
+`plugin-sdk/session-transcript-runtime` Export; Aufruf-Form:
+bot-message-BSJK5l6G.mjs:2456) — nach dem Terminal-Wait spiegelt der Claim
+JEDE geleifte Reply (echte Harness-Antworten + Status-Notices — alles, was
+der User im Origin sieht) mit `idempotencyKey: acp-claim-final:<runId>` +
+`deliveryMirror: {kind:"channel-final", sourceMessageId}` in das
+Origin-Transkript. Best-effort (wirft nie), Dedupe über den
+Idempotency-Key, sessionId-Guard gegen Session-Rebind, types-less Host-Export
+über ambient d.ts (src/host-transcript.d.ts). Kein Competing-Writer am
+Claim-Pfad (verifiziert) → kein Double-Record.
+
+Upstream-Notiz: der Host sollte geclaimte Replies selbst spiegeln
+(sendBindingNotice/Deliver-Branch) — bis dahin ist §20 die plugin-seitige
+Parität zu Telegram; bei einem künftigen Host-Mirror mit eigenem Key wäre das
+Resultat ein zweiter (deduplizierbarer) Assistent-Record — in Kauf genommen,
+dokumentiert (session-transcript-runtime erkennt Channel-Endre
+Equivalent-Antworten nur keyless).

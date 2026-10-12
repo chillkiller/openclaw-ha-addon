@@ -35,6 +35,7 @@ import {
   isOriginWorkspaceStateDirResolvable,
   readOriginWorkspaceRow,
 } from "./src/origin-workspace.js";
+import { mirrorClaimReplyToOriginTranscript } from "./src/claim-reply-mirror.js";
 import { defineBundledChannelCompatibleEntry } from "./src/entry.js";
 import { acpDashboardBindingPlugin, registerDashboardBindingRuntime } from "./src/channel.js";
 import {
@@ -212,6 +213,67 @@ function createSessionStoreApi(
 }
 
 /**
+ * BRIDGE §20 (v0.7.13.22, "Flüchtigkeit"-Root): the host delivers a claim's
+ * terminal reply to the origin conversation but NEVER transcribes it there —
+ * the only final-transcript mirror write lives in the agent-run finalization
+ * (dispatch-from-config:800/848); `finishPluginBindingDispatch` bookkeeps only
+ * (live-DB proof: origin 048d96d7… kept the user message (seq=1) and no
+ * assistant record at all, so re-renders lost every claim answer). The host's
+ * own channel precedent (Telegram → appendAssistantMirrorMessageByIdentity)
+ * names the plugin-visible primitive: `openclaw/plugin-sdk/
+ * session-transcript-runtime`. This wires that append (types-less host export
+ * — dynamic import; ambient shapes in src/host-transcript.d.ts) into the claim
+ * handler. Best-effort: a failed mirror never fails the reply.
+ */
+const TRANSCRIPT_RUNTIME_SPECIFIER = "openclaw/plugin-sdk/session-transcript-runtime";
+
+type SessionTranscriptRuntimeModule = {
+  appendAssistantMirrorMessageByIdentity?: import("./src/claim-reply-mirror.js").AssistantMirrorAppendFn;
+};
+
+function createClaimReplyMirror(
+  api: OpenClawPluginApi,
+  sessionStore: SessionStoreApi,
+): NonNullable<
+  import("./src/reply-claim.js").HarnessReplyClaimOptions["mirrorClaimReply"]
+> {
+  return async (params) => {
+    try {
+      const mod = (await import(/* webpackIgnore: true */ TRANSCRIPT_RUNTIME_SPECIFIER)) as SessionTranscriptRuntimeModule;
+      const append = mod.appendAssistantMirrorMessageByIdentity;
+      if (typeof append !== "function") {
+        api.logger.debug?.(
+          `[${CHANNEL_ID}] claim-reply mirror unavailable: host transcript-runtime export missing appendAssistantMirrorMessageByIdentity`,
+        );
+        return;
+      }
+      const done = await mirrorClaimReplyToOriginTranscript({
+        config: api.config,
+        originSessionKey: params.originSessionKey,
+        claimRunId: params.claimRunId,
+        replyText: params.replyText,
+        agentId: params.agentId,
+        sessionStore: sessionStore,
+        appendAssistantMirror: append,
+        logger: {
+          debug: (message) => api.logger.debug?.(message),
+          warn: (message) => api.logger.warn(message),
+        },
+      });
+      if (!done) {
+        api.logger.debug?.(
+          `[${CHANNEL_ID}] claim-reply mirror not persisted for ${params.originSessionKey} (run ${params.claimRunId})`,
+        );
+      }
+    } catch (error) {
+      api.logger?.warn?.(
+        `[${CHANNEL_ID}] claim-reply mirror failed — ${errorBrief(error)}`,
+      );
+    }
+  };
+}
+
+/**
  * BRIDGE §19c (v0.7.13.22-Paket c): settles the pre-boot stuck entries the
  * host's own main-session recovery leaves marked with an unsatisfiable
  * restart-recovery delivery for our claimed conversations (99d8daf5… live-DB
@@ -281,6 +343,7 @@ function registerHarnessReplyClaimHook(api: OpenClawPluginApi): void {
     subagent: api.runtime.subagent,
     isGatewayAvailable: () => api.runtime.gateway.isAvailable(),
     sessionStore: createSessionStoreApi(api),
+    mirrorClaimReply: createClaimReplyMirror(api, createSessionStoreApi(api)),
   });
   (api.on as (
     hookName: string,

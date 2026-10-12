@@ -854,3 +854,87 @@ describe("Punkt 1 (BRIDGE §17) — post-settle yield before terminal reply", ()
     expect(result.reply?.text).toBe("fix");
   });
 });
+
+describe("BRIDGE §20 — claim-reply transcript mirror", () => {
+  function stub(
+    waitBehavior: () => Promise<Record<string, unknown>>,
+    runBehavior?: () => Promise<{ runId: string }>,
+  ): HarnessSubagentApi {
+    return {
+      run: async () => (runBehavior ? await runBehavior() : { runId: "run-mirror" }),
+      waitForRun: async () => (await waitBehavior()) as never,
+    };
+  }
+
+  it("mirrors the terminal harness reply into the origin transcript (§20)", async () => {
+    const mirrors: Array<{ originSessionKey: string; agentId: string; claimRunId: string; replyText: string }> = [];
+    const handler = createHarnessReplyClaimHandler({
+      getConfig: () => codexConfig(),
+      subagent: stub(async () => ({ status: "ok", terminalReply: { disposition: "visible", text: "Fixed the login bug." } })),
+      isGatewayAvailable: async () => true,
+      postSettleYieldMs: 0,
+      mirrorClaimReply: async (mirrorParams) => {
+        mirrors.push(mirrorParams);
+      },
+    });
+    const result = await handler(event, claimContextCodex(PLUGIN_ROOT));
+    expect(result.handled).toBe(true);
+    expect(result.reply?.text).toBe("Fixed the login bug.");
+    expect(mirrors).toEqual([
+      {
+        originSessionKey: CODEX_DASHBOARD_KEY,
+        agentId: "codex",
+        claimRunId: "run-mirror",
+        replyText: "Fixed the login bug.",
+      },
+    ]);
+  });
+
+  it("mirrors the wait-failure notice too (the user sees it, so it must persist)", async () => {
+    const mirrors: Array<{ claimRunId: string; replyText: string }> = [];
+    const handler = createHarnessReplyClaimHandler({
+      getConfig: () => codexConfig(),
+      subagent: stub(async () => {
+        throw new Error("wait API gone");
+      }),
+      isGatewayAvailable: async () => true,
+      postSettleYieldMs: 0,
+      waitRetryDelaysMs: [0, 0, 0, 0],
+      mirrorClaimReply: async (mirrorParams) => {
+        mirrors.push(mirrorParams);
+      },
+    });
+    const result = await handler(event, claimContextCodex(PLUGIN_ROOT));
+    expect(result.handled).toBe(true);
+    expect(mirrors).toHaveLength(1);
+    expect(mirrors[0]!.claimRunId).toBe("run-mirror");
+    expect(mirrors[0]!.replyText).toContain("waiting for its reply failed");
+  });
+
+  it("a throwing mirror never degrades the reply (best-effort contract)", async () => {
+    const handler = createHarnessReplyClaimHandler({
+      getConfig: () => codexConfig(),
+      subagent: stub(async () => ({ status: "ok", terminalReply: { disposition: "visible", text: "the answer" } })),
+      isGatewayAvailable: async () => true,
+      postSettleYieldMs: 0,
+      mirrorClaimReply: async () => {
+        throw new Error("append exploded");
+      },
+    });
+    const result = await handler(event, claimContextCodex(PLUGIN_ROOT));
+    expect(result.handled).toBe(true);
+    expect(result.reply?.text).toBe("the answer");
+  });
+
+  it("absent mirror keeps the pre-§20 behavior (no call, reply unchanged)", async () => {
+    const handler = createHarnessReplyClaimHandler({
+      getConfig: () => codexConfig(),
+      subagent: stub(async () => ({ status: "ok", terminalReply: { disposition: "visible", text: "the answer" } })),
+      isGatewayAvailable: async () => true,
+      postSettleYieldMs: 0,
+    });
+    const result = await handler(event, claimContextCodex(PLUGIN_ROOT));
+    expect(result.handled).toBe(true);
+    expect(result.reply?.text).toBe("the answer");
+  });
+});
