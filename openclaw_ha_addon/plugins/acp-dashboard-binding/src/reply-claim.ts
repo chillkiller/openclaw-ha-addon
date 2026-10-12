@@ -500,6 +500,10 @@ export function createHarnessReplyClaimHandler(options: HarnessReplyClaimOptions
       if (options.sessionStore) {
         const originSessionKey = (binding?.conversationId ?? "").trim();
         if (parseAgentIdFromConversationId(originSessionKey)) {
+          // Wait-disposition mapping (v0.7.13.22 audit must-fix 2): the settle
+          // status reflects the ACTUAL wait outcome instead of forcing
+          // "done" — ok→done, error→failed, timeout→timeout, pending→
+          // interrupted (SessionRunStatusSchema union, agent-scope .d.ts).
           await settleClaimedTurnSessions({
             sessionStore: options.sessionStore,
             originSessionKey,
@@ -508,6 +512,8 @@ export function createHarnessReplyClaimHandler(options: HarnessReplyClaimOptions
             agentId,
             waitStatus:
               wait != null && status !== "timeout" && status !== "pending" ? "terminal" : "nonterminal",
+            outcome:
+              status === "ok" ? "success" : status === "error" ? "failed" : status === "timeout" ? "timeout" : "interrupted",
             logger: log,
           });
         }

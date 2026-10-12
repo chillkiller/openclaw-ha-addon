@@ -430,10 +430,12 @@ describe("F4 reply-delivery fix — inbound_claim dispatch (Weg A: subagent surf
     expect(result.handled).toBe(true);
     expect(result.reply?.text).toContain("waiting for its reply failed");
     expect(result.reply?.text).toContain("gateway timeout");
-    const originSettle = store.patches.filter(
-      (p) => p.sessionKey === CODEX_DASHBOARD_KEY && p.patch.status === "done",
-    );
+    const originSettle = store.patches.filter((p) => p.sessionKey === CODEX_DASHBOARD_KEY);
     expect(originSettle).toHaveLength(1);
+    // The wait was cut short (never terminal) → interrupted, host
+    // mark_interrupted parity: abortedLastRun goes true.
+    expect(originSettle[0]!.patch.status).toBe("interrupted");
+    expect(originSettle[0]!.patch.abortedLastRun).toBe(true);
     // V39 stamp on the TARGET fired (this test config dispatches to the
     // harnessSessions key, not the derived clone key), but the target itself
     // was NOT settled (the wait never went terminal — the run may still go).

@@ -103,6 +103,58 @@ describe("BRIDGE §19: buildClaimSettlePatch", () => {
     expect(foreign.restartRecoveryDeliveryRunId).toBeUndefined(); // untouched
     expect(Object.hasOwn(foreign, "restartRecoveryDeliveryRunId")).toBe(false);
   });
+
+  it("clears the FULL host parity field set (buildRestartRecoveryClaimCleanupPatch mirror)", () => {
+    // Audit must-fix 1 (2026-10-12): the cleared set must be the host's FULL
+    // claim-cleanup field list (restart-recovery-state-puFilrVu.mjs:239) —
+    // enumerated here 1:1 so a host-side field change fails this test loudly.
+    const HOST_CLAIM_CLEANUP_FIELDS = [
+      "restartRecoveryBeforeAgentReplyState",
+      "restartRecoveryDeliveryReceiptState",
+      "restartRecoveryDeliveryToolCallId",
+      "restartRecoveryDeliveryContext",
+      "restartRecoveryDeliveryMediaUrls",
+      "restartRecoveryDisableMessageTool",
+      "restartRecoverySuppressTextDelivery",
+      "restartRecoveryDeliveryRequestFingerprint",
+      "restartRecoveryDeliveryRunId",
+      "restartRecoveryDeliverySourceRunId",
+      "restartRecoveryHarnessCompletion",
+      "restartRecoveryRequesterAccountId",
+      "restartRecoveryRequesterSenderId",
+      "restartRecoverySameChannelThreadRequired",
+      "restartRecoverySourceIngress",
+      "restartRecoverySourceReplyDeliveryMode",
+      "restartRecoveryForceSafeTools",
+    ];
+    const entry: SettleSessionEntryLike = { status: "running" };
+    for (const field of HOST_CLAIM_CLEANUP_FIELDS) entry[field] = "stale";
+    const patch = buildClaimSettlePatch(entry, RUN_ID, 100)!;
+    for (const field of HOST_CLAIM_CLEANUP_FIELDS) {
+      expect(patch[field]).toBeUndefined();
+    }
+    // Terminal-evidence merges stay untouched (record-side, not claim fields).
+    expect(Object.hasOwn(patch, "restartRecoveryTerminalRunIds")).toBe(false);
+    expect(Object.hasOwn(patch, "restartRecoveryTerminalDeliveryEvidence")).toBe(false);
+  });
+
+  it("maps the wait disposition honestly: error→failed, timeout→timeout (audit must-fix 2)", () => {
+    const base = { status: "running", startedAt: 10 };
+    const failed = buildClaimSettlePatch(base, RUN_ID, 110, "failed")!;
+    expect(failed.status).toBe("failed");
+    expect(failed.abortedLastRun).toBe(false);
+    const timedOut = buildClaimSettlePatch(base, RUN_ID, 110, "timeout")!;
+    expect(timedOut.status).toBe("timeout");
+    expect(timedOut.abortedLastRun).toBe(false);
+    // Boot-sweep shape = host mark_interrupted parity: interrupted + abort flag.
+    const interrupted = buildClaimSettlePatch(base, RUN_ID, 110, "interrupted")!;
+    expect(interrupted.status).toBe("interrupted");
+    expect(interrupted.abortedLastRun).toBe(true);
+    // Default stays the success shape.
+    const success = buildClaimSettlePatch(base, RUN_ID, 110)!;
+    expect(success.status).toBe("done");
+    expect(success.abortedLastRun).toBe(false);
+  });
 });
 
 describe("BRIDGE §19a: settleClaimedTurnSessions", () => {
@@ -221,7 +273,10 @@ describe("BRIDGE §19c: sweepOwnedStuckSessions", () => {
       cutoffMs: Date.now() - 1_000,
     });
     expect(result.settled.sort()).toEqual([ORIGIN, TARGET].sort());
-    expect((store.entries[ORIGIN] as SettleSessionEntryLike).status).toBe("done");
+    // Restart-orphan settle is honest about the outcome: the run predated the
+    // boot → interrupted + abortedLastRun:true (host mark_interrupted parity).
+    expect((store.entries[ORIGIN] as SettleSessionEntryLike).status).toBe("interrupted");
+    expect((store.entries[ORIGIN] as SettleSessionEntryLike).abortedLastRun).toBe(true);
     expect((store.entries[ORIGIN] as SettleSessionEntryLike).restartRecoveryDeliveryRunId).toBeUndefined();
     expect((store.entries[foreigner] as SettleSessionEntryLike).status).toBe("running");
     expect((store.entries[foreign] as SettleSessionEntryLike).status).toBe("running");

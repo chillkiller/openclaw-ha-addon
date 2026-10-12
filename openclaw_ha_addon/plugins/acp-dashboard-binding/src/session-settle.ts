@@ -73,21 +73,45 @@ import { parseAgentIdFromConversationId } from "./agent-map.js";
 import type { HarnessReplyClaimLogger } from "./reply-claim.js";
 
 /**
- * Fields the host marks a session with when its run was interrupted by a
- * gateway restart (restartRecoveryDelivery* claim fields). We clear the whole
- * claim set together — same fields `clearPendingFinalDeliveryAfterSuccess`
- * releases via buildRestartRecoveryClaimCleanupPatch + the
- * restartRecoveryBeforeAgentReply* trio it clears unconditionally.
+ * Fields the host's `buildRestartRecoveryClaimCleanupPatch`
+ * (restart-recovery-state-puFilrVu.mjs:239) clears when the terminal source
+ * run matches the entry's marked delivery run — the full claim set, mirrored
+ * 1:1 (audit 2026-10-12 must-fix: a subset left residual delivery metadata on
+ * settled entries). The terminal-evidence MERGES
+ * (`restartRecoveryTerminalRunIds` / `…TerminalDeliveryEvidence`) are NOT
+ * mirrored — they are record-side evidence the host accumulates, not claim
+ * fields we would drop; leaving them untouched is the conservative choice.
  */
 const RESTART_RECOVERY_CLAIM_FIELDS = [
   "restartRecoveryDeliveryRunId",
   "restartRecoveryDeliverySourceRunId",
   "restartRecoveryDeliveryRequestFingerprint",
   "restartRecoveryDeliveryContext",
+  "restartRecoveryDeliveryReceiptState",
+  "restartRecoveryDeliveryToolCallId",
+  "restartRecoveryDeliveryMediaUrls",
+  "restartRecoveryDisableMessageTool",
+  "restartRecoverySuppressTextDelivery",
+  "restartRecoveryHarnessCompletion",
+  "restartRecoveryRequesterAccountId",
+  "restartRecoveryRequesterSenderId",
+  "restartRecoverySameChannelThreadRequired",
   "restartRecoverySourceIngress",
+  "restartRecoverySourceReplyDeliveryMode",
   "restartRecoveryBeforeAgentReplyState",
   "restartRecoveryForceSafeTools",
 ] as const;
+
+/**
+ * Terminal outcome of the settle source (SessionRunStatusSchema union:
+ * queued|running|done|failed|interrupted|killed|timeout — agent-scope .d.ts):
+ * success → `done` (host run-terminal success shape), failed → `failed`
+ * (error wait), timeout → `timeout`, interrupted → `interrupted` +
+ * abortedLastRun:true (host mark_interrupted semantics,
+ * main-session-recovery-state-DP4mDU12.mjs:147 — the boot sweep settles runs
+ * the restart genuinely interrupted, and a PENDING wait was cut short).
+ */
+export type ClaimSettleOutcome = "success" | "failed" | "interrupted" | "timeout";
 
 /** Structural public session-entry view (plugin-sdk projection). */
 export type SettleSessionEntryLike = {
@@ -133,6 +157,7 @@ export function buildClaimSettlePatch(
   entry: SettleSessionEntryLike | undefined,
   claimRunId: string,
   stoppedAt: number,
+  outcome: ClaimSettleOutcome = "success",
 ): SessionEntryPatch | null {
   if (!entry || entry.status !== "running") return null;
   const startedAt =
@@ -140,10 +165,13 @@ export function buildClaimSettlePatch(
       ? entry.startedAt
       : undefined;
   const patch: SessionEntryPatch = {
-    status: "done",
+    status: outcome === "success" ? "done" : outcome,
     endedAt: stoppedAt,
     ...(startedAt !== undefined ? { runtimeMs: Math.max(0, stoppedAt - startedAt) } : {}),
-    abortedLastRun: false,
+    // Host mark_interrupted parity: a restart-interrupted run reports
+    // abortedLastRun:true (main-session-recovery-state-DP4mDU12.mjs:158);
+    // clean/failed/timeout-terminal runs report it false.
+    abortedLastRun: outcome === "interrupted",
   };
   const recoveryRunId =
     typeof entry.restartRecoveryDeliveryRunId === "string" ? entry.restartRecoveryDeliveryRunId.trim() : "";
@@ -158,17 +186,19 @@ async function settleOne(params: {
   ref: SettleSessionEntryRef;
   claimRunId: string;
   stoppedAt: number;
+  outcome?: ClaimSettleOutcome;
   label: string;
   logger?: HarnessReplyClaimLogger;
 }): Promise<boolean> {
   try {
     const entry = params.sessionStore.getSessionEntry(params.ref);
     if (!entry || entry.status !== "running") return false;
-    const patch = buildClaimSettlePatch(entry, params.claimRunId, params.stoppedAt);
+    const patch = buildClaimSettlePatch(entry, params.claimRunId, params.stoppedAt, params.outcome);
     if (!patch) return false;
     await params.sessionStore.patchSessionEntry({
       ...params.ref,
-      update: (current) => buildClaimSettlePatch(current, params.claimRunId, params.stoppedAt),
+      update: (current) =>
+        buildClaimSettlePatch(current, params.claimRunId, params.stoppedAt, params.outcome),
       ...(params.sessionStore.requireWriteSuccess ? { requireWriteSuccess: true } : {}),
     });
     params.logger?.debug?.(`[acp-dashboard-binding] settled stuck ${params.label} session ${params.ref.sessionKey} (run ${params.claimRunId})`);
@@ -197,15 +227,24 @@ export async function settleClaimedTurnSessions(params: {
   agentId?: string | null;
   /** "terminal" → settle origin + target; "nonterminal" → origin only. */
   waitStatus: "terminal" | "nonterminal";
+  /**
+   * Wait disposition mapped onto the settle outcome (v0.7.13.22 audit
+   * must-fix): "success" (wait ok) → `done`, "failed" (wait error) →
+   * `failed`, "timeout" → `timeout`, "pending"-like cut-short waits →
+   * `interrupted`. Only meaningful for the nodes that actually settle.
+   */
+  outcome?: "success" | "failed" | "interrupted" | "timeout";
   logger?: HarnessReplyClaimLogger;
 }): Promise<void> {
   const stoppedAt = Date.now();
   const agentId = params.agentId ?? parseAgentIdFromConversationId(params.originSessionKey);
+  const outcome: ClaimSettleOutcome = params.outcome ?? (params.waitStatus === "nonterminal" ? "interrupted" : "success");
   await settleOne({
     sessionStore: params.sessionStore,
     ref: { sessionKey: params.originSessionKey, agentId },
     claimRunId: params.claimRunId,
     stoppedAt,
+    outcome,
     label: "claim-origin",
     logger: params.logger,
   });
@@ -215,6 +254,7 @@ export async function settleClaimedTurnSessions(params: {
       ref: { sessionKey: params.targetSessionKey, agentId },
       claimRunId: params.claimRunId,
       stoppedAt,
+      outcome,
       label: "claim-target",
       logger: params.logger,
     });
@@ -312,6 +352,7 @@ export async function sweepStuckHarnessSessions(params: {
         ref: target,
         claimRunId,
         stoppedAt,
+        outcome: "interrupted",
         label: "sweep",
         logger: params.logger,
       });
@@ -392,6 +433,7 @@ export async function sweepOwnedStuckSessions(params: {
       const patched = await settleOne({
         sessionStore: params.sessionStore,
         ref: { sessionKey, agentId },
+        outcome: "interrupted",
         claimRunId:
           typeof entry.restartRecoveryDeliveryRunId === "string" && entry.restartRecoveryDeliveryRunId.trim()
             ? entry.restartRecoveryDeliveryRunId.trim()
