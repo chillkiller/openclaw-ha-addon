@@ -451,6 +451,24 @@ export function createHarnessReplyClaimHandler(options: HarnessReplyClaimOptions
       if (settled.errorMessage !== undefined) {
         const note = settled.errorMessage;
         log.warn?.(`[${CHANNEL_ID}] inbound_claim: waitForRun failed for run ${runId} — ${note}`);
+        // §19a: the fallback reply ENDS the origin dispatch from the user's
+        // view (terminal delivery) — settle the origin node now (nonterminal:
+        // the clone run may genuinely still be going) or the Denken-Spinner
+        // resurfaces on this error edge.
+        if (options.sessionStore) {
+          const errorOriginKey = (binding?.conversationId ?? "").trim();
+          if (parseAgentIdFromConversationId(errorOriginKey)) {
+            await settleClaimedTurnSessions({
+              sessionStore: options.sessionStore,
+              originSessionKey: errorOriginKey,
+              targetSessionKey: target,
+              claimRunId: runId,
+              agentId,
+              waitStatus: "nonterminal",
+              logger: log,
+            });
+          }
+        }
         return {
           handled: true,
           reply: {

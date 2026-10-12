@@ -101,6 +101,8 @@ const CODEX_CLONE_KEY = buildAcpBindingSessionKey({
   conversationId: CODEX_DASHBOARD_KEY,
   agentId: "codex",
 });
+/** The harnessSessions-override target codexConfig() dispatches to (tests). */
+const CODEX_TEST_TARGET_KEY = "agent:codex:acp:26b6335a";
 
 const claimContextCodex = (pluginRoot: string): InboundClaimContextLike => ({
   pluginBinding: {
@@ -217,6 +219,42 @@ describe("F4 reply-delivery fix — inbound_claim dispatch (Weg A: subagent surf
       },
     };
     return { subagent, runCalls, waitCalls };
+  }
+
+  /**
+   * §19 test seam: in-memory session store with the settle/stamp read+patch
+   * surface, pre-seeded with the running origin/clone entries a claimed turn
+   * leaves in evidence (99d8daf5/4fbefeb9 live-DB shapes).
+   */
+  function fakeClaimStore(): {
+    store: {
+      getSessionEntry: (params: { sessionKey: string }) => unknown;
+      patchSessionEntry: (params: {
+        sessionKey: string;
+        update: (entry: unknown) => unknown;
+      }) => Promise<unknown>;
+    };
+    patches: Array<{ sessionKey: string; patch: Record<string, unknown> }>;
+  } {
+    const entries: Record<string, Record<string, unknown>> = {
+      [CODEX_DASHBOARD_KEY]: { status: "running", startedAt: 1000 },
+      [CODEX_TEST_TARGET_KEY]: { status: "running" },
+    };
+    const patches: Array<{ sessionKey: string; patch: Record<string, unknown> }> = [];
+    return {
+      patches,
+      store: {
+        getSessionEntry: ({ sessionKey }) => entries[sessionKey],
+        patchSessionEntry: async ({ sessionKey, update }) => {
+          const patch = update(entries[sessionKey] ?? {});
+          if (patch) {
+            patches.push({ sessionKey, patch: patch as Record<string, unknown> });
+            Object.assign(entries[sessionKey] ?? {}, patch);
+          }
+          return entries[sessionKey] ?? null;
+        },
+      },
+    };
   }
 
   beforeEach(() => {
@@ -375,6 +413,9 @@ describe("F4 reply-delivery fix — inbound_claim dispatch (Weg A: subagent surf
   });
 
   it("waitForRun throwing is reported as handled:true wait-failure notice", async () => {
+    // §19a: even on the wait-failure edge the fallback reply terminates the
+    // ORIGIN dispatch — the origin node must settle (nonterminal: clone not).
+    const store = fakeClaimStore();
     const handler = createHarnessReplyClaimHandler({
       getConfig: () => codexConfig(),
       subagent: stubSubagent(async () => ({ runId: "run-4" }), async () => {
@@ -383,11 +424,25 @@ describe("F4 reply-delivery fix — inbound_claim dispatch (Weg A: subagent surf
       isGatewayAvailable: async () => true,
       // Collapsed backoff — exhausts retries fast; the notice still wins.
       waitRetryDelaysMs: [0, 0, 0, 0],
+      sessionStore: store.store,
     });
     const result = await handler(event, claimContextCodex(PLUGIN_ROOT));
     expect(result.handled).toBe(true);
     expect(result.reply?.text).toContain("waiting for its reply failed");
     expect(result.reply?.text).toContain("gateway timeout");
+    const originSettle = store.patches.filter(
+      (p) => p.sessionKey === CODEX_DASHBOARD_KEY && p.patch.status === "done",
+    );
+    expect(originSettle).toHaveLength(1);
+    // V39 stamp on the TARGET fired (this test config dispatches to the
+    // harnessSessions key, not the derived clone key), but the target itself
+    // was NOT settled (the wait never went terminal — the run may still go).
+    const targetPatches = store.patches.filter(
+      (p) => p.sessionKey === CODEX_TEST_TARGET_KEY,
+    );
+    expect(targetPatches).toHaveLength(1);
+    expect(targetPatches[0]!.patch.spawnedBy).toBe(CODEX_DASHBOARD_KEY);
+    expect(targetPatches.some((p) => p.patch.status === "done")).toBe(false);
   });
 
   // --- Phase 3.5: ack-precedes-registration race (observed live, ~200 ms) ----
