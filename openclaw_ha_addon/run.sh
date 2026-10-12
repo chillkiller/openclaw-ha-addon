@@ -87,8 +87,10 @@ export OLLAMA_CODEX_MODEL=$(jq -r '.ollama_acp_codex_model // empty' "$OPTIONS_F
 export OLLAMA_OPENCODE_MODEL=$(jq -r '.ollama_acp_opencode_model // empty' "$OPTIONS_FILE")
 export ACP_ADDITIONAL_ALLOWED_AGENTS=$(jq -r '.acp_additional_allowed_agents // empty' "$OPTIONS_FILE")
 # Phase 2.15 (GaRoN): plugin deploy is opt-in — same env-forwarding pattern as
-# ACP_ADDITIONAL_ALLOWED_AGENTS. Default (unset/false) = acp-dashboard-binding
-# is NOT deployed to openclaw.json.
+# ACP_ADDITIONAL_ALLOWED_AGENTS. GaRoN 2026-10-12 semantics: unset = binding
+# ON out of the box (addon core surface); explicit false = REAL opt-out (the
+# helper flips plugins.entries to enabled=false and strips the channel config
+# block so the boot config stays valid).
 export ACP_DASHBOARD_BINDING_ENABLED=$(jq -r '.acp_dashboard_binding_enabled // empty' "$OPTIONS_FILE" 2>/dev/null)
 # Repo-Split A2 (2026-10-11): the harness-config-writer is its own plugin.
 # UNSET default in the helper = follows acp_dashboard_binding_enabled (so

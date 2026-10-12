@@ -275,7 +275,7 @@ def _write_bytes_and_cache(path: Path, data: bytes, written: list[str]) -> None:
     written.append(str(path))
 
 
-def _deploy_and_register_plugin(plugin_name: str) -> bool:
+def _deploy_and_register_plugin(plugin_name: str, force_enable: bool = False) -> bool:
     """Idempotently deploy ONE bundled plugin, named <plugin_name>.
 
     Bundled-Root-Trust-Deploy (Kammerjäger 2026-10-11): when the pinned
@@ -348,7 +348,7 @@ def _deploy_and_register_plugin(plugin_name: str) -> bool:
             else:
                 log(f"Plugin {plugin_name} already up to date at {dst} "
                     "(bundled root, byte-identical — read-only boot)")
-            return _register_plugin_entry(plugin_name)
+            return _register_plugin_entry(plugin_name, force_enable=force_enable)
         log(f"WARN: bundled deploy unavailable for {plugin_name} "
             "(esbuild missing or bundle failed) — falling back to external deploy")
 
@@ -404,10 +404,10 @@ def _deploy_and_register_plugin(plugin_name: str) -> bool:
     # Register the plugin as enabled — but NEVER overwrite an explicit
     # operator opt-out: an entry carrying enabled:false stays false across
     # boots (single-plugin disable without touching ACP/harnesses).
-    return _register_plugin_entry(plugin_name)
+    return _register_plugin_entry(plugin_name, force_enable=force_enable)
 
 
-def _register_plugin_entry(plugin_name: str) -> bool:
+def _register_plugin_entry(plugin_name: str, force_enable: bool = False) -> bool:
     """openclaw.json registration shared by both deploy roots.
 
     entries.enabled: operator opt-out (false) never flipped; load.paths
@@ -430,13 +430,24 @@ def _register_plugin_entry(plugin_name: str) -> bool:
             return True
         changed_entry = False
         if entry.get("enabled") is False:
-            # Operator opt-out (GaRoN 2026-10-10 finding): an explicit
-            # enabled:false is NEVER flipped back by this helper. The plugin
-            # payload stays deployed (copy above), so re-enabling needs no
-            # rebuild; the early return leaves plugins.load.paths untouched
-            # while the plugin is disabled.
-            log(f"INFO: plugins.entries.{plugin_name}.enabled=false (operator opt-out) respected")
-            return True
+            if force_enable:
+                # GaRoN 2026-10-12 (binding plugin ONLY): the HA option is the
+                # master switch — a silently respected enabled:false while the
+                # option shows ON is the UI-lying failure class of the outage
+                # session. The operator toggling the option ON is the newer,
+                # explicit intent channel.
+                entry["enabled"] = True
+                changed_entry = True
+                log(f"plugins.entries.{plugin_name}.enabled set true "
+                    "(HA option master switch = ON; never-flip superseded for this plugin)")
+            else:
+                # Operator opt-out (GaRoN 2026-10-10 finding): an explicit
+                # enabled:false is NEVER flipped back by this helper. The plugin
+                # payload stays deployed (copy above), so re-enabling needs no
+                # rebuild; the early return leaves plugins.load.paths untouched
+                # while the plugin is disabled.
+                log(f"INFO: plugins.entries.{plugin_name}.enabled=false (operator opt-out) respected")
+                return True
         if entry.get("enabled") is not True:
             entry["enabled"] = True
             changed_entry = True
@@ -1011,6 +1022,78 @@ def _prune_stale_addon_defaults() -> None:
         log(f"WARN: stale add-on harness defaults cleanup failed (fail-soft): {e}")
 
 
+def _disable_binding_plugin() -> bool:
+    """HA option off = REAL operator opt-out (GaRoN 2026-10-12).
+
+    Outage finding (user report, 8h log forensics until 2026-10-12): the old
+    skip-only semantics left a previously registered
+    plugins.entries['acp-dashboard-binding']={enabled:true} behind, so the
+    option toggle was cosmetic; and with the plugin gate off its manifest no
+    longer declares the channel, so a leftover channels['acp-dashboard-binding']
+    config block became an unknown-keys "Invalid config" and the gateway
+    refused to BOOT — the reported "complete outage" path (the rescue was
+    removing the channels block by hand).
+
+    Semantics (idempotent, fail-soft):
+      - plugins.entries['acp-dashboard-binding'].enabled := false. The HA
+        option is the MASTER switch for this plugin (one truthful toggle,
+        no config surgery); re-enabling via the option flips the entry back
+        (see _register_plugin_entry force_enable) — the binding plugin's
+        never-flip rule is deliberately superseded, because a silent
+        never-flip with the UI showing ON is exactly the UI-lying failure
+        class reported on 2026-10-12.
+      - channels['acp-dashboard-binding'] config block removed when present
+        (undeclared-channel config would refuse boot).
+      - nothing to change -> no-op, no write."""
+    config_path = CONFIG_DIR / "openclaw.json"
+    if not config_path.exists():
+        return True
+    try:
+        cfg = read_json(config_path)
+    except Exception as e:
+        log(f"WARN: binding-disable skipped, config unreadable (fail-soft): {e}")
+        return True
+    changed = False
+    plugins = cfg.get("plugins")
+    if isinstance(plugins, dict):
+        entries = plugins.get("entries")
+        if isinstance(entries, dict):
+            entry = entries.get(PLUGIN_NAME)
+            if isinstance(entry, dict) and entry.get("enabled") is not False:
+                entry["enabled"] = False
+                changed = True
+                log(f"Set plugins.entries.{PLUGIN_NAME}.enabled=false "
+                    "(option acp_dashboard_binding_enabled=off)")
+        channels = cfg.get("channels")
+        if isinstance(channels, dict) and PLUGIN_NAME in channels:
+            del channels[PLUGIN_NAME]
+            changed = True
+            log(f"Stripped channels['{PLUGIN_NAME}'] while the plugin gate is off "
+                "(undeclared channel key would refuse boot)")
+    if changed:
+        try:
+            write_json(config_path, cfg)
+        except Exception as e:
+            log(f"WARN: binding-disable write failed (fail-soft): {e}")
+            return False
+    return True
+
+
+def _binding_option_state() -> bool:
+    """acp_dashboard_binding_enabled option, GaRoN 2026-10-12 semantics:
+
+      - explicit false  -> OFF: real opt-out (helper disables the plugin and
+        keeps the boot config valid — the operator kill switch).
+      - true / unset    -> ON: the binding is the addon's core surface and
+        activates out of the box (user vision 2026-10-12: harness agents are
+        usable in the dashboard without any setup); protection is the
+        explicit off switch, the fail-open claim path and the isolated
+        plugin-load failure mode (host marks the plugin unloaded, gateway
+        keeps booting)."""
+    value = os.environ.get("ACP_DASHBOARD_BINDING_ENABLED", "").strip().lower()
+    return value not in ("0", "false", "no", "off")
+
+
 def deploy_plugins() -> bool:
     """Deploy + register all bundled plugins, gated by add-on options.
 
@@ -1018,7 +1101,10 @@ def deploy_plugins() -> bool:
 
       - 'acp-dashboard-binding'  (channel plugin, dashboard key bridge):
         gated by acp_dashboard_binding_enabled (env
-        ACP_DASHBOARD_BINDING_ENABLED, default OFF — Phase 2.15 semantics).
+        ACP_DASHBOARD_BINDING_ENABLED, see _binding_option_state for the
+        GaRoN 2026-10-12 semantics: unset/default ON, explicit false =
+        real opt-out that flips the entries gate and strips the channel
+        config block).
       - 'harness-config-writer'  (standalone feature plugin):
         gated by harness_config_writer_enabled (env
         HARNESS_CONFIG_WRITER_ENABLED). UNSET follows the channel-plugin
@@ -1033,10 +1119,16 @@ def deploy_plugins() -> bool:
     (see backup_harness_writer_targets_once); a writer-disabled boot
     restores + consumes that snapshot, so enable/disable is fully
     reversible without touching the TS plugin."""
-    binding_enabled = _env_flag("ACP_DASHBOARD_BINDING_ENABLED")
+    binding_enabled = _binding_option_state()
+    ok = True
     if not binding_enabled:
-        log("INFO: plugin acp-dashboard-binding deploy disabled by option "
-            "(acp_dashboard_binding_enabled=false)")
+        log("INFO: plugin acp-dashboard-binding disabled "
+            "(acp_dashboard_binding_enabled=false — real opt-out)")
+        # GaRoN 2026-10-12: the off switch is now a REAL opt-out — flip the
+        # entries gate and keep the boot config valid (no undeclared channel
+        # block), instead of skip-only which left the old registration live.
+        if not _disable_binding_plugin():
+            ok = False
 
     writer_env = os.environ.get("HARNESS_CONFIG_WRITER_ENABLED", "").strip().lower()
     if writer_env == "":
@@ -1050,9 +1142,11 @@ def deploy_plugins() -> bool:
             log("INFO: plugin harness-config-writer deploy disabled by option "
                 "(harness_config_writer_enabled=false)")
 
-    ok = True
     if binding_enabled:
-        ok = _deploy_and_register_plugin(PLUGIN_NAME) and ok
+        # Master switch ON = the binding plugin's enable decision is the HA
+        # option (see _binding_option_state; force_enable supersedes the
+        # entry's never-flip only for THIS plugin).
+        ok = _deploy_and_register_plugin(PLUGIN_NAME, force_enable=True) and ok
     if writer_enabled:
         ok = _deploy_and_register_plugin(HARNESS_CONFIG_WRITER_PLUGIN_NAME) and ok
         migrate_legacy_harnesses_config()

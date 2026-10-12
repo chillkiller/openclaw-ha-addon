@@ -92,17 +92,81 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
 
     # --- channel plugin (Phase 2.15 semantics, unchanged) -------------------
 
-    def test_option_unset_skips_deploy_and_registration(self) -> None:
+    def test_option_unset_defaults_on_and_activates(self) -> None:
+        """GaRoN 2026-10-12: unset = ON out of the box — the binding is the
+        addon core surface (user vision: harness agents usable in the
+        dashboard without setup). Protection is the explicit OFF switch
+        (real opt-out) + the fail-open claim path."""
         os.environ.pop("ACP_DASHBOARD_BINDING_ENABLED", None)
         self.assertTrue(helper.deploy_plugins())
-        self.assertFalse((self.config_dir / "plugins" / helper.PLUGIN_NAME).exists())
-        self.assertFalse(
-            (self.config_dir / "plugins" / helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME).exists()
+        dst = self.config_dir / "plugins" / helper.PLUGIN_NAME
+        self.assertTrue((dst / "openclaw.plugin.json").is_file())
+        self.assertTrue(self.read_entry().get("enabled") is True)
+        # Legacy Phase 2.15 comment removed: writer follows the (on) option.
+        self.assertTrue(
+            self.read_entry(helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME).get("enabled") is True
         )
-        self.assertEqual(self.read_entry(), {})
-        self.assertEqual(
-            self.read_entry(helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME), {}
+
+    def test_option_false_is_real_optout(self) -> None:
+        """GaRoN 2026-10-12 outage finding: explicit false must actually
+        disable a previously registered plugin AND keep the boot config
+        valid (strip the channels block — undeclared channel keys refuse
+        boot)."""
+        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "true"
+        self.assertTrue(helper.deploy_plugins())
+        path = self.config_dir / "openclaw.json"
+        cfg = json.loads(path.read_text())
+        cfg.setdefault("channels", {})[helper.PLUGIN_NAME] = {"enabled": True}
+        path.write_text(json.dumps(cfg))
+        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "false"
+        self.assertTrue(helper.deploy_plugins())
+        cfg = json.loads(path.read_text())
+        self.assertIs(cfg["plugins"]["entries"][helper.PLUGIN_NAME]["enabled"], False)
+        self.assertNotIn(
+            helper.PLUGIN_NAME, cfg.get("channels", {}),
+            "channels block of a disabled plugin must be stripped (boot-safe)",
         )
+        # Payload stays deployed while the gate is OFF (re-enable needs no
+        # rebuild — documented never-flip invariant in _register_plugin_entry);
+        # the entries gate is the authoritative disable for the host.
+        self.assertTrue(
+            (self.config_dir / "plugins" / helper.PLUGIN_NAME / "openclaw.plugin.json").exists()
+        )
+        # Idempotent second boot with no channels block left:
+        self.assertTrue(helper.deploy_plugins())
+        cfg = json.loads(path.read_text())
+        self.assertIs(cfg["plugins"]["entries"][helper.PLUGIN_NAME]["enabled"], False)
+
+    def test_option_false_never_touches_hand_set_false(self) -> None:
+        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "true"
+        path = self.config_dir / "openclaw.json"
+        cfg = json.loads(path.read_text())
+        cfg.setdefault("plugins", {}).setdefault("entries", {})[helper.PLUGIN_NAME] = {
+            "enabled": False
+        }
+        path.write_text(json.dumps(cfg))
+        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "false"
+        self.assertTrue(helper.deploy_plugins())
+        cfg = json.loads(path.read_text())
+        self.assertIs(cfg["plugins"]["entries"][helper.PLUGIN_NAME]["enabled"], False)
+        self.assertNotIn(helper.PLUGIN_NAME, cfg.get("channels", {}))
+
+    def test_option_false_strips_hand_edit_channels_block(self) -> None:
+        """Boot-safety: whatever put the channels block there (hand edit or
+        an older helper), gate-off strips it — the config must stay valid
+        while the plugin is disabled."""
+        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "false"
+        path = self.config_dir / "openclaw.json"
+        cfg = json.loads(path.read_text())
+        cfg.setdefault("plugins", {}).setdefault("entries", {})[helper.PLUGIN_NAME] = {
+            "enabled": True
+        }
+        cfg.setdefault("channels", {})[helper.PLUGIN_NAME] = {"enabled": True}
+        path.write_text(json.dumps(cfg))
+        self.assertTrue(helper.deploy_plugins())
+        cfg = json.loads(path.read_text())
+        self.assertIs(cfg["plugins"]["entries"][helper.PLUGIN_NAME]["enabled"], False)
+        self.assertNotIn(helper.PLUGIN_NAME, cfg.get("channels", {}))
 
     def test_option_true_deploys_and_registers(self) -> None:
         os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "true"
@@ -126,7 +190,12 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
         self.assertTrue(helper.deploy_plugins())
         self.assertTrue(self.read_entry().get("enabled") is True)
 
-    def test_option_true_respects_operator_opt_out_enabled_false(self) -> None:
+    def test_option_on_is_master_switch_for_binding_plugin(self) -> None:
+        """GaRoN 2026-10-12 (outage finding): the HA option is the binding
+        plugin's master switch. A silently respected enabled:false while the
+        option shows ON = UI-lying failure class. Re-enabling flips the
+        entry back; the never-flip rule is superseded for THIS plugin only
+        (the writer plugin keeps it)."""
         os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "true"
         path = self.config_dir / "openclaw.json"
         cfg = json.loads(path.read_text())
@@ -136,7 +205,7 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
         path.write_text(json.dumps(cfg))
         self.assertTrue(helper.deploy_plugins())
         cfg = json.loads(path.read_text())
-        self.assertIs(cfg["plugins"]["entries"][helper.PLUGIN_NAME]["enabled"], False)
+        self.assertIs(cfg["plugins"]["entries"][helper.PLUGIN_NAME]["enabled"], True)
 
     # --- Repo-Split A2: harness-config-writer gating ------------------------
 

@@ -3,6 +3,9 @@
   "channels": [
     "acp-dashboard-binding"
   ],
+  "activation": {
+    "onStartup": true
+  },
   "name": "ACP Dashboard Binding",
   "description": "SessionBindingAdapter for the internal webchat channel: resolves agent-qualified dashboard conversation keys to ACP harness session targets (codex/claude/opencode). Harness-config deployment lives in the standalone harness-config-writer feature plugin (Repo-Split A2, 2026-10-11).",
   "configSchema": {
