@@ -1023,3 +1023,130 @@ aus dem Image) wurde mit ALLEN Debug-Channeln gefahren
   als Vergleichswert zur 64-s-Ära; stuck session_nodes der claude-DB
   (Agenda Punkt 1, BACKLOG V34) sind vom Boot unabhängig und bleiben
   Claim-Pfad-Sache.
+
+## 17. Punkt-1-Forensik: Terminal-Write-Owner-Race am Binding-Session-Entry (2026-10-12)
+
+**Befund (live, v0.7.13.18-Boot, `/tmp/openclaw/openclaw-2026-10-11.log`):** 3/3
+`acp_dispatch`-Turns in `agent:claude:acp:binding:webchat:default:4fbefeb91c
+0aed3d` (18:22:31 / 18:29:36 / 18:40:22) reporteten `outcome=completed`,
+scheiterten aber SOFORT danach (gleiche Sekunde) an der Terminal-Persistenz:
+
+```
+WARN  reply hot path timings … sessionKey=agent:claude:acp:binding:…4fbefeb9…
+      outcome=completed reason=acp_dispatch
+WARN  SQLite session write failed {"operation":"session-entry.patch",
+      "storePath":"…/claude/agent/openclaw-agent.sqlite",
+      "error":"Terminal write owner changed before commit"}
+ERROR terminal session persistence failed session=…4fbefeb91c0aed3d
+      run=<runId> error=Error: Terminal write owner changed before commit
+```
+
+**Entry-Folgezustand (claude-DB `session_nodes`, empirisch):**
+`status:"running"`, `lifecycleRunId:"6c5fdecf…"` (Boot-Markierung 16:44:02),
+KEIN `lastRunId`/`endedAt` — aber `observerDigest: "Run completed"`,
+`health:"done"`. Der Run ist terminiert, der Entry-Status nie auf done
+geklappt.
+
+**Healthy-Counter-Example (gleiches Boot, gleicher Agent, gleiche Klasse):**
+`agent:claude:acp:binding:webchat:default:60bac3d65e697154` — die
+Main-Klon-Session (§14, bindMainSessions) — endet sauber: `status:"done"`,
+`endedAt` + `lastRunId` persistiert. Der Unterschied zum Zombie: die
+Main-Klon-Session läuft OHNE plugin-owned Claim-Mirror-Pfad.
+
+### 17.1. Mechanik (dist 2026.9.9, file:line)
+
+- `agent-run-terminal-writes-CZ5u4nvB.mjs`: `bindAgentRunTerminalWrite
+  Context` (bindet den Write-Kontext des Prepared-Runtime an den
+  Operational-Owner, `prepare.runtime-CraZtPFh.mjs:360` ist der einzige
+  Bind-Site), `captureAgentRunTerminalWriteContext` (Capture vor async
+  Session-Resolution) und `assertCurrent` (Z.3 9): wirft
+  `"Terminal write owner changed before commit"`, wenn zwischen Capture und
+  Commit (a) `getAgentRunContext(runId) !== owner`, (b) der terminalWrites-
+  Entry ersetzt wurde, (c) der gebundene Context geändert (REBIND via
+  bind) oder (d) die delegatedAuthority invalide wurde.
+- `server-runtime-subscriptions-CLhV3Vvh.mjs:2707`: am Lifecycle
+  `end`/`error` captured der Subscriber den Kontext und übergibt ihn an
+  `sessionLifecyclePersistence.observe({…, writeContext})` → der
+  Session-Entry-Patch läuft durch `writeContext.run` → assertCurrent. Die
+  ERROR-Zeile ist `subsystem-BdcD5rKP.mjs:224`.
+- **Korrektur der alten Punkt-1-Hypothese (BACKLOG V34):** der Host
+  schließt den Dispatch-Lifecycle sehr wohl — `finishPluginBinding
+  Dispatch("handled")` (dispatch-from-config-BG9rT_X3.mjs:3453) ruft
+  `completeDispatchReplyOperation()` (Z.3461) und die Dispatch-Operation
+  endet. Was dangle, ist NUR der Session-Entry-Patch, weil der
+  Terminal-Write-Kommit scheitert.
+
+### 17.2. Interpretation (Hypothesen, ehrlich gerankt)
+
+- **H1 (führend):** Unser Claim-Reply löst im SELBEN Completion-Tick die
+  Binding-Mirror-/Delivery-Writes aus (`{handled:true, reply}` → host
+  `deliverBindingPayload` → transcript append am Mirror-Owner = TARGET =
+  derselbe Session-Entry). Diese Writes wechseln den Write-Owner-Kontext
+  des Entries zwischen Capture (lifecycle end) und Commit → assertCurrent
+  wirft deterministisch. Die 3/3-Determinismus + der saubere Main-Klon
+  (kein Mirror-Pfad) stützen das.
+- **H2 (alternativ):** die delegatedAuthority des acpx-Agent-Runs wird
+  durch die Turn-Lifecycle ersetzt (`validateAgentRunDelegatedAuthority`
+  fällt). Die 3 Fehl-RunIds (7555140b/97f0f542/e8142904) zeigen im Log
+  KEINE Fallback-/Retry-Marker — schwächer belegt.
+- Der exakt identifizierbare REBIND-Site ist aus Dist-Reading allein
+  nicht abschließend zu bestimmen — für den Upstream-Report ist die
+  reproduzierbare Oberfläche (geclaimte Turn + failure-Sekunde + Entry-
+  Zustand) vollständig belegt; die Hypothesen sind als solche benannt.
+
+### 17.3. Plugin-Fix (Punkt 1, umgesetzt 2026-10-12): post-settle yield
+
+`reply-claim.ts`: nach einem TERMINALEN `waitForRun`-Ergebnis (status
+`ok`/Fehler-terminal) wartet der Handler `DEFAULT_POST_SETTLE_YIELD_MS
+= 500` (clamp 0..10000, Option `postSettleYieldMs`), BEVOR er die Reply
+zurückgibt — der Terminal-Entry-Patch (started sofort am lifecycle end)
+commitet dann VOR den durch die Reply ausgelösten Mirror-Writes.
+`timeout`/`pending` (Run läuft noch, kein Terminal-Write geplant) und der
+Wait-Failure-Pfad yield-frei. Reine Scheduling-Änderung — Delivery-
+Semantik unverändert, Max-Kosten 0,5 s/Turn.
+
+**Verifikation:** vitest 28/28 in der Datei (+5 neue Yield-Tests:
+terminal-yield ≥ Window, pending/timeout/wait-failure skip, negative
+Option deaktiviert), Suite 166 passed + 1 skipped; strict tsc über die neue
+`tsconfig.check.json` (deliverable source, tests via vitest) 0 Fehler;
+Writer-Baseline unverändert 0. Live-Beweis steht beim nächsten geclaimten
+Turn aus (Fehlspur "Terminal write owner" muss verschwinden; Smoke-
+Check 5 bewacht die stuck-Metrik).
+
+**Audit (2026-10-12, acpx-codex, GO):** Scope-Wächter 4 Dateien,
+Semantics/Timing-Window (nach INFO-Rest: Assertions auf 100 ms verbreitert,
+28/28), tsc 0/0, harnessReplyWaitMs-Belag bestätigt, Risiko-Review frei
+(kein Dispatcher-Blocker, kein Double-Processing-Risk), §17-Docs konsistent.
+Report: `agents/coding-review/findings/2026-10-12-punkt1-terminal-write-race-audit.md`
+(gitignored).
+
+### 17.4. §12-Mirror → Upstream #149801 (+ Familie #163078)
+
+Upstream-PR **#149801 "fix(channels): dispatch replies in ACP-bound
+conversations"** (OPEN, fd2fa6b9/a9c6c055) adressiert die Reply-Dispatch-
+OWNER-Disziplin am selben Session-Entry, aber am anderen Saum: Turn-START
+("prepared reply dispatch runtime owner was not published", Familie
+#163078) vs. unser Befund am Run-Terminal (agent-run terminal writes).
+Gemeinsame Wurzel: Cross-Owner-Writes am ACP-bound Session-Entry brauchen
+eine Owner-Generationen/Zeitfenster-Disziplin; #149801 löst die
+Admission-Seite (configured source agent als reply-runtime owner), lässt
+die Terminal-Commit-Seite offen. **Unser Befund ist die fehlende
+Terminal-Seite — passgenau als Ergänzungsevidenz für
+#149801/#163078 nutzbar, nicht als Duplikat.**
+
+Upstream-reifer Kern (für GaRoN zum Fileen):
+1. Repro: conversation binding → geclaimter Turn (`runInboundClaim
+   ForPluginOutcome` → reply via `deliverBindingPayload`) → lifecycle end
+   captured Terminal-Write-Kontext; Entry-Patch wirft deterministisch
+   "Terminal write owner changed before commit".
+2. Folge: session_nodes-Entry bleibt `status:"running"` + dangling
+   lifecycleRunId trotz `observerDigest: "Run completed"`; kein
+   `lastRunId`/`endedAt`. Lazy-Heal nur über shouldClearRotatedState/…
+   beim nächsten Prep — solange falscher Run-Status in UI/Smoke sichtbar.
+3. Counter-Evidence: identische Main-Klon-Session OHNE Claim-Mirror
+   committed sauber → der Mirror-/Claim-Pfad ist der deterministische
+   Anteil.
+
+**Kein Add-on-Host-Patch** (Unicode-guard-Klasse wäre hier zu groß für
+einen Commit-Race), **kein Manifest-Change**, Plugin-fix ist
+defensiv (yield). Upstream-PR bleibt der eigentliche Fix-Weg.

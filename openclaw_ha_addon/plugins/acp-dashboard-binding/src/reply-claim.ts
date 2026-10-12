@@ -112,6 +112,23 @@ const MIN_HARNESS_REPLY_WAIT_MS = 1_000;
 const MAX_HARNESS_REPLY_WAIT_MS = 15 * 60_000;
 
 /**
+ * Post-settle yield (Punkt 1 / BRIDGE §17, 2026-10-11): the host's run-terminal
+ * session-entry persistence (`session-entry.patch` via
+ * `captureAgentRunTerminalWriteContext`) races with the binding mirror writes
+ * our claim reply triggers (`deliverBindingPayload` fires immediately after we
+ * return). Every claimed turn in the §17 live window failed its terminal commit
+ * with "Terminal write owner changed before commit", leaving the binding
+ * session entry `status:"running"` with a dangling lifecycleRunId; the counter-
+ * example (main-klon Session without the claim mirror) committed cleanly.
+ * Yielding before we return gives the terminal persistence a head start so its
+ * commit precedes the mirror writes. Applied ONLY after a TERMINAL wait result
+ * (ok / error) — timeout/pending mean the run is still going and no terminal
+ * write is scheduled. Pure scheduling change: delivery semantics unchanged.
+ */
+export const DEFAULT_POST_SETTLE_YIELD_MS = 500;
+const MAX_POST_SETTLE_YIELD_MS = 10_000;
+
+/**
  * Phase 3.5: the `subagent.run` ack can return a runId BEFORE the gateway
  * registers/starts the run (observed ~200 ms live; audit_events
  * agent.run.started lags the ack). An immediate `waitForRun` then throws
@@ -161,6 +178,14 @@ function clampWaitMs(value: unknown): number {
     MAX_HARNESS_REPLY_WAIT_MS,
     Math.max(MIN_HARNESS_REPLY_WAIT_MS, Math.floor(value)),
   );
+}
+
+/** Clamps the §17 yield (non-finite/negative → disabled; bounded above). */
+function clampYieldMs(value: unknown): number {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+  return Math.min(MAX_POST_SETTLE_YIELD_MS, Math.floor(value));
 }
 
 /** Plugin config (`plugins.entries['<CHANNEL_ID>'].config`) view we read here. */
@@ -253,6 +278,12 @@ export type HarnessReplyClaimOptions = {
   waitRetryDelaysMs?: number[];
   /** Override for the "fast failure" call budget of that retry (tests). */
   waitRetryCallBudgetMs?: number;
+  /**
+   * Post-settle yield before returning a TERMINAL reply (default
+   * DEFAULT_POST_SETTLE_YIELD_MS; 0 disables). §17 terminal-write race window —
+   * see the constant's comment. Tests override to keep them fast.
+   */
+  postSettleYieldMs?: number;
   logger?: HarnessReplyClaimLogger;
 };
 
@@ -392,6 +423,18 @@ export function createHarnessReplyClaimHandler(options: HarnessReplyClaimOptions
               `Harness turn dispatched to \`${target}\` (run \`${runId}\`) but waiting for its reply failed: ${note} — the turn is still running there.`,
           },
         };
+      }
+      // §17 (Punkt 1): only a TERMINAL wait result schedules the host's
+      // run-terminal entry persistence — yield before replying so that commit
+      // precedes the binding mirror writes our reply triggers.
+      const wait = settled.wait;
+      const status = typeof wait?.status === "string" ? wait.status : "error";
+      if (wait != null && status !== "timeout" && status !== "pending") {
+        const yieldMs = clampYieldMs(options.postSettleYieldMs ?? DEFAULT_POST_SETTLE_YIELD_MS);
+        if (yieldMs > 0) {
+          log.debug?.(`[${CHANNEL_ID}] inbound_claim: post-settle yield ${yieldMs}ms before reply delivery (terminal-write window)`);
+          await sleep(yieldMs);
+        }
       }
       return harnessWaitReply(target, runId, settled.wait);
     } catch (error) {

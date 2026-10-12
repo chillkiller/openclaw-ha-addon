@@ -708,3 +708,92 @@ describe("inbound_claim: MAIN-Klon barrier (Phase 2.24b)", () => {
     expect(result.handled).toBe(false);
   });
 });
+
+describe("Punkt 1 (BRIDGE §17) — post-settle yield before terminal reply", () => {
+  beforeEach(() => {
+    setDashboardBindingPluginRoot(PLUGIN_ROOT);
+  });
+  afterEach(() => {
+    resetDashboardBindingPluginRootForTest();
+  });
+
+  /** Minimal run/wait recorder (local copy; stubSubagent lives in the F4 describe). */
+  function stub(behavior: () => Promise<Record<string, unknown>> | Promise<never>): HarnessSubagentApi {
+    return {
+      run: async () => ({ runId: "run-yield" }),
+      waitForRun: async () => (await behavior()) as never,
+    };
+  }
+  const okReply = (text: string) => ({ status: "ok", terminalReply: { disposition: "visible", text } });
+
+  it("terminal ok reply yields the configured window before returning", async () => {
+    const started = Date.now();
+    const handler = createHarnessReplyClaimHandler({
+      getConfig: () => codexConfig(),
+      subagent: stub(async () => okReply("fertig")),
+      isGatewayAvailable: async () => true,
+      postSettleYieldMs: 100,
+    });
+    const result = await handler(event, claimContextCodex(PLUGIN_ROOT));
+    expect(Date.now() - started).toBeGreaterThanOrEqual(100);
+    expect(result.handled).toBe(true);
+    expect(result.reply?.text).toBe("fertig");
+  });
+
+  it("nonterminal wait (pending) skips the yield — no terminal write is scheduled", async () => {
+    const started = Date.now();
+    const handler = createHarnessReplyClaimHandler({
+      getConfig: () => codexConfig(),
+      subagent: stub(async () => ({ status: "pending" })),
+      isGatewayAvailable: async () => true,
+      postSettleYieldMs: 100,
+    });
+    const result = await handler(event, claimContextCodex(PLUGIN_ROOT));
+    expect(Date.now() - started).toBeLessThan(100);
+    expect(result.handled).toBe(true);
+    expect(result.reply?.text).toContain("still running after the wait window");
+  });
+
+  it("timeout wait skips the yield", async () => {
+    const started = Date.now();
+    const handler = createHarnessReplyClaimHandler({
+      getConfig: () => codexConfig(),
+      subagent: stub(async () => ({ status: "timeout" })),
+      isGatewayAvailable: async () => true,
+      postSettleYieldMs: 100,
+    });
+    const result = await handler(event, claimContextCodex(PLUGIN_ROOT));
+    expect(Date.now() - started).toBeLessThan(100);
+    expect(result.reply?.text).toContain("still running after the wait window");
+  });
+
+  it("waitForRun failure (no terminal wait result) skips the yield", async () => {
+    const started = Date.now();
+    const handler = createHarnessReplyClaimHandler({
+      getConfig: () => codexConfig(),
+      subagent: stub(async () => {
+        throw new Error("wait API gone");
+      }),
+      isGatewayAvailable: async () => true,
+      waitRetryDelaysMs: [1, 1, 1, 1],
+      postSettleYieldMs: 100,
+    });
+    const result = await handler(event, claimContextCodex(PLUGIN_ROOT));
+    expect(Date.now() - started).toBeLessThan(100);
+    expect(result.handled).toBe(true);
+    expect(result.reply?.text).toContain("waiting for its reply failed");
+  });
+
+  it("non-finite/negative yield disables the window", async () => {
+    const started = Date.now();
+    const handler = createHarnessReplyClaimHandler({
+      getConfig: () => codexConfig(),
+      subagent: stub(async () => okReply("fix")),
+      isGatewayAvailable: async () => true,
+      postSettleYieldMs: -1,
+    });
+    const result = await handler(event, claimContextCodex(PLUGIN_ROOT));
+    expect(Date.now() - started).toBeLessThan(100);
+    expect(result.reply?.text).toBe("fix");
+  });
+});

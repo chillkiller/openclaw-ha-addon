@@ -1,0 +1,25 @@
+{
+  // Audit-Helper (Punkt 1, 2026-10-12, kein Build-Target): strict tsc check,
+  // der das im Add-on-Image gepinnte OpenClaw nach /usr/lib/node_modules/openclaw
+  // auflöst (gleiche Konvention wie harness-config-writer/tsconfig.check.json).
+  // Pfad ist im Image stabil (OpenClaw ist dort ge-fixed), daher bleibt die
+  // Datei portabel über alle lokalen Audit-Umgebungen.
+  //   npx tsc -p tsconfig.check.json
+  "compilerOptions": {
+    "noEmit": true,
+    "strict": true,
+    "skipLibCheck": true,
+    "target": "es2023",
+    "module": "nodenext",
+    "moduleResolution": "nodenext",
+    "paths": { "openclaw": ["/usr/lib/node_modules/openclaw/dist/index.d.ts"], "openclaw/*": ["/usr/lib/node_modules/openclaw/dist/*"], "openclaw/plugin-sdk/*": ["/usr/lib/node_modules/openclaw/dist/plugin-sdk/*.d.ts"] },
+    "types": ["node"],
+    "typeRoots": ["node_modules/@types", "/usr/lib/node_modules/openclaw/node_modules/@types"]
+  },
+// Tests sind hier ausgeschlossen: die Binding-Verify-Strecke läuft über vitest
+  // (Runtime-Typen), vitest-Typen sind lokal nicht vendored; der strict check
+  // deckt den DELIVERABLE-Source ab (writer-Plugin prüft Tests in seiner
+  // eigenen Konfiguration mit vendored vitest).
+  "include": ["index.ts", "src/**/*.ts"],
+  "exclude": ["src/**/*.test.ts"]
+}
