@@ -207,6 +207,18 @@ fi
 
 # -------------------------------------------------- 6b. bundled-channel warns
 bold "6b) 'bundled channel' plugin load warnings (today's log)"
+# Entry-contract skip (Forensik 2026-10-12): the host's bundled-channel load
+# check can also SKIP the plugin ("missing bundled-channel-entry contract")
+# without ever logging "failed to load" — that skip silently suppresses
+# registerFull (no adapter/claim hook/bridge) and kills ALL binding. Catch both.
+if [ -n "$LOG" ] && [ -f "$LOG" ] && grep -q 'missing bundled-channel-entry contract' "$LOG" 2>/dev/null; then
+    warn "$(grep -c 'missing bundled-channel-entry contract' "$LOG")× today: \"bundled channel entry acp-dashboard-binding missing bundled-channel-entry contract; skipping\""
+    echo "       the deployed entry record fails resolveBundledChannelModuleEntry"
+    echo "       (needs kind:\"bundled-channel-entry\" + register + loadChannelPlugin);"
+    echo "       the gateway never instantiates the plugin — binding is dead."
+else
+    ok "no bundled-channel entry-contract skips"
+fi
 if [ -n "$LOG" ] && [ -f "$LOG" ] && grep -q 'failed to load bundled channel acp-dashboard-binding' "$LOG" 2>/dev/null; then
     n=$(grep -c 'failed to load bundled channel acp-dashboard-binding' "$LOG")
     if [ -s "$BUNDLED_ROOT/acp-dashboard-binding/index.mjs" ]; then

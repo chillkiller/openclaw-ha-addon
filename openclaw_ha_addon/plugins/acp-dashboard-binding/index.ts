@@ -1,14 +1,19 @@
 /**
  * Plugin entry for acp-dashboard-binding (docs/plugins/sdk-channel-plugins.md
- * Step 3). `defineChannelPluginEntry` registers the channel capability itself
- * (`api.registerChannel({ plugin })`); `registerFull` attaches the runtime
- * seam: the SessionBindingAdapter for the internal webchat scope plus the
- * dashboard bridge (BRIDGE.md §4.1) and — Phase 2.20 (F4) — the
+ * Step 3). `register` (via src/entry.ts) registers the channel capability
+ * itself (`api.registerChannel({ plugin })`); `registerFull` attaches the
+ * runtime seam: the SessionBindingAdapter for the internal webchat scope plus
+ * the dashboard bridge (BRIDGE.md §4.1) and — Phase 2.20 (F4) — the
  * `inbound_claim` claim hook for plugin-owned binding records (BRIDGE.md §10,
  * src/reply-claim.ts).
+ *
+ * Bundle shape (Forensik 2026-10-12, backlog-binding): the deployed record must
+ * be a bundled-channel-entry contract record (src/entry.ts) — the
+ * channel-core `defineChannelPluginEntry` shape fails the host's
+ * resolveBundledChannelModuleEntry check at the bundled root and the gateway
+ * skips the plugin entirely (registerFull never ran live since v0.7.13.18).
  */
 
-import { defineChannelPluginEntry } from "openclaw/plugin-sdk/channel-core";
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/channel-core";
 
 import {
@@ -25,6 +30,7 @@ import {
   isOriginWorkspaceStateDirResolvable,
   readOriginWorkspaceRow,
 } from "./src/origin-workspace.js";
+import { defineBundledChannelCompatibleEntry } from "./src/entry.js";
 import { acpDashboardBindingPlugin, registerDashboardBindingRuntime } from "./src/channel.js";
 import {
   createDashboardBridge,
@@ -256,13 +262,13 @@ function dashboardBridgeApi(api: OpenClawPluginApi): DashboardBridgeApiLike {
   };
 }
 
-export default defineChannelPluginEntry({
+export default defineBundledChannelCompatibleEntry({
   id: CHANNEL_ID,
   name: "ACP Dashboard Binding",
   description:
     "Resolves webchat/dashboard conversations to ACP harness session targets (codex/claude/opencode) through a SessionBindingAdapter.",
   plugin: acpDashboardBindingPlugin,
-  registerFull(api) {
+  registerFull(api: OpenClawPluginApi) {
     // F4: the plugin root must be known BEFORE the first binding record is
     // synthesized (adapter registration + bridge below) — the host's
     // isPluginOwnedBindingMetadata predicate reads metadata.pluginRoot.

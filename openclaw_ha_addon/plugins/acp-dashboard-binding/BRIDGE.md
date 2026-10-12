@@ -1150,3 +1150,78 @@ Upstream-reifer Kern (für GaRoN zum Fileen):
 **Kein Add-on-Host-Patch** (Unicode-guard-Klasse wäre hier zu groß für
 einen Commit-Race), **kein Manifest-Change**, Plugin-fix ist
 defensiv (yield). Upstream-PR bleibt der eigentliche Fix-Weg.
+## 18. Bundled-Channel-Entry-Contract — Binding tot seit v0.7.13.18 (Forensik, 2026-10-12)
+
+**Symptom (GaRoN):** Auto-Binding tot — neue Dashboard-Session (`+` neben dem
+Agent-Namen) startet OHNE ACP-Klon (Beispiel: conversation `efadc1d4…`);
+das ist VOR dem .19-Update begonnen (Main-Session), d. h. exakt mit dem
+v0.7.13.18 Bundled-Root-Deploy (§16). Live-Beleg (debug-level, probe-debuglog-1
+05:22): Hot-Path-Spans da, aber KEIN "plugin-bound inbound routed"-Verbose,
+KEINE `[acp-dashboard-binding]`-Plugin-Zeilen → `pluginOwnedBinding` war live
+null, während probe6/7 mit DEMSELBEN Deployment-Bundle in-process bindet.
+
+**Wurzel (dist 2026.9.9):** Der §16-Umzug nach `<pkgRoot>/dist/extensions/`
+macht das Plugin für den Host zum BUNDLED CHANNEL (`listBundledChannelMetadata`
+filtert `manifest.channels > 0` — das `openclaw.channel`-Object wird zu
+channels[] normalisiert). Der Host lädt dann den Entry-Wrap über den
+Bundled-Channel-Pfad (`loadGeneratedBundledChannelEntry` →
+`resolveBundledChannelModuleEntry`, bundled-CMChYPbG.mjs:129-141), der am
+Default-Export EINEN VERTRAG durchsetzt:
+
+    kind === "bundled-channel-entry" && id/name/description: string
+    && register: function && loadChannelPlugin: function
+
+Unser Entry war ein `defineChannelPluginEntry`-Record (channel-core SDK-Form):
+**kein `kind`, kein `loadChannelPlugin`** → Check scheitert → Live-WARN
+`[channels] bundled channel entry acp-dashboard-binding missing
+bundled-channel-entry contract; skipping` (Boot 04:29:58 + jede CLI-Load,
+11× am 2026-10-12) → `bundledChannelArtifactLoaders.plugin` (:283370) gibt
+`undefined` → das Channel-Plugin wird im Gateway NIE instanziiert →
+`registerFull` (Adapter, Claim-Hook, Bridge) läuft NIE → jeder Dispatch-
+Consult null → embedded überall. Die Upstream-Bundled-Channels
+(telegram/a2a/reef) bauen den Entry deshalb über dist
+`defineBundledChannelEntry` (channel-entry-contract-4VRRlxPz.mjs:218) mit
+`plugin: {specifier, exportName}`-Seitendatei.
+
+**Warum der 18:01-Boot-Smoke "ALL GREEN" meldete:** der Smoke-Check griff
+nur auf "failed to load bundled channel …" (Trust-Refusal, §16) — der
+Contract-Skip logged eine ANDERE Zeile und war unsichtbar (Backlog 6b:
+Check erweitert, acp_smoke_check.sh).
+
+**Fix (dieser Commit, vor GaRoN-GO verifiziert):**
+- `src/entry.ts` NEU: `defineBundledChannelCompatibleEntry` — baut den
+  vertragskonformen Record (`kind` + `loadChannelPlugin`, plus `channelPlugin`-
+  Kompatibilitätsfläche für den externen Pfad/Probes) und spiegelt die
+  `defineChannelPluginEntry.register`-Semantik exakt ( gleiche
+  Registration-Mode-Branches, registerChannel-vor-registerFull-Reihenfolge
+  wie defineBundledChannelEntry).
+- `index.ts`: Default-Export über den kompatiblen Builder statt
+  `defineChannelPluginEntry`; `registerFull`-Body unverändert
+  (pluginRoot → origin-workspace → runtime → claim hook →
+  auto-provision → bridge).
+- `src/entry.test.ts` NEU: repliziert `resolveBundledChannelModuleEntry`
+  als Regression-Witness (Legacy-Form MUSS Scheitern, Shim-Form MUSS
+  durchgehen, register-Branch-Semantik).
+
+**In-process E2E (fix-Bundle via esbuild, /tmp/probe/contract-e2e.mjs):**
+1. Contract auf dem gebauten Bundle: PASST. 2. `register(full-FakeApi)` →
+registerChannel 1×, beiden Adapter-Keys registriert (`webchat:default`,
+`acp-dashboard-binding:default`). 3. Vollständige
+`resolveDispatchConversationBinding`-Kette: bindet `agent:claude:main`
+(derive, 60bac3d65e697154), Lane 433a6269 (explicit → 4fbe) UND die neue
++-Session-Konversation efadc1d4 (→ hash16-Lane 15194739cdb25a85). Die
+"ensure failed"-Zeilen im Probe sind Artefakte (kein acpx-Backend im
+nackten node-Prozess).
+
+**Warum probe6/7 trotzdem banden:** sie riefen `registerFull` DIREKT und
+umgingen damit exakt die Pipeline, die live nie lief. Der Contract-Mechanismus
+(selbiger `resolveBundledChannelModuleEntry`) wurde separat belegt:
+Legacy-Deploy-Record → null (contract-probe.mjs A), Shim-Record → Record
+(contract-probe.mjs B).
+
+**Rest offen:** Live-Deploy braucht Image-Rebuild + Neustart; Beweis im
+Restart-Log: die contract-WARN verschwindet UND der nächste Main-Turn loggt
+"plugin-bound inbound routed". Der Terminal-Write-Race (§17/Punkt 1) ist
+UNBERÜHRT — erst mit wieder-laufendem Binding wieder testbar (3/3
+Fehlschläge live am 2026-10-12 trotz .19 post-settle yield); das r2-Forensik-Redo
+läuft parallel weiter.
