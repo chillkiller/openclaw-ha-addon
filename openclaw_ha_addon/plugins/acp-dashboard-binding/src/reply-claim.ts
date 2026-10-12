@@ -102,6 +102,11 @@ import {
   type ConversationRefLike,
 } from "./dashboard-bridge.js";
 import { deriveDashboardBindingRecord } from "./binding-adapter.js";
+import {
+  settleClaimedTurnSessions,
+  stampSubagentProvenance,
+  type SessionStoreApi,
+} from "./session-settle.js";
 
 /**
  * Default max wait for the harness run (`subagent.waitForRun`). The wait does
@@ -284,6 +289,16 @@ export type HarnessReplyClaimOptions = {
    * see the constant's comment. Tests override to keep them fast.
    */
   postSettleYieldMs?: number;
+  /**
+   * BRIDGE §19 (v0.7.13.22-Paket a/c): the plugin-sdk session-store surface
+   * (patchSessionEntry/getSessionEntry). When present, the claim settles the
+   * origin conversation node after EVERY return and the clone node after a
+   * TERMINAL wait — the host never writes those run-terminal entries for
+   * claimed turns (99d8daf5… live-DB proof), which is the root of the
+   * "Denken-Spinner" stuck-state. Optional: without it the claim behaves
+   * exactly as in v0.7.13.21.
+   */
+  sessionStore?: SessionStoreApi | null;
   logger?: HarnessReplyClaimLogger;
 };
 
@@ -391,6 +406,26 @@ export function createHarnessReplyClaimHandler(options: HarnessReplyClaimOptions
         }
       }
 
+      // BRIDGE §19 (V39): stamp the clone's spawnedBy provenance BEFORE the
+      // turn starts — idempotent patch; the host's session metadata seed
+      // leaves spawnedBy NULL, which is why the clone shows in ControlUI's
+      // sidebar at all. After a later turn-start/rewrite re-seeds the entry,
+      // this re-stamps (and the boot sweep covers the rest).
+      // §19a: with the session store wired we also settle the conversation
+      // nodes after the turn — see the terminal branch below.
+      if (options.sessionStore) {
+        const originSessionKey = (binding?.conversationId ?? "").trim();
+        if (parseAgentIdFromConversationId(originSessionKey)) {
+          await stampSubagentProvenance({
+            sessionStore: options.sessionStore,
+            targetSessionKey: target,
+            originSessionKey,
+            agentId,
+            logger: log,
+          });
+        }
+      }
+
       // 1. Start the turn in the target session (Weg A: subagent.run dispatches
       //    the `agent` gateway method in-process — no trusted-official gate).
       const ack = await options.subagent.run({ sessionKey: target, message });
@@ -434,6 +469,29 @@ export function createHarnessReplyClaimHandler(options: HarnessReplyClaimOptions
         if (yieldMs > 0) {
           log.debug?.(`[${CHANNEL_ID}] inbound_claim: post-settle yield ${yieldMs}ms before reply delivery (terminal-write window)`);
           await sleep(yieldMs);
+        }
+      }
+      // BRIDGE §19a: settle the session-node entries the claimed turn leaves
+      // behind. The host completes the dispatch but never writes the ORIGIN
+      // conversation node's run-terminal entry (live-DB proof: 99d8daf5… stuck
+      // `running` with the claim's lifecycleRunId even after a CLEAN completed
+      // claim turn) — that stuck status is the Denken-Spinner root. The TARGET
+      // node is settled only on a terminal wait: for timeout/pending the
+      // harness run is genuinely still going. Idempotent — no-ops when the
+      // host's own terminal write already won the §17 window.
+      if (options.sessionStore) {
+        const originSessionKey = (binding?.conversationId ?? "").trim();
+        if (parseAgentIdFromConversationId(originSessionKey)) {
+          await settleClaimedTurnSessions({
+            sessionStore: options.sessionStore,
+            originSessionKey,
+            targetSessionKey: target,
+            claimRunId: runId,
+            agentId,
+            waitStatus:
+              wait != null && status !== "timeout" && status !== "pending" ? "terminal" : "nonterminal",
+            logger: log,
+          });
         }
       }
       return harnessWaitReply(target, runId, settled.wait);

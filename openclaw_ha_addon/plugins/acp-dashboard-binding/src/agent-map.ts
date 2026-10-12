@@ -230,6 +230,15 @@ export type HarnessAgentSpec = {
   backend?: string;
   /** ACP agent id (`runtime.acp.agent`), projected as metadata.acpAgentId. */
   harness?: string;
+  /**
+   * `runtime.acp.thinking` — Passthrough in den Host-Ensure-Spec
+   * (v0.7.13.22-Paket d: Antwort-Geschwindigkeit). `ensureConfiguredAcp…`
+   * baut `spec.thinking ? {thinking}` in die runtimeOptions des Ensure-Laufs
+   * (persistent-bindings.lifecycle-11LczMOa.mjs:27-29) und reconciled
+   * Änderungen in laufende Sessions (setSessionConfigOption, :45-47). LeveL
+   * "off"/"low" am Dashboard-Harness-Agent schneidet die Replik-Latenz drastisch.
+   */
+  thinking?: string;
 };
 
 /** Minimal structural view of `agents.entries.<id>` (AgentEntryConfig). */
@@ -243,6 +252,7 @@ type AgentEntryLike = {
       backend?: string;
       mode?: string;
       cwd?: string;
+      thinking?: string;
     };
   };
 };
@@ -271,12 +281,14 @@ function specFromEntry(agentId: string, entry: AgentEntryLike | undefined): Harn
     `${DEFAULT_CWD_PREFIX}${agentId}`;
   const backend = optionalString(acp.backend);
   const harness = optionalString(acp.agent);
+  const thinking = optionalString(acp.thinking);
   return {
     agentId,
     mode,
     cwd,
     ...backend ? { backend } : {},
-    ...harness ? { harness } : {}
+    ...harness ? { harness } : {},
+    ...thinking ? { thinking } : {}
   };
 }
 

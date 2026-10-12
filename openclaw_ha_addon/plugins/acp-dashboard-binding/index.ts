@@ -15,6 +15,11 @@
  */
 
 import type { OpenClawPluginApi } from "openclaw/plugin-sdk/channel-core";
+import {
+  getSessionEntry,
+  listSessionEntries,
+  patchSessionEntry,
+} from "openclaw/plugin-sdk/session-store-runtime";
 
 import {
   BINDING_ACCOUNT_ID,
@@ -33,6 +38,7 @@ import {
 import { defineBundledChannelCompatibleEntry } from "./src/entry.js";
 import { acpDashboardBindingPlugin, registerDashboardBindingRuntime } from "./src/channel.js";
 import {
+  createConfigHarnessRoster,
   createDashboardBridge,
   type DashboardBridgeApiLike,
   type DashboardBridgeHandle,
@@ -43,6 +49,12 @@ import {
   type InboundClaimEventLike,
   type InboundClaimResultLike,
 } from "./src/reply-claim.js";
+import {
+  sweepOwnedStuckSessions,
+  type SessionStoreApi,
+  type SweepSessionStoreApi,
+  type SettleSessionEntryLike,
+} from "./src/session-settle.js";
 
 const BRIDGE_LIFECYCLE_ID = "acp-dashboard-binding.dashboard-bridge";
 
@@ -98,6 +110,7 @@ function configuredBindingSpecFromHarnessSpec(
     mode: string;
     cwd?: string;
     backend?: string;
+    thinking?: string;
   },
   conversation: { channel: string; accountId: string; conversationId: string },
 ): Record<string, unknown> {
@@ -110,6 +123,10 @@ function configuredBindingSpecFromHarnessSpec(
     mode: spec.mode,
     ...(spec.cwd ? { cwd: spec.cwd } : {}),
     ...(spec.backend ? { backend: spec.backend } : {}),
+    // Antwort-Geschwindigkeit (v0.7.13.22-Paket d): passt in die Host-
+    // runtimeOptions des Ensure-Laufs (persistent-bindings.lifecycle:27-29) —
+    // z. B. thinking "off"/"low" für flinke Replik-Turns.
+    ...(spec.thinking ? { thinking: spec.thinking } : {}),
   };
 }
 
@@ -174,6 +191,68 @@ function registerHarnessAutoProvision(api: OpenClawPluginApi): void {
 }
 
 /**
+ * BRIDGE §19 (v0.7.13.22-Paket a/c): the plugin-sdk session-store surface
+ * wired into the claim handler's settlement + the boot sweep. getSessionEntry/
+ * patchSessionEntry/listSessionEntries are official plugin-sdk
+ * session-store-runtime exports (not trust-gated; the plugin is bundled-root
+ * deployed since v0.7.13.18).
+ */
+function createSessionStoreApi(
+  api: OpenClawPluginApi,
+): SessionStoreApi & SweepSessionStoreApi {
+  return {
+    getSessionEntry: (ref) => getSessionEntry(ref as never) as SettleSessionEntryLike | undefined,
+    patchSessionEntry: (params) => patchSessionEntry(params as never) as never,
+    listSessionEntries: (params) =>
+      listSessionEntries(params as never) as Array<{
+        sessionKey: string;
+        entry: SettleSessionEntryLike;
+      }>,
+  };
+}
+
+/**
+ * BRIDGE §19c (v0.7.13.22-Paket c): settles the pre-boot stuck entries the
+ * host's own main-session recovery leaves marked with an unsatisfiable
+ * restart-recovery delivery for our claimed conversations (99d8daf5… live-DB
+ * proof: the Denken-Spinner survives every boot otherwise). Runs at
+ * gateway_start — at that point no in-process run can predate the process, so
+ * any still-`running` entry of OUR key grammars (dashboard conversations +
+ * harness clone targets) among roster harness agents is an orphan.
+ */
+function registerStuckSessionSweep(api: OpenClawPluginApi, sessionStore: SessionStoreApi): void {
+  api.registerHook(
+    ["gateway_start"],
+    async () => {
+      try {
+        const cfg = api.config as { agents?: { entries?: Record<string, unknown> } } | undefined;
+        const agentIds = Object.keys(cfg?.agents?.entries ?? {}).filter((agentId) =>
+          createConfigHarnessRoster(api.config).isHarnessAgent(agentId),
+        );
+        if (agentIds.length === 0) return;
+        const sweep = sweepOwnedStuckSessions({
+          sessionStore: sessionStore as SweepSessionStoreApi,
+          agentIds,
+          logger: {
+            debug: (message) => api.logger.debug?.(message),
+            warn: (message) => api.logger.warn(message),
+          },
+        });
+        const result = await sweep;
+        if (result.settled.length > 0) {
+          api.logger.info(
+            `[${CHANNEL_ID}] boot sweep settled ${result.settled.length} stuck session(s): ${result.settled.join(", ")}`,
+          );
+        }
+      } catch (error) {
+        api.logger?.warn?.(`[${CHANNEL_ID}] boot sweep failed — ${errorBrief(error)}`);
+      }
+    },
+    undefined,
+  );
+}
+
+/**
  * Phase 2.20 (F4): registers the `inbound_claim` typed hook — the claim path
  * plugin-bound binding records dispatch through (see src/reply-claim.ts). Uses
  * `api.on` (typed hook runner registration); `api.registerHook` event names are
@@ -201,6 +280,7 @@ function registerHarnessReplyClaimHook(api: OpenClawPluginApi): void {
     },
     subagent: api.runtime.subagent,
     isGatewayAvailable: () => api.runtime.gateway.isAvailable(),
+    sessionStore: createSessionStoreApi(api),
   });
   (api.on as (
     hookName: string,
@@ -279,6 +359,10 @@ export default defineBundledChannelCompatibleEntry({
     registerOriginWorkspaceReader(api);
     registerDashboardBindingRuntime(api);
     registerHarnessReplyClaimHook(api);
+    // BRIDGE §19: settlement infra — sweep hooks gateway_start; the claim
+    // handler receives the same store surface for per-turn settlement + the
+    // V39 spawnedBy stamp.
+    registerStuckSessionSweep(api, createSessionStoreApi(api));
     // Phase 3/Repo-Split A2: harness config deployment now lives in the
     // standalone `harness-config-writer` feature plugin (registered by the
     // add-on helper, see its own BRIDGE.md / plugins/harness-config-writer/).

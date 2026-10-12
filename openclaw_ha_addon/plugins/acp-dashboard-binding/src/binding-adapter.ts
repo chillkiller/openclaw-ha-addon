@@ -250,6 +250,9 @@ function deriveBindingRecord(ref: BindingConversationRef, options: DashboardBind
     metadata.cwd = spec.cwd;
   }
   if (spec.backend) metadata.backend = spec.backend;
+  // Antwort-Geschwindigkeit (v0.7.13.22-Paket d): Passthrough-Provenance —
+  // forensisch sichtbar, was der Ensure-Lauf im Host-Spec schreibt.
+  if (spec.thinking) metadata.thinking = spec.thinking;
   // F4: claim-path ownership markers (host runs the plugin-bound dispatch for
   // such records instead of retargeting). Null when no plugin root registered.
   const pluginOwned = buildPluginOwnedBindingMetadata();
