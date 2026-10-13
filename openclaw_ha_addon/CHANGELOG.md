@@ -1,3 +1,10 @@
+## [0.7.13.23] - 2026-10-13
+
+### Fixed
+- **Register crash "hook registration missing name" (v0.7.13.22 post-deploy, root):** the 2026.10.2 registry throws for every nameless `api.registerHook` (`registry-854ZO8XT.mjs:2937-2941`); the sync boot-sweep one aborted `registerFull` on every boot. All hook registrations are now named: `acp-dashboard-binding:boot-sweep` (gateway_start), `acp-dashboard-binding:inbound` (message_received + before_dispatch).
+- **Projection opts forwarding:** `dashboardBridgeApi` now forwards hook opts verbatim to `api.registerHook` instead of dropping the third argument — bridge hook names reach the host again.
+- **Contract inventory tests (`src/hook-contract.test.ts`, new):** registerFull against the verbatim host name contract (negative witness proven) + static tripwire ensuring every `registerHook` call passes non-undefined opts. `vitest.config.ts` (new) aliases the pinned gateway dist, so the SDK imports resolve and the channel module tests run for real.
+
 ## [0.7.13.22] - 2026-10-13
 
 ### Fixed

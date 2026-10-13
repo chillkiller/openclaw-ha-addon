@@ -4,6 +4,8 @@
 
 | App Version | OpenClaw Version | Release Date |
 |--------------|------------------|---------------|
+| 0.7.13.23 | 2026.10.2 | 2026-10-13 |
+> **Note (0.7.13.23):** roll-forward repair of the 0.7.13.22 register crash ("hook registration missing name", forensics §1-§10). The interim .23/.24 hotfix chain was rolled back and re-landed as this fully audited fix; requires an add-on image rebuild to reach the container.
 | 0.7.13.22 | 2026.10.2 | 2026-10-13 |
 | 0.7.13.21 | 2026.10.2 | 2026-10-12 |
 | 0.7.13.8 | 2026.9.9 | 2026-10-10 |
