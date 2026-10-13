@@ -602,6 +602,7 @@ def harness_writer_managed_files() -> list[Path]:
 
     Mirrors harness-config-writer.ts deploy targets:
       - codex:    <acpx>/codex-home/auth.json + <.codex>/config.toml
+                  + <.codex>/model-catalog.json (γ.1 metadata catalog)
       - opencode: <acpx>/opencode-home/opencode.jsonc, <opencode>/opencode.jsonc
                   + legacy <acpx>/opencode-home/config.toml neutralization
       - env:      <acpx>/harness-env/<id>.env for canonical ENV-MECHANISM ids
@@ -609,6 +610,7 @@ def harness_writer_managed_files() -> list[Path]:
     files = [
         ACPX_DIR / "codex-home" / "auth.json",
         CODEX_SOURCE_HOME / "config.toml",
+        CODEX_SOURCE_HOME / "model-catalog.json",
         ACPX_DIR / "opencode-home" / "opencode.jsonc",
         OPENCODE_GLOBAL_DIR / "opencode.jsonc",
         ACPX_DIR / "opencode-home" / "config.toml",

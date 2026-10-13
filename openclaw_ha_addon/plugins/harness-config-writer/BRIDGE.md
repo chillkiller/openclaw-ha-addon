@@ -152,6 +152,10 @@ codex/opencode ohne baseUrl → skip mit Warning, kein Write.
    stiller No-op (api.config = die VOLLE OpenClawConfig). Erster echter
    Writer-Deploy am Host ist daher zu erwarten; bestehende Helper-Shape-Files
    (opencode.jsonc "Ollama (OLLAMA_BASE_URL)") wechseln dann auf Writer-Shape.
+9. **γ.1 Metadaten-Katalog ist REPLACE-ALL + CLI-only** (Details §15.11):
+   built-in gpt-Einträge verschwinden aus dem Picker (Ollama-only-Setups:
+   gewollt), ACP-Sessions bleiben bundled-Katalog (key nicht acpx-vererbt) —
+   die Fallback-Warnung ist NUR für direkte codex-CLI-Nutzer weg.
 
 ### 15.8 Backup-Rewrite (GaRoN 2026-10-11, Helper-seitig)
 
@@ -289,6 +293,55 @@ Helper-Interaktion (§15.9): der Python-Helper generiert KEINE models-Felder
 byte-stabil. Operator-Einträge mit hand-geschriebenem `models`-Array
 differieren vom managed-Buch → Ownership "operator-owned, untouched" (bewusst:
 Wer kuratiert, übernimmt den Entry komplett).
+
+### 15.11 codex Modell-Metadaten-Katalog (`model_catalog_json`, γ.1, 2026-10-13)
+
+Die Owner-Beobachtung "codex meckert, er kenne `kimi-k2.7-code:cloud` nicht"
+ist eine codex-BINARY-Warnung (belegt: String im deployed Rust-Binary): *"Model
+metadata for `X` not found. Defaulting to fallback metadata; this can degrade
+performance and cause issues."* Codex kennt den Modell-String und läuft damit —
+es fehlen nur die METADATEN (Kontextfenster, Kompaktierungs-Schwellwerte) aus
+dem built-in Katalog, der nur OpenAI-Familien kennt. γ (Profiles) ändert daran
+bewusst nichts. γ.1 fixt es über den codex-Config-Key `model_catalog_json`
+(codex-rs config_toml.rs dokumentiert; wirksam nur bei direkten CLI-Nutzern,
+siehe Caveats):
+
+- **Quelle**: die Operator-Metadaten aus `openclaw.json`
+  `models.providers[*].models[*].contextWindow` (belegt vorhanden: z. B.
+  kimi-k2.7-code:cloud 262144, gemma4 128000, glm-5.2:cloud 1000000). Der
+  Writer RÄT NIE — Ids ohne `contextWindow` werden geskippt (Info-Log nennt
+  die Zahl).
+- **Output**: `<codexSourceHome>/model-catalog.json` (`{ "models": [...] }`,
+  Entry-Template binary-verifiziert 2026-10-13 via `codex debug models` am
+  DEPLOYED binary — Pflichtfelder iteriert belegt: base_instructions,
+  supports_parallel_tool_calls, experimental_supported_tools + slug/
+  display_name/supported_reasoning_levels/shell_type/visibility/
+  supported_in_api/priority/support_verbosity/truncation_policy +
+  context_window/max_context_window/effective_context_window_percent(95)).
+  Bytes-sync idempotent (writer-owned filename).
+- **Config-key**: nur wenn die config.toml writer-kontrolliert ist
+  (created/updated/unchanged) erhält sie top-level `model_catalog_json =
+  "/…/.codex/model-catalog.json"`; bei NOTE (customized) wird KEIN
+  catalog-File geschrieben (kein Orphan um eine Datei, die den Key bewusst
+  nie trägt) → Adoption durch manuelles Einfügen der Zeile.
+- **Backup**: `.codex/model-catalog.json` ist im Helper-Backup-Manifest
+  (§15.8) — disable/restore räumt ihn wieder weg.
+
+**Caveats (ehrlich)**:
+1. `model_catalog_json` REPLACE-ALL: der built-in Katalog (gpt-6-astra,
+   gpt-5.6-*, …) verschwindet aus dem codex-Model-Picker — für Ollama-only-
+   Setups gewollt (die gpt-Einträge liefen eh gegen den falschen Provider),
+   für native-ChatGPT-Nutzer am selben CODEX_HOME NICHT.
+2. Nicht acpx-vererbt (INHERITED_TOP_LEVEL_CODEX_CONFIG_KEYS belegt: nur
+   model/model_provider/model_reasoning_effort/sandbox_mode) → ACP-Sessions
+   behalten den bundled Katalog + Fallback-Warnung. Upstream-Kandidat: key
+   in die INHERITED-Liste aufnehmen (lebt im bundled acpx, nicht
+   plugin-nah); Watchlist-Eintrag für acpx 0.19.5+.
+3. Startup-only pro Prozess (codex config_toml.rs: per-thread overrides
+   no-op).
+4. `model_context_window`/`model_auto_compact_token_limit` (top-level,
+   global) sind KEIN Ersatz: sie overriden nur Werte, heben die
+   Fallback-Warnung aber nicht auf (fallback-metadata-Lookup bleibt).
 
 Flaggschiff-Defaults (Add-on-level, `ollama_acp_*_model`): codex/opencode
 existierten bereits; γ ergänzt `ollama_acp_claude_model` → run.sh export
