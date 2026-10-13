@@ -675,18 +675,86 @@ class AddonHarnessDefaultsTest(unittest.TestCase):
         self.assertEqual(harnesses["opencode"]["model"], "m2",
                          "untouched generated entries DO refresh")
 
-    def test_per_harness_model_defaults_for_codex_opencode(self) -> None:
+    def _pop_claude_envs(self) -> None:
+        for key in ("OLLAMA_CLAUDE_MODEL", "OLLAMA_ACP_MODEL",
+                    "OLLAMA_CODEX_MODEL", "OLLAMA_OPENCODE_MODEL"):
+            os.environ.pop(key, None)
+
+    def test_per_harness_model_defaults_for_flagship_trio(self) -> None:
+        # γ (2026-10-13): the three flagship harnesses each carry their own
+        # dedicated default (claude newly: ollama_acp_claude_model).
         os.environ["OLLAMA_CODEX_MODEL"] = "codex-default"
         os.environ["OLLAMA_OPENCODE_MODEL"] = "opencode-default"
+        os.environ["OLLAMA_CLAUDE_MODEL"] = "claude-default"
+        self.addCleanup(self._pop_claude_envs)
         self.set_env(base_url="http://10.0.0.5:11434")
         self.assertTrue(helper.deploy_plugins())
         harnesses = self.harnesses()
         self.assertEqual(harnesses["codex"]["model"], "codex-default")
         self.assertEqual(harnesses["opencode"]["model"], "opencode-default",
                          "dedicated ollama_acp_* defaults without shared model")
+        self.assertEqual(harnesses["claude"]["model"], "claude-default")
         # env-ids without any model line → deliberately not generated:
-        self.assertEqual(harnesses, {"codex": harnesses["codex"],
-                                     "opencode": harnesses["opencode"]})
+        self.assertEqual(set(harnesses),
+                         {"codex", "opencode", "claude"})
+
+    def test_claude_default_is_generated_even_without_options(self) -> None:
+        # γ behavior change (CHANGELOG-Nota): with the claude ladder (option →
+        # legacy OLLAMA_ACP_MODEL → default) a base_url-enabled setup now gets
+        # a claude entry out of the box. Operator-removal stays possible (set
+        # the option empty does NOT suppress — exclusion is harness_excluded
+        #_agents and operator hand-edit ownership).
+        self._pop_claude_envs()
+        self.addCleanup(self._pop_claude_envs)
+        self.set_env(base_url="http://10.0.0.5:11434")
+        self.assertTrue(helper.deploy_plugins())
+        harnesses = self.harnesses()
+        self.assertEqual(harnesses["claude"]["model"],
+                         helper.OLLAMA_CLAUDE_MODEL_DEFAULT)
+
+    def test_claude_model_ladder_option_wins_then_legacy_then_default(self) -> None:
+        self._pop_claude_envs()
+        self.addCleanup(self._pop_claude_envs)
+        self.set_env(base_url="http://10.0.0.5:11434")
+        os.environ["OLLAMA_CLAUDE_MODEL"] = "from-new-option"
+        os.environ["OLLAMA_ACP_MODEL"] = "from-legacy-env"
+        self.assertTrue(helper.deploy_plugins())
+        self.assertEqual(self.harnesses()["claude"]["model"], "from-new-option")
+        # legacy ambient env wins when the new option is unset:
+        os.environ.pop("OLLAMA_CLAUDE_MODEL")
+        self.config_dir.joinpath("openclaw.json").write_text(
+            json.dumps({"agents": {"entries": {}}}))
+        self.assertTrue(helper.deploy_plugins())
+        self.assertEqual(self.harnesses()["claude"]["model"], "from-legacy-env")
+        # both unset → the default constant:
+        os.environ.pop("OLLAMA_ACP_MODEL")
+        self.config_dir.joinpath("openclaw.json").write_text(
+            json.dumps({"agents": {"entries": {}}}))
+        self.assertTrue(helper.deploy_plugins())
+        self.assertEqual(self.harnesses()["claude"]["model"],
+                         helper.OLLAMA_CLAUDE_MODEL_DEFAULT)
+
+    def test_operator_model_array_entry_is_untouched_and_refresh_stable(self) -> None:
+        # γ multi-model: a hand-written models array differs from the managed
+        # book → operator ownership (untouched), and the merge stays
+        # byte-stable across boots (book never carried models).
+        manual = {"codex": {"model": "operator-model",
+                            "baseUrl": "http://operator-lan:1234",
+                            "models": ["a", "b"]}}
+        self.config_dir.joinpath("openclaw.json").write_text(json.dumps({
+            "agents": {"entries": {}},
+            "plugins": {"entries": {
+                helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME: {
+                    "enabled": True, "config": {"harnesses": manual},
+                },
+            }},
+        }))
+        self.set_env(base_url="http://10.0.0.5:11434", model="shared-model")
+        self.assertTrue(helper.deploy_plugins())
+        self.assertEqual(self.harnesses()["codex"], manual["codex"],
+                         "hand models array = operator owned, untouched")
+        self.assertTrue(helper.deploy_plugins())
+        self.assertEqual(self.harnesses()["codex"], manual["codex"])
 
     def test_merge_is_idempotent_across_boots(self) -> None:
         self.set_env(base_url="http://10.0.0.5:11434", model="m1")
