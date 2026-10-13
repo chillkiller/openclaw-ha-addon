@@ -25,12 +25,15 @@ je Harness:
 ```jsonc
 "harnesses": {
   "<harnessId>": {
-    "model": "...",          // Pflicht (non-empty)
+    "model": "...",          // Pflicht (non-empty) — bleibt in ALLEN Fällen der Default
     "baseUrl": "...",        // OAI-kompatibel (Ollama/vLLM/LocalAI/llama.cpp)
     "apiKey": "...",         // absent → Helper-Placeholder "ollama"
     "thinking": "...",       // codex: model_reasoning_effort wenn non-empty
     "smallModel": "...",     // opencode small_model / claude SMALL_FAST_MODEL
-    "trustProjects": ["/pfad"] // codex: [projects.".."] trust_level=trusted
+    "trustProjects": ["/pfad"], // codex: [projects.".."] trust_level=trusted
+    "models": ["id1", "id2"] // γ Multi-Model: verfügbare Modelle (§15.10);
+                             // absent = Auto-Match über models.providers,
+                             // [] = explizites Opt-out
   }
 }
 ```
@@ -130,6 +133,25 @@ codex/opencode ohne baseUrl → skip mit Warning, kein Write.
    auth.json (oder löscht die harnesses.codex-Entry — dann greift nativ).
 5. env-Namen sind docs-Stand 2026-10-11 (kimi/kiro/iflow CLI-Entwicklung ist
    schnelllebig; kiro hat bewusst KEIN Base-URL-Mapping).
+6. **codex [profiles.*] sind NICHT acpx-vererbt** (dist-belegt:
+   renderIsolatedCodexConfig/INHERITED_TOP_LEVEL_CODEX_CONFIG_KEYS übernimmt
+   nur model/model_provider/model_reasoning_effort/sandbox_mode +
+   [model_providers.*]): die γ-Profile nutzen direkte codex-CLI-Nutzer mit
+   CODEX_HOME auf /config/.codex/config.toml. Welche Modelle ein ACP-codex-
+   Session zur Wahl anbietet, entscheidet codex' `model/list` am app-server
+   (leer → Adapter-Fehler) — für Custom-Provider live zu verifizieren.
+7. **γ-Signatur-Semantik vs. Legacy/Custom-Files**: nur Dateien mit der
+   `# harness-config-writer (generated)`-Erstzeile werden bytes-sync
+   aktualisiert. Vor-γ vom Writer generierte (signaturlose) config.toml und
+   jede customized Datei mit model_providers-Block bleiben NOTE — ein
+   Modelllisten-Refresh erfordert dort einmaliges manuelles Löschen (Doku
+   §15.10).
+8. **γ-Config-Plumbing-Fix (index.ts)**: der Writer liest jetzt
+   `api.pluginConfig` (Fallback-Drill über api.config.plugins.entries) statt
+   des bisherigen `api.config.harnesses`-Reads — der war dist-belegt ein
+   stiller No-op (api.config = die VOLLE OpenClawConfig). Erster echter
+   Writer-Deploy am Host ist daher zu erwarten; bestehende Helper-Shape-Files
+   (opencode.jsonc "Ollama (OLLAMA_BASE_URL)") wechseln dann auf Writer-Shape.
 
 ### 15.8 Backup-Rewrite (GaRoN 2026-10-11, Helper-seitig)
 
@@ -214,3 +236,65 @@ ist — der Writer kann configs/env eintragen, aber keine Vendor-Auth
 erzeugen. Deshalb draußen: cursor/copilot/kilocode (OAuth), pi/mux/
 qoder/fast-agent/trae (env nicht verifiziert — Nachzug sobald dokumentiert),
 openclaw (Gateway selbst).
+
+## 15.10 Multi-Model aus `api.config.models.providers` (γ, 2026-10-13, Owner-Briefing)
+
+Owner-Frage: "alle verfügbaren Modelle eintragen, das Add-on-Config-Modell nur
+als Default". Der Writer reichert je Entry die VERFÜGBAREN Modelle an und
+schreibt sie aufs Harness-optimale Surface (`model` bleibt in ALLEN Fällen der
+Default-Modell-Eintrag):
+
+| Harness | Multi-Model-Surface | Herkunft |
+|---|---|---|
+| opencode | `provider.models`-Map (alle Ids, default `model` zuerst; smallModel-Zusatz nur bei differenter Liste) | native Surface |
+| codex | `[profiles."<id>"]` in der Source-config.toml (je Block `model` + `model_provider` [+ `model_reasoning_effort` bei thinking]) — **nicht acpx-vererbt**, nutzt direkte codex-CLI-Nutzer; ACP-Session-Modellwahl entscheidet codex `model/list` | native Surface, Inheritance-Caveat im Header |
+| claude | `CLAUDE_MODEL_CONFIG` ENV = JSON `{ "availableModels": [...] }` — dist-belegt (claude-agent-acp `parseModelConfig`); Default läuft via ANTHROPIC_MODEL (Adapter-Priorität 1.) | ENV via Command-Override (§15.3) |
+| übrige ENV (gemini/droid/qwen/kimi/kiro/iflow) | INFORMATIONAL-Kommentar-Block in der .env (`# - <id>`, cap 25, `(+N more)`) | keine Multi-Model-ENV-Surface docs-verifiziert |
+| Mechanismus C (copilot/cursor/…) | NICHTS | OAuth-owned, bewusst stumm |
+
+**Modell-Auflösung** (`resolveEntryModels`):
+1. `entry.models` explicit non-empty → gewinnt (Ownership "never guess").
+2. `entry.models: []` → explizites OPT-OUT (kein models-Surface).
+3. absent → Auto-Matching: `api.config.models.providers[*].models[].id` des
+   Providers, dessen `baseUrl` (normalisiert: trailing `/`+`/v1` stripped,
+   Host lowercased) zur Entry-baseUrl passt; Union bei Mehrfach-Providern.
+4. kein Match → `source: "none"` — models-Surface ABWESEND (keine
+   Regression gegen den Vor-γ-Stand; Default läuft weiter über top-level).
+
+`entry.model` wird bei explicit/matched an Position 0 PREPENDET, wenn
+fehlend (claude-Adapter-Fallback ist models[0]). Fail-soft: invalid
+`models` (kein Array/Items) → Warning + Fallback auf Auto-Match, Entry wird
+NIEMALS deswegen geskippt. Dedupe first-occurrence (Reihenfolge = kuratiert),
+Cap MAX_MODELS=200 (echte Surfaces) / COMMENT_MODEL_CAP=25 (env-Kommentare).
+
+**Self-Recognition-Signatur** (`CODEX_SIGNATURE_LINE`,
+`# harness-config-writer (generated)`): jede writer-generierte config.toml
+trägt die Erstzeile; `upgradeOrNoteIfMissingOrDiffers` updatet NUR signatur-
+makierte Dateien bytes-genau (Modelllisten-Änderungen wirken!), signaturlose
+customized Dateien bleiben NOTE. One-time-Migration: vor-γ writer-generierte
+config.toml einmal manuell löschen, damit der aktuelle Stand mit Signatur
+installs; die aktuelle Live-Datei des Owners (garon_ollama, customized) bleibt
+bewusst unangetastet.
+
+**Config-Zufuhr-Fix (index.ts `resolvePluginConfig`)**: erst
+`api.pluginConfig` (dist: validatedConfig.value), Fallback-Drill
+`api.config.plugins.entries['harness-config-writer'].config` (Pattern
+agent-map.ts resolvePluginEntryConfig); beurteilt allein am non-empty
+`harnesses`-Inhalt (Absence = no-op bleibt). Katalog-Bau ist fail-soft
+(`buildModelCatalog`): garbage `models.providers` → leere Map + Warning,
+nie ein Crash.
+
+Helper-Interaktion (§15.9): der Python-Helper generiert KEINE models-Felder
+(in-memory Enrichment ist TS-Plugin-only) — helper-generierte Entries bleiben
+byte-stabil. Operator-Einträge mit hand-geschriebenem `models`-Array
+differieren vom managed-Buch → Ownership "operator-owned, untouched" (bewusst:
+Wer kuratiert, übernimmt den Entry komplett).
+
+Flaggschiff-Defaults (Add-on-level, `ollama_acp_*_model`): codex/opencode
+existierten bereits; γ ergänzt `ollama_acp_claude_model` → run.sh export
+`OLLAMA_CLAUDE_MODEL` (ambient ANTHROPIC_MODEL-Ladder synchron:
+Option → legacy `OLLAMA_ACP_MODEL` → Default `glm-5.3-flash:cloud`) +
+helper `_writer_model_for` claude-Ladder (dieselbe Reihenfolge). Netto-Ver-
+änderung für Bestands-Setups: base_url-aktivierte Deployments generieren ab
+γ einen claude-Entry by Default (CHANGELOG-Nota; Ausschluss via
+harness_excluded_agents bzw. Operator-Ownership).

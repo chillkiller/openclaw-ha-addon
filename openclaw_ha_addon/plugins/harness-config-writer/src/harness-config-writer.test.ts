@@ -20,11 +20,14 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   buildCodexConfigToml,
+  buildModelCatalog,
   buildOpencodeConfigJsonc,
   deployHarnessConfigs,
   deriveProviderId,
+  normalizeBaseUrlForMatch,
   OPENCODE_LEGACY_PLACEHOLDER,
   renderEnvFile,
+  resolveEntryModels,
   resolveHarnessWriterPaths,
   withV1Suffix,
   type HarnessConfigEntry,
@@ -59,12 +62,9 @@ const OLLAMA: HarnessConfigEntry = {
   apiKey: "ollama",
 };
 
-const DEPLOY = (config: unknown, p = paths()) =>
-  deployHarnessConfigs(config, p, {
-    debug: () => {},
-    info: () => {},
-    warn: () => {},
-  });
+const SILENT = { debug: () => {}, info: () => {}, warn: () => {} };
+
+const DEPLOY = (config: unknown, p = paths()) => deployHarnessConfigs(config, p, SILENT);
 
 // ---------------------------------------------------------------------------
 // String-Helper
@@ -116,8 +116,11 @@ describe("codex writer", () => {
     expect(toml).toContain('wire_api = "responses"');
     expect(toml).toContain("requires_openai_auth = true");
     expect(toml).toContain('sandbox_mode = "workspace-write"');
-    // thinking NICHT gesetzt → model_reasoning_effort fehlt.
-    expect(toml).not.toContain("model_reasoning_effort");
+    // thinking NICHT gesetzt → model_reasoning_effort-Var fehlt (der Header-
+    // Kommentar NENNT den Key im Inheritance-Caveat — nur Var-Zeilen zählen).
+    expect(toml).not.toMatch(/^model_reasoning_effort =/m);
+    // Self-Recognition-Signatur (γ) immer erste Zeile.
+    expect(toml.startsWith("# harness-config-writer (generated)")).toBe(true);
     expect(report.results[0].mechanism).toBe("file-codex");
     expect(report.results[0].files.map((f) => f.action)).toEqual(["created", "created"]);
   });
@@ -126,7 +129,7 @@ describe("codex writer", () => {
     const withThinking = buildCodexConfigToml({ ...OLLAMA, thinking: "medium" });
     expect(withThinking).toContain('model_reasoning_effort = "medium"');
     const blank = buildCodexConfigToml({ ...OLLAMA, thinking: "" });
-    expect(blank).not.toContain("model_reasoning_effort");
+    expect(blank).not.toMatch(/^model_reasoning_effort =/m);
   });
 
   it("trustProjects: dedupe + sort, no duplicate table headers", () => {
@@ -395,6 +398,352 @@ describe("additive guarantee", () => {
     expect(report.results.every((r) => r.files.length === 0)).toBe(true);
     expect(report.results.every((r) => r.warnings.length > 0)).toBe(true);
     expect(existsSync(p.acpxDir)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Multi-Model γ (2026-10-13) — Katalog, Entry-Auflösung, Surfaces je Mechanismus
+// ---------------------------------------------------------------------------
+
+const CATALOG = buildModelCatalog(
+  {
+    models: {
+      providers: {
+        ollama: {
+          baseUrl: "http://localhost:11434/v1",
+          models: [{ id: "gemma4" }, { id: "kimi-k2.7-code:cloud" }, { id: "glm-5.3-flash:cloud" }],
+        },
+        broken: { models: [{ id: "z" }] },
+      },
+    },
+  },
+  [],
+);
+
+describe("normalizeBaseUrlForMatch", () => {
+  it("strips trailing slashes + /v1, lowercases host, preserves path", () => {
+    expect(normalizeBaseUrlForMatch("http://localhost:11434")).toBe("http://localhost:11434");
+    expect(normalizeBaseUrlForMatch("http://localhost:11434/")).toBe("http://localhost:11434");
+    expect(normalizeBaseUrlForMatch("http://localhost:11434/v1")).toBe("http://localhost:11434");
+    expect(normalizeBaseUrlForMatch("http://localhost:11434/v1/")).toBe("http://localhost:11434");
+    expect(normalizeBaseUrlForMatch("HTTP://LOCALHOST:11434")).toBe("http://localhost:11434");
+    expect(normalizeBaseUrlForMatch("http://h:1/v1/x")).toBe("http://h:1/v1/x");
+  });
+});
+
+describe("buildModelCatalog", () => {
+  it("collects provider ids by normalized baseUrl (dedupe, sorted keys)", () => {
+    const warnings: string[] = [];
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            a: {
+              baseUrl: "http://b:1234/v1",
+              models: [{ id: "x" }, { id: "y" }, { id: "x" }],
+            },
+            b: { baseUrl: "http://b:1234", models: [{ id: "z" }] },
+          },
+        },
+      },
+      warnings,
+    );
+    // Beide Provider matchen dieselbe normalisierte baseUrl → union, deduped.
+    const key = normalizeBaseUrlForMatch("http://b:1234");
+    expect(catalog.byBaseUrl.get(key)).toEqual(["x", "y", "z"]);
+    expect(warnings).toEqual([]);
+  });
+
+  it("fail-soft: malformed provider/models entries → warning, others survive", () => {
+    const warnings: string[] = [];
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            ollama: { baseUrl: "http://b:1234", models: [{ id: "x" }] },
+            bad1: { models: [{ id: "z" }] },
+            bad2: { baseUrl: 42 },
+          },
+        },
+      },
+      warnings,
+    );
+    expect(catalog.byBaseUrl.get(normalizeBaseUrlForMatch("http://b:1234"))).toEqual(["x"]);
+    expect(warnings.some((w) => w.includes("skipped 2 malformed"))).toBe(true);
+  });
+
+  it("garbage top shape → empty catalog + warning (never a crash)", () => {
+    const warnings: string[] = [];
+    const catalog = buildModelCatalog({ models: { providers: "junk" } }, warnings);
+    expect(catalog.byBaseUrl.size).toBe(0);
+    expect(warnings.some((w) => w.includes("unexpected shape"))).toBe(true);
+  });
+
+  it("no models section → empty catalog, no warning (default additive case)", () => {
+    const warnings: string[] = [];
+    const catalog = buildModelCatalog({}, warnings);
+    expect(catalog.byBaseUrl.size).toBe(0);
+    expect(warnings).toEqual([]);
+  });
+});
+
+describe("resolveEntryModels", () => {
+  const CATALOG_URL = normalizeBaseUrlForMatch("http://localhost:11434");
+
+  it("explicit non-empty wins over the catalog; default prepended at 0", () => {
+    const r = resolveEntryModels(
+      { model: "glm-5.3-flash:cloud", baseUrl: "http://localhost:11434", models: ["m2", "m3"] },
+      CATALOG,
+    );
+    expect(r.source).toBe("explicit");
+    expect(r.models).toEqual(["glm-5.3-flash:cloud", "m2", "m3"]);
+  });
+
+  it("models: [] is an explicit OPT-OUT — even with a catalog match", () => {
+    const r = resolveEntryModels(
+      { model: "d", baseUrl: "http://localhost:11434", models: [] },
+      CATALOG,
+    );
+    expect(r.source).toBe("none");
+    expect(r.models).toEqual([]);
+  });
+
+  it("absent models → auto-match via normalized baseUrl (with or without /v1)", () => {
+    for (const baseUrl of ["http://localhost:11434", "http://localhost:11434/v1/"]) {
+      const r = resolveEntryModels({ model: "gemma4", baseUrl }, CATALOG);
+      expect(r.source).toBe("matched");
+      expect(r.models).toEqual([
+        "gemma4",
+        "kimi-k2.7-code:cloud",
+        "glm-5.3-flash:cloud",
+      ]);
+    }
+  });
+
+  it("absent models + no baseUrl match → none (no surface, no regression)", () => {
+    const r = resolveEntryModels({ model: "d", baseUrl: "http://elsewhere:9" }, CATALOG);
+    expect(r.source).toBe("none");
+    expect(r.models).toEqual([]);
+  });
+
+  it("invalid models field → warning + fallback (entry stays alive, fail-soft)", () => {
+    const r = resolveEntryModels(
+      { model: "gemma4", baseUrl: "http://localhost:11434", models: "junk" as unknown as string[] },
+      CATALOG,
+    );
+    expect(r.warnings.join(" ")).toContain("must be array of non-empty strings");
+    expect(r.source).toBe("matched");
+    expect(r.models[0]).toBe("gemma4");
+  });
+
+  it("invalid ids are dropped with a warning, rest survives", () => {
+    const r = resolveEntryModels(
+      {
+        model: "d",
+        models: ["x", "  ", 5, "", "x"] as unknown as string[],
+      },
+      null,
+    );
+    expect(r.source).toBe("explicit");
+    expect(r.models).toEqual(["d", "x"]);
+    expect(r.warnings.join(" ")).toContain("invalid ids dropped");
+  });
+
+  it("model lists are capped at MAX_MODELS (default prepended inside the cap)", () => {
+    const huge = Array.from({ length: 250 }, (_, i) => `m${i}`);
+    const r = resolveEntryModels({ model: "d", models: huge }, null);
+    expect(r.models.length).toBe(200);
+    expect(r.models[0]).toBe("d");
+    expect(r.warnings.join(" ")).toContain("capped at 200");
+  });
+});
+
+describe("codex writer multi-model", () => {
+  it("profiles per model id (quoted keys, ':'-safe), default stays top-level", () => {
+    const toml = buildCodexConfigToml({
+      model: "kimi-k2.7-code:cloud",
+      baseUrl: "http://localhost:11434",
+      thinking: "high",
+      models: ["kimi-k2.7-code:cloud", "glm-5.3-flash:cloud", "kimi-k2.7-code:cloud"],
+    });
+    const headers = toml.split("\n").filter((l) => l.startsWith("[profiles."));
+    expect(headers).toEqual(['[profiles."kimi-k2.7-code:cloud"]', '[profiles."glm-5.3-flash:cloud"]']);
+    expect(toml.startsWith("# harness-config-writer (generated)")).toBe(true);
+    expect(toml).toContain("inherited by acpx");
+    expect(toml).toMatch(/^model = "kimi-k2\.7-code:cloud"$/m);
+    // Profile-Blöcke: model + reasoning effort + gleicher provider.
+    expect(toml).toMatch(
+      /\[profiles\."glm-5\.3-flash:cloud"\]\nmodel = "glm-5\.3-flash:cloud"\nmodel_reasoning_effort = "high"\nmodel_provider = "binding_localhost_11434"/,
+    );
+  });
+
+  it("no models → NO profile table (byte-compatible surface, only header grows)", () => {
+    const toml = buildCodexConfigToml({ ...OLLAMA });
+    expect(toml).not.toMatch(/^\[profiles\./m);
+  });
+
+  it("thinking NOT set → profiles carry no reasoning effort line", () => {
+    const toml = buildCodexConfigToml({
+      ...OLLAMA,
+      models: ["a", "b"],
+    });
+    expect(toml).toMatch(/\[profiles\."a"\]\nmodel = "a"\nmodel_provider = /);
+    expect(toml).not.toMatch(/^model_reasoning_effort =/m);
+  });
+
+  it("e2e: catalog enrichment drives the profiles via deploy (models: matched)", () => {
+    const p = paths();
+    const report = deployHarnessConfigs(
+      { harnesses: { codex: OLLAMA } },
+      p,
+      { warn: () => {}, info: () => {}, debug: () => {} },
+      CATALOG,
+    );
+    expect(report.results[0].modelsSource).toBe("matched");
+    const toml = readText(join(p.codexSourceHome, "config.toml"));
+    expect(toml).toContain('[profiles."glm-5.3-flash:cloud"]');
+    expect(report.results[0].warnings).toEqual([]);
+  });
+
+  it("self-recognition: signature-line file is bytes-synced (model list refresh works)", () => {
+    const p = paths();
+    const tomlPath = join(p.codexSourceHome, "config.toml");
+    mkdirSync(join(root, "config", ".codex"), { recursive: true });
+    writeFileSync(
+      tomlPath,
+      '# harness-config-writer (generated)\nmodel = "old-m"\n[model_providers.binding_localhost_11434]\nbase_url = "old"\n',
+      "utf-8",
+    );
+    const report = DEPLOY(
+      { harnesses: { codex: { ...OLLAMA, models: ["a", "b"] } } },
+      p,
+    );
+    expect(
+      report.results[0].files.find((f) => f.path === tomlPath)?.action,
+    ).toBe("updated");
+    const toml = readText(tomlPath);
+    expect(toml).toContain('model = "kimi-k2.7-code:cloud"');
+    expect(toml).toContain('[profiles."a"]');
+  });
+});
+
+describe("opencode writer multi-model", () => {
+  it("models map carries default first + all ids + smallModel when differing", () => {
+    const cfg = JSON.parse(
+      buildOpencodeConfigJsonc({
+        model: "gemma4",
+        baseUrl: "http://localhost:11434",
+        smallModel: "nomic-embed-text:latest",
+        models: ["kimi-k2.7-code:cloud", "glm-5.3-flash:cloud"],
+      }),
+    ) as { provider: Record<string, { models: Record<string, unknown> }>; model: string; small_model: string };
+    const provider = Object.keys(cfg.provider)[0];
+    const ids = Object.keys(cfg.provider[provider].models);
+    expect(ids).toEqual([
+      "gemma4",
+      "kimi-k2.7-code:cloud",
+      "glm-5.3-flash:cloud",
+      "nomic-embed-text:latest",
+    ]);
+    expect(cfg.model).toBe("binding_localhost_11434/gemma4");
+    expect(cfg.small_model).toBe("binding_localhost_11434/nomic-embed-text:latest");
+  });
+
+  it("no models → byte-identical single-entry map (pre-γ parity)", () => {
+    const cfg = JSON.parse(buildOpencodeConfigJsonc({ ...OLLAMA })) as {
+      provider: Record<string, { models: Record<string, unknown> }>;
+    };
+    const provider = Object.keys(cfg.provider)[0];
+    expect(Object.keys(cfg.provider[provider].models)).toEqual(["kimi-k2.7-code:cloud"]);
+  });
+
+  it("e2e: sync-on-diff when the model list changes (updated)", () => {
+    const p = paths();
+    DEPLOY({ harnesses: { opencode: OLLAMA } }, p);
+    const target = join(p.acpxDir, "opencode-home", "opencode.jsonc");
+    const report = DEPLOY(
+      { harnesses: { opencode: { ...OLLAMA, models: ["gemma4", "glm-5.3-flash:cloud"] } } },
+      p,
+    );
+    const updated = report.results[0].files.find((f) => f.path === target)?.action;
+    expect(updated).toBe("updated");
+    const cfg = JSON.parse(readText(target)) as {
+      provider: Record<string, { models: Record<string, unknown> }>;
+    };
+    expect(Object.keys(cfg.provider[Object.keys(cfg.provider)[0]].models)).toEqual([
+      "kimi-k2.7-code:cloud",
+      "gemma4",
+      "glm-5.3-flash:cloud",
+    ]);
+  });
+});
+
+describe("claude env multi-model", () => {
+  it("catalog match → CLAUDE_MODEL_CONFIG with availableModels (default is member)", () => {
+    const p = paths();
+    deployHarnessConfigs(
+      { harnesses: { claude: { model: "gemma4", baseUrl: "http://localhost:11434", apiKey: "ollama" } } },
+      p,
+      SILENT,
+      CATALOG,
+    );
+    const env = readText(join(p.acpxDir, "harness-env", "claude.env"));
+    expect(env).toContain(
+      `CLAUDE_MODEL_CONFIG='{"availableModels":["gemma4","kimi-k2.7-code:cloud","glm-5.3-flash:cloud"]}'`,
+    );
+    expect(env).toContain(`ANTHROPIC_MODEL='gemma4'`);
+    // claude hat die echte Surface → KEIN informational-Kommentar.
+    expect(env).not.toContain("# available models");
+  });
+
+  it("no models surface → CLAUDE_MODEL_CONFIG ABSENT (pre-γ parity)", () => {
+    const p = paths();
+    DEPLOY({ harnesses: { claude: { model: "gemma4", baseUrl: "http://localhost:11434" } } }, p);
+    const env = readText(join(p.acpxDir, "harness-env", "claude.env"));
+    expect(env).not.toContain("CLAUDE_MODEL_CONFIG");
+    expect(env).toContain(`ANTHROPIC_MODEL='gemma4'`);
+  });
+});
+
+describe("env models comment (no multi-model env surface)", () => {
+  it("gemini.env lists available models as informational comment, capped at 25", () => {
+    const p = paths();
+    const many = Array.from({ length: 30 }, (_, i) => `m${i}`);
+    deployHarnessConfigs(
+      { harnesses: { gemini: { model: "m0", baseUrl: "http://localhost:11434" } } },
+      p,
+  SILENT,
+      buildModelCatalog(
+        {
+          models: {
+            providers: {
+              ollama: {
+                baseUrl: "http://localhost:11434",
+                models: many.map((id) => ({ id })),
+              },
+            },
+          },
+        },
+        [],
+      ),
+    );
+    const env = readText(join(p.acpxDir, "harness-env", "gemini.env"));
+    expect(env).toContain("# available models (informational — gemini exposes no multi-model env surface):");
+    const listed = env.split("\n").filter((l) => l.startsWith("# - "));
+    expect(listed.length).toBe(25);
+    expect(env).toContain("(+5 more)");
+  });
+
+  it("no match → no comment block", () => {
+    const p = paths();
+    deployHarnessConfigs(
+      { harnesses: { gemini: { model: "m0", baseUrl: "http://elsewhere:9" } } },
+      p,
+      SILENT,
+      CATALOG,
+    );
+    const env = readText(join(p.acpxDir, "harness-env", "gemini.env"));
+    expect(env).not.toContain("# available models");
   });
 });
 
