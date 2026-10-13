@@ -1407,9 +1407,11 @@ in-process-10s-Cap, Drain-Signal.
 
 Der in-process `agent.wait` der Claim-Wait **erbt die Lifetime der
 zustellenden WebSocket-Conn**: `dispatchGatewayMethodInProcessRaw` wrapped den
-erfassten `scope.client` (server-plugin-in-process-dispatch-DoFGQ0iV.mjs:64),
-dessen `connectionSignal` in die Observation-Scope-Kette geht
-(server-methods-DiAePJ8B.mjs `runWithGatewayObservationScope` =
+erfassten `scope.client` (server-plugin-in-process-dispatch —
+`resolveInProcessGatewayDispatch`; dist-Dateinamen sind build-spezifisch,
+Anchors bewusst SEMANTISCH — Audit K6/nachtrag 2026-10-13), dessen
+`connectionSignal` in die Observation-Scope-Kette geht (server-methods —
+`runWithGatewayObservationScope` =
 `AbortSignal.any([drain, callerWork, client.connectionSignal])`). Ein
 UI-Reload/conn-Drop während eines langen Turns bricht **den Wait, nie den Run**
 (`waitForRun`-Kontrakt: der Wait cancelt den Run nicht) — der Host konvertiert

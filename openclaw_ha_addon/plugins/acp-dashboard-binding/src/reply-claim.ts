@@ -207,6 +207,16 @@ function clampYieldMs(value: unknown): number {
  * during a long turn cancels the wait — never the run (waitForRun contract:
  * the wait does not cancel the run), and §19a settle + §20 mirror below heal
  * the delivery. Not a failure: no failure framing in the notice text.
+ *
+ * Scope notes (audit K2, 2026-10-13): gateway restart/suspension drain is
+ * EXCLUDED by construction — the host emits a different string there
+ * ("<method> unavailable during gateway …" via workAdmissionUnavailableError),
+ * which stays on the generic failure path below. All other abort sources
+ * (delivering client conn, caller work signal, plugin restart) end the
+ * OBSERVATION only — the run itself is never cancelled by the wait, so every
+ * "observation cancelled" shape is benign per contract. Should
+ * caller-work-signal aborts ever need their own observability, split them out
+ * by matching work-signal context, not by narrowing this predicate.
  */
 export function isBenignObservationCancel(note: string): boolean {
   return note.includes("observation cancelled");
