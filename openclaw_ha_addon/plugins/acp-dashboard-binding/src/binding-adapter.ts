@@ -24,6 +24,15 @@
  *   When no plugin root is registered yet (e.g. bare unit tests),
  *   `buildPluginOwnedBindingMetadata()` returns null and the record stays
  *   retarget-based (legacy Phase-2.18b behavior).
+ * - Weg B (BRIDGE.md §21, `config.dispatchMode: "native"`): ownership markers
+ *   are NOT emitted (`buildPluginOwnedBindingMetadata` null) AND the adapter
+ *   projects every record it returns through
+ *   `stripPluginOwnedBindingMetadata` — also for §4.2 bridge rows persisted in
+ *   the claim-era shape. The host's native dispatch then runs the turn in the
+ *   target ACP session (conversation == ACP session; the Control-UI reads the
+ *   target transcript; `/reset` rides the harness). The claim path stays in the
+ *   codebase but stands down (`reply-claim.ts` returns handled:false) so the
+ *   Rollback is a config flip to "claim".
  * - This module stays import-free of SDK VALUES (types only, erased at
  *   runtime) so channel.test.ts can run without the host runtime present.
  *   Registering the adapter with the host happens in src/channel.ts; the one
@@ -66,9 +75,11 @@ import {
   buildBindingId,
   buildChannelAccountKey,
   buildPluginOwnedBindingMetadata,
+  isNativeDispatchModeEnabled,
   parseAgentIdFromConversationId,
   resolveHarnessAgentSpec,
   resolveHarnessTargetOrigin,
+  stripPluginOwnedBindingMetadata,
   type HarnessAgentSpec,
   isBindEligibleConversationId,
   isMainConversationEligible,
@@ -289,6 +300,22 @@ export function deriveDashboardBindingRecord(
   return deriveBindingRecord(ref, { getConfig: () => cfg });
 }
 
+/**
+ * Weg-B native projection: demotes a record to the generic dispatch shape by
+ * stripping the ownership fields from metadata — applied at EVERY adapter
+ * return boundary so even §4.2 rows persisted in the claim-era shape (and
+ * explicit binds) answer generically while `dispatchMode: "native"` is set.
+ * Deterministic per resolve: the host's resolve → touchAsync → re-resolve
+ * stability comparison sees the identical projection both times.
+ */
+function projectRecordForDispatchMode(record: DashboardBindingRecord | null): DashboardBindingRecord | null {
+  if (!record || !isNativeDispatchModeEnabled()) return record;
+  if (!record.metadata || typeof record.metadata !== "object" || Object.keys(record.metadata).length === 0) {
+    return record;
+  }
+  return { ...record, metadata: stripPluginOwnedBindingMetadata(record.metadata) };
+}
+
 /** Ref projection for the §4.2 delegation into dashboard-bridge. */
 function toBridgeRef(ref: {
   channel: string;
@@ -359,7 +386,7 @@ export function createDashboardBindingAdapter(options: DashboardBindingAdapterOp
     const accountId = normalizeAccountId(ref.accountId);
     // 1. Prefer an explicit bound record host-side (/acp spawn --bind here …).
     const bound = findExplicit(channel, accountId, conversationId);
-    if (bound) return bound;
+    if (bound) return projectRecordForDispatchMode(bound);
     // 2. BRIDGE.md §4.2 row-miss delegation: consult the bridge's write-free,
     //    deterministic resolver (its rows/tombstones, else its Turn-1
     //    synthesis) so both halves agree on one record per conversation.
@@ -372,10 +399,10 @@ export function createDashboardBindingAdapter(options: DashboardBindingAdapterOp
       },
       options,
     );
-    if (bridged) return bridged;
+    if (bridged) return projectRecordForDispatchMode(bridged);
     // 3. Otherwise derive the ACP target for harness agent conversations
     //    (own Turn-1 synthesis — answers when no bridge is active).
-    return deriveBindingRecord({ channel, accountId, conversationId, ...ref.parentConversationId ? { parentConversationId: ref.parentConversationId } : {} }, options);
+    return projectRecordForDispatchMode(deriveBindingRecord({ channel, accountId, conversationId, ...ref.parentConversationId ? { parentConversationId: ref.parentConversationId } : {} }, options));
   };
 
   return {
@@ -410,7 +437,7 @@ export function createDashboardBindingAdapter(options: DashboardBindingAdapterOp
         }
       };
       explicit.set(record.bindingId, record);
-      return record;
+      return projectRecordForDispatchMode(record);
     },
 
     async unbind(input: DashboardUnbindInput): Promise<DashboardBindingRecord[]> {
@@ -429,7 +456,10 @@ export function createDashboardBindingAdapter(options: DashboardBindingAdapterOp
     listBySession(targetSessionKey: string): DashboardBindingRecord[] {
       const key = optionalTrim(targetSessionKey);
       if (!key) return [];
-      return [...explicit.values()].filter((record) => record.targetSessionKey === key);
+      return [...explicit.values()]
+        .filter((record) => record.targetSessionKey === key)
+        .map((record) => projectRecordForDispatchMode(record))
+        .filter((record): record is DashboardBindingRecord => record !== null);
     },
 
     // Pure, deterministic — safe to expose synchronously. The host's
@@ -446,7 +476,7 @@ export function createDashboardBindingAdapter(options: DashboardBindingAdapterOp
       const channel = normalizeChannelId(ref.channel);
       const accountId = normalizeAccountId(ref.accountId);
       const bound = findExplicit(channel, accountId, conversationId);
-      if (bound) return bound;
+      if (bound) return projectRecordForDispatchMode(bound);
       // §4.2: the mid-cascade row-miss delegation hop goes through the
       // bridge's EXPORTED async resolver (same deterministic core as
       // resolveDashboardBinding, mirrored by the sync variant above).
@@ -460,8 +490,8 @@ export function createDashboardBindingAdapter(options: DashboardBindingAdapterOp
       }), {
         roster: createConfigHarnessRoster(options.getConfig?.()),
       });
-      if (bridged) return bridged as unknown as DashboardBindingRecord;
-      return deriveBindingRecord({ channel, accountId, conversationId, ...ref.parentConversationId ? { parentConversationId: ref.parentConversationId } : {} }, options);
+      if (bridged) return projectRecordForDispatchMode(bridged as unknown as DashboardBindingRecord);
+      return projectRecordForDispatchMode(deriveBindingRecord({ channel, accountId, conversationId, ...ref.parentConversationId ? { parentConversationId: ref.parentConversationId } : {} }, options));
     },
     // "Inspects committed ownership without creating storage or pruning rows."
     async inspectByConversationAsync(ref: BindingConversationRef): Promise<DashboardBindingRecord | null> {

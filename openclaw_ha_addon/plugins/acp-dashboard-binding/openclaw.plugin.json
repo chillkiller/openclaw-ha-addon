@@ -51,6 +51,14 @@
       "bindMainSessions": {
         "type": "boolean",
         "description": "Default true (Phase 2.24b session-key clone mode): also bind the MAIN conversation of a roster harness agent (agent:<id>:main) to a deterministic clone ACP session (the ghost key shape becomes ensured). Set false to keep main conversations on untouched builtin dispatch. The roster gates (boundAgents/excludedAgents/default orchestrator exclusion) always apply."
+      },
+      "dispatchMode": {
+        "type": "string",
+        "enum": [
+          "claim",
+          "native"
+        ],
+        "description": "Default claim (Weg A): records carry plugin-owned markers and turns claim through the plugin's inbound_claim hook. native (Weg B): records answer WITHOUT ownership markers so the host's native dispatch runs turns directly in the target ACP session (conversation == ACP session; no clone/mirror; /reset rides the harness). Applied at plugin registration; flip requires a restart. Rollback = set back to claim."
       }
     }
   },

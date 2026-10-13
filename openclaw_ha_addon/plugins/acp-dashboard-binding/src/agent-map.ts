@@ -125,9 +125,16 @@ export function resetDashboardBindingPluginRootForTest(): void {
  * Metadata fragment marking a binding record as plugin-owned. Returns only the
  * ownership fields; callers merge their informative fields underneath. Returns
  * null while no plugin root is registered — callers then emit records WITHOUT
- * ownership metadata (legacy dispatch behavior).
+ * ownership metadata (legacy retarget dispatch, the Weg-B native shape).
+ * Weg B (`dispatchMode: "native"`) also forces null ON PURPOSE — then every
+ * record path emits generic metadata and the host dispatchs natively.
  */
 export function buildPluginOwnedBindingMetadata(): Record<string, unknown> | null {
+  // Weg-B native mode (BRIDGE.md §21): GENERIC records on EVERY path — the
+  // host's native dispatch (resolveBoundAcpDispatchSessionKey) owns the whole
+  // reply; no claim hook, no mirror. The F3 blocker this metadata used to
+  // route around was removed by the Phase-2.21 ensure provisioning.
+  if (isNativeDispatchModeEnabled()) return null;
   const pluginRoot = getDashboardBindingPluginRoot();
   if (!pluginRoot) return null;
   return {
@@ -136,6 +143,64 @@ export function buildPluginOwnedBindingMetadata(): Record<string, unknown> | nul
     pluginId: CHANNEL_ID,
     pluginRoot
   };
+}
+
+// --- Weg-B dispatch mode (config-gated Weg A/Weg B switch) -------------------
+
+/**
+ * Dispatch modes: `"claim"` = Weg A plugin-bound claim path (record metadata
+ * carries the plugin-owned markers, the host claims through our
+ * `inbound_claim` hook — status quo incl. γ-v2); `"native"` = Weg B records
+ * WITHOUT ownership markers — the host's native dispatch
+ * (`dispatch-from-config-C7FQOe54.mjs: resolveBoundAcpDispatchSessionKey`,
+ * gate `isPluginOwnedSessionBindingRecord` in
+ * conversation-binding-metadata-CFOhDjMh.mjs) runs turns directly in the
+ * target ACP session and the Control-UI reads its transcript natively.
+ */
+export type PluginDispatchMode = "claim" | "native";
+
+let dispatchModeValue: PluginDispatchMode = "claim";
+
+/** Pure option resolution: `plugins.entries[<id>].config.dispatchMode`, default "claim". */
+export function resolvePluginDispatchMode(cfg: unknown): PluginDispatchMode {
+  return resolvePluginEntryConfig(cfg)?.dispatchMode === "native" ? "native" : "claim";
+}
+
+/** Overwritable on purpose: a restart re-registers and re-reads live config. */
+export function setDashboardBindingDispatchMode(value: unknown): void {
+  dispatchModeValue = value === "native" ? "native" : "claim";
+}
+
+/** The live dispatch mode (default "claim" until registerFull resolves config). */
+export function getDashboardBindingDispatchMode(): PluginDispatchMode {
+  return dispatchModeValue;
+}
+
+/** True iff the plugin emits generic records and the claim hook stands down. */
+export function isNativeDispatchModeEnabled(): boolean {
+  return dispatchModeValue === "native";
+}
+
+/** Test reset (vitest module isolation): back to the claim-mode default. */
+export function resetDashboardBindingDispatchModeForTest(): void {
+  dispatchModeValue = "claim";
+}
+
+/**
+ * The metadata fields that make a record plugin-owned for
+ * `isPluginOwnedSessionBindingRecord`. Stripping them from a persisted record
+ * demotes it to a generic (natively dispatchable) one.
+ */
+export const OWNERSHIP_METADATA_KEYS = ["pluginBindingOwner", "pluginId", "pluginRoot", "pluginName"] as const;
+
+/** Metadata copy WITHOUT the ownership fields (native dispatch shape; caller keeps informative fields). */
+export function stripPluginOwnedBindingMetadata(
+  metadata: Record<string, unknown> | undefined,
+): Record<string, unknown> | undefined {
+  if (!metadata || typeof metadata !== "object") return metadata;
+  const clone: Record<string, unknown> = { ...metadata };
+  for (const key of OWNERSHIP_METADATA_KEYS) delete clone[key];
+  return clone;
 }
 
 /** Canonical agent-id shape (mirrors host normalizeAgentId input validation). */
@@ -298,6 +363,8 @@ type PluginEntryLike = {
     excludedAgents?: unknown;
     /** Phase 2.24b (MAIN-Klon): boolean, default true. */
     bindMainSessions?: unknown;
+    /** Weg-B native dispatch gate: "claim" (default) | "native". */
+    dispatchMode?: unknown;
   };
 };
 

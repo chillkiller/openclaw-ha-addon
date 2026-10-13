@@ -29,9 +29,12 @@ import {
   CHANNEL_ID,
   buildAcpBindingSessionKey,
   getDashboardBindingPluginRoot,
+  isNativeDispatchModeEnabled,
+  resetDashboardBindingDispatchModeForTest,
   resetDashboardBindingPluginRootForTest,
   resetDashboardBindingProvisionerForTest,
   resetOriginWorkspaceReaderForTest,
+  setDashboardBindingDispatchMode,
   setDashboardBindingPluginRoot,
   setDashboardBindingProvisioner,
   setOriginWorkspaceReader,
@@ -1011,5 +1014,111 @@ describe("BRIDGE §20 — claim-reply transcript mirror", () => {
     const result = await handler(event, claimContextCodex(PLUGIN_ROOT));
     expect(result.handled).toBe(true);
     expect(result.reply?.text).toBe("the answer");
+  });
+});
+
+// --- Weg B: native dispatch mode stands the claim hook down (BRIDGE.md §21) --
+//
+// Host-side, a generic record never reaches this hook at all (dispatch-from-config
+// only claims plugin-owned records; toPluginConversationBinding → null). This
+// gate is the plugin's second line of defense for a mid-flight flip (config
+// reload before a stale plugin-owned row was re-resolved): with dispatchMode
+// "native" the handler returns {handled:false} BEFORE any guard, preflight,
+// run, wait, settle or §20-mirror machinery runs — the host falls through to
+// native dispatch.
+describe("Weg B — native dispatch mode stands the claim hook down", () => {
+  afterEach(() => {
+    resetDashboardBindingDispatchModeForTest();
+  });
+
+  /** Local run/wait recorder (stubSubagent lives in the F4 describe scope). */
+  function refusingSubagent(): { subagent: HarnessSubagentApi; runCalls: unknown[]; waitCalls: unknown[] } {
+    const runCalls: unknown[] = [];
+    const waitCalls: unknown[] = [];
+    const subagent: HarnessSubagentApi = {
+      run: async (params) => {
+        runCalls.push(params);
+        throw new Error("run must not be called in native mode");
+      },
+      waitForRun: async (params) => {
+        waitCalls.push(params);
+        throw new Error("waitForRun must not be called in native mode");
+      },
+    };
+    return { subagent, runCalls, waitCalls };
+  }
+
+  /** Local settle recorder: proves the §19 settle machinery stays silent. */
+  function recorderStore(): { sessionStore: never; patches: unknown[]; reads: string[] } {
+    const patches: unknown[] = [];
+    const reads: string[] = [];
+    const sessionStore = {
+      getSessionEntry: ({ sessionKey }: { sessionKey: string }) => {
+        reads.push(sessionKey);
+        return undefined;
+      },
+      patchSessionEntry: async (params: { sessionKey: string; update: (entry: unknown) => unknown }) => {
+        patches.push(params);
+        return undefined;
+      },
+    } as never;
+    return { sessionStore, patches, reads };
+  }
+
+  it("returns {handled:false} before any guard, preflight, run, wait or settle", async () => {
+    setDashboardBindingDispatchMode("native");
+    const { subagent, runCalls, waitCalls } = refusingSubagent();
+    const { sessionStore, patches } = recorderStore();
+    const handler = createHarnessReplyClaimHandler({
+      getConfig: () => codexConfig(),
+      subagent,
+      isGatewayAvailable: async () => {
+        throw new Error("gateway preflight must not run in native mode");
+      },
+      sessionStore,
+    });
+    const result = await handler(event, claimContextCodex(PLUGIN_ROOT));
+    expect(result).toEqual({ handled: false });
+    expect(runCalls).toEqual([]);
+    expect(waitCalls).toEqual([]);
+    expect(patches).toEqual([]);
+  });
+
+  it("the gate fires even for a foreign pluginBinding shape (defensive priority)", async () => {
+    // The native gate sits BEFORE the pluginId guard on purpose: a stale
+    // plugin-owned row from claim-mode days must not re-enter the claim
+    // machinery after a mode flip mid-flight.
+    setDashboardBindingDispatchMode("native");
+    const { subagent, runCalls } = refusingSubagent();
+    const handler = createHarnessReplyClaimHandler({
+      getConfig: () => codexConfig(),
+      subagent,
+      isGatewayAvailable: async () => true,
+    });
+    const foreignCtx = claimContextCodex(PLUGIN_ROOT);
+    foreignCtx.pluginBinding = {
+      ...(foreignCtx.pluginBinding as NonNullable<typeof foreignCtx.pluginBinding>),
+      pluginId: "some-other-plugin",
+    };
+    const result = await handler(event, foreignCtx);
+    expect(result).toEqual({ handled: false });
+    expect(runCalls).toEqual([]);
+  });
+
+  it("back in claim mode the Weg-A preflight runs again (rollback = config flip)", async () => {
+    // After the reset the gate is inert — with gateway unavailable the Weg-A
+    // preflight short-circuits (handled:false, no run), which is observable
+    // only in claim mode: in native mode the gate fires before the preflight
+    // ever gets a chance.
+    expect(isNativeDispatchModeEnabled()).toBe(false);
+    const { subagent, runCalls } = refusingSubagent();
+    const handler = createHarnessReplyClaimHandler({
+      getConfig: () => codexConfig(),
+      subagent,
+      isGatewayAvailable: async () => false,
+    });
+    const result = await handler(event, claimContextCodex(PLUGIN_ROOT));
+    expect(result).toEqual({ handled: false });
+    expect(runCalls).toEqual([]);
   });
 });

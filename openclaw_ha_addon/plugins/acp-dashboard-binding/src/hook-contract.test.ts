@@ -1,4 +1,9 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import {
+  getDashboardBindingDispatchMode,
+  resetDashboardBindingDispatchModeForTest,
+} from "./agent-map.js";
 
 /**
  * §9.2 register-crash forensics 2026-10-13 (agents/coding-review/findings/
@@ -100,6 +105,53 @@ describe("registerFull vs host hook-name contract (§9.2, register-crash forensi
       expect(registry[0].events).toEqual(["message_received", "before_dispatch"]);
       expect(typedHooks).toEqual(["inbound_claim", "gateway_start"]);
       expect(unhandled).toEqual([]);
+    } finally {
+      offUnhandled();
+    }
+  });
+});
+
+// --- Weg B: dispatchMode resolution at registerFull (BRIDGE.md §21) ----------
+//
+// The mode is resolved from live config BEFORE any record producer runs; a
+// flip applies on the next boot because registerFull re-registers. The hook
+// INVENTORY is identical in both modes (inbound_claim is registered
+// unconditionally — in native mode the handler stands down per-record, the
+// registration itself must never flip: rollback = config flip, not re-plugin).
+
+describe("registerFull resolves dispatchMode without changing the hook inventory (Weg B)", () => {
+  afterEach(() => {
+    resetDashboardBindingDispatchModeForTest();
+  });
+
+  it("mode = native with the config flip; same registerHook/typed-hook inventory", async () => {
+    const { api, registry, typedHooks, unhandled, offUnhandled } = createHookContractApi();
+    try {
+      (api.config as Record<string, unknown>) = {
+        plugins: { entries: { "acp-dashboard-binding": { config: { dispatchMode: "native" } } } },
+      };
+      const entry = (await import("../index.js")).default;
+      entry.registerFull(api);
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      expect(getDashboardBindingDispatchMode()).toBe("native");
+      expect(registry.map((hook) => hook.name)).toEqual(["acp-dashboard-binding:inbound"]);
+      expect(registry[0].events).toEqual(["message_received", "before_dispatch"]);
+      expect(typedHooks).toEqual(["inbound_claim", "gateway_start"]);
+      expect(unhandled).toEqual([]);
+    } finally {
+      offUnhandled();
+    }
+  });
+
+  it("mode stays claim on a garbage value (rollback direction is never accidental)", async () => {
+    const { api, offUnhandled } = createHookContractApi();
+    try {
+      (api.config as Record<string, unknown>) = {
+        plugins: { entries: { "acp-dashboard-binding": { config: { dispatchMode: "NATIVE" } } } },
+      };
+      const entry = (await import("../index.js")).default;
+      entry.registerFull(api);
+      expect(getDashboardBindingDispatchMode()).toBe("claim");
     } finally {
       offUnhandled();
     }

@@ -92,6 +92,7 @@
 import {
   CHANNEL_ID,
   isHarnessProvisionedSessionKey,
+  isNativeDispatchModeEnabled,
   parseAgentIdFromConversationId,
   pendingDashboardHarnessProvisioning,
   isAcpShapedSessionKey,
@@ -390,6 +391,16 @@ export function createHarnessReplyClaimHandler(options: HarnessReplyClaimOptions
     const cfg = options.getConfig?.();
     const binding = ctx.pluginBinding;
     try {
+      // Weg-B native mode (BRIDGE.md §21): generic records never reach this hook
+      // host-side (dispatch-from-config only claims plugin-owned records); this
+      // gate is the second line of defense for a mode flip mid-flight (live
+      // config reload before a stale plugin-owned row was re-resolved). The
+      // host falls through to native dispatch; the claim machinery stays
+      // unreachable until the mode returns to "claim".
+      if (isNativeDispatchModeEnabled()) {
+        log.debug?.(`[${CHANNEL_ID}] inbound_claim: native dispatch mode; not claiming`);
+        return { handled: false };
+      }
       // Only claim conversations our plugin owns (the host targets this hook at
       // resolved plugin-owned bindings of OUR pluginId; guard defensively).
       if (binding?.pluginId !== CHANNEL_ID) return { handled: false };

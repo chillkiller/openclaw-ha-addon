@@ -26,6 +26,8 @@ import {
   BINDING_CHANNEL,
   CHANNEL_ID,
   clearDashboardHarnessProvisions,
+  resolvePluginDispatchMode,
+  setDashboardBindingDispatchMode,
   setDashboardBindingPluginRoot,
   setDashboardBindingProvisioner,
   setOriginWorkspaceReader,
@@ -438,6 +440,20 @@ export default defineBundledChannelCompatibleEntry({
     // synthesized (adapter registration + bridge below) — the host's
     // isPluginOwnedBindingMetadata predicate reads metadata.pluginRoot.
     setDashboardBindingPluginRoot(api.rootDir);
+    // Weg B (BRIDGE.md §21): resolve the dispatch mode from live config BEFORE
+    // any record producer runs — "native" makes every record path generic and
+    // stands the claim hook down; "claim" (default) keeps the Weg-A status quo.
+    // A restart re-registers and re-reads config, so a mode flip applies on the
+    // next boot (deliberately NOT hot-mid-flight).
+    {
+      const mode = resolvePluginDispatchMode(api.config);
+      setDashboardBindingDispatchMode(mode);
+      if (mode === "native") {
+        api.logger?.info?.(
+          `[${CHANNEL_ID}] dispatch mode = native (Weg B): records answer generic, host dispatch runs turns in the target ACP session`,
+        );
+      }
+    }
     // Phase 2.22: BEFORE the runtime/bridge so even the earliest Turn-1
     // resolve sees origin workspaces; a missing reader degrades to the
     // documented agent-default cwd ladder.

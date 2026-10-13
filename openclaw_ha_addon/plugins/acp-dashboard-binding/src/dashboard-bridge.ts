@@ -14,6 +14,7 @@ import {
   buildHarnessProvisionedSessionKey,
   buildPluginOwnedBindingMetadata,
   getDashboardBindingProvisioner,
+  isNativeDispatchModeEnabled,
   isRosterEligibleAgentId,
   resolveAutoProvisionEnabled,
   resolveBoundAgentAllowlist,
@@ -21,6 +22,7 @@ import {
   resolveHarnessAgentSpec,
   resolveHarnessSessionTargetKey,
   resolveHarnessTargetOrigin,
+  stripPluginOwnedBindingMetadata,
 } from "./agent-map.js";
 
 // Bridge public surface keeps exporting the shared constants (tests/plugins
@@ -242,10 +244,20 @@ export function isPluginOwnedBindingMetadata(metadata: Record<string, unknown> |
  * Informative fields stay underneath; ownership is not overridable by them.
  * Records without a registered plugin root stay WITHOUT ownership markers and
  * keep the legacy retarget dispatch (safe degraded mode).
+ *
+ * Weg B (`dispatchMode: "native"`, BRIDGE.md §21): flips this into the native
+ * projection — ownership fields are STRIPPED instead of merged, so legacy rows
+ * hydrated in the claim-era shape demote to generic (natively dispatchable)
+ * records too. The binding-adapter applies the same projection at its return
+ * boundaries; this keeps synthesis and store-row paths consistent.
  */
 export function withPluginOwnedMetadata(
   metadata: Record<string, unknown> | undefined,
 ): Record<string, unknown> {
+  if (isNativeDispatchModeEnabled()) {
+    const stripped = { ...metadata };
+    return (stripPluginOwnedBindingMetadata(stripped) ?? {}) as Record<string, unknown>;
+  }
   const merged: Record<string, unknown> = { ...metadata };
   const pluginOwned = buildPluginOwnedBindingMetadata();
   if (pluginOwned) Object.assign(merged, pluginOwned);
@@ -459,9 +471,10 @@ export function synthesizeDashboardBindingRecord(
       // per-agent harness session (kept off configured/synthetic targets so
       // records stay deterministic and legible).
       ...(decision.targetOrigin === "provisioned" ? { provisioned: true } : {}),
-      // Phase 2.20 (F4): plugin-owned ownership markers — host dispatch stops
-      // retargeting such records and instead claims through our inbound_claim
-      // hook, whose reply reaches the dashboard conversation (see file head).
+      // Phase 2.20 (F4) → Weg B: withPluginOwnedMetadata is the mode gate —
+      // claim mode merges the ownership markers (host claims through our
+      // inbound_claim hook), native mode strips them (host dispatch rides the
+      // generic record natively; see withPluginOwnedMetadata doc).
       ...withPluginOwnedMetadata({}),
     },
   };

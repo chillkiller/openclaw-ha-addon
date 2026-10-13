@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   BINDING_CHANNEL,
@@ -15,12 +15,18 @@ import {
   parseOriginWorkspaceEntryJson,
   pendingDashboardHarnessProvisioning,
   queryOriginWorkspace,
+  resetDashboardBindingDispatchModeForTest,
+  resetDashboardBindingPluginRootForTest,
   resetDashboardBindingProvisionerForTest,
   resetOriginWorkspaceReaderForTest,
+  resolvePluginDispatchMode,
+  setDashboardBindingDispatchMode,
+  setDashboardBindingPluginRoot,
   resolveAutoProvisionEnabled,
   resolveHarnessAgentSpec,
   resolveHarnessAgentSpecs,
   isBindEligibleConversationId,
+  isNativeDispatchModeEnabled,
   isMainConversationEligible,
   resolveBindMainSessionsEnabled,
   resolveHarnessSessionTargetKey,
@@ -31,10 +37,11 @@ import {
   resolveWorkspaceOverrides,
   setDashboardBindingProvisioner,
   setOriginWorkspaceReader,
+  stripPluginOwnedBindingMetadata,
   trimOriginConversationKey,
   type DashboardHarnessProvisioner
 } from "./agent-map.js";
-import { createDashboardBindingAdapter } from "./binding-adapter.js";
+import { createDashboardBindingAdapter, type DashboardBindingRecord } from "./binding-adapter.js";
 import {
   createDashboardBridge,
   type DashboardBridgeApiLike,
@@ -263,6 +270,143 @@ describe("dashboard binding adapter (acceptance #2)", () => {
     const viaSync = adapter.resolveByConversation(DASHBOARD_REF);
     const viaAsync = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
     expect(viaSync).toEqual(viaAsync);
+  });
+});
+
+// --- Weg B: config-gated dispatch mode (BRIDGE.md §21) -----------------------
+//
+// claim (Weg A, default): derived records carry the plugin-owned ownership
+// metadata (pluginBindingOwner/pluginId/pluginRoot/pluginName) and turns claim
+// through the inbound_claim hook — the host's get-reply retarget is suppressed.
+// native (Weg B): EVERY record path answers GENERIC (ownership keys stripped,
+// informative fields intact) so dispatch-from-config's
+// resolveBoundAcpDispatchSessionKey returns the target ACP session key and the
+// turn runs NATIVELY in the target session (isPluginOwnedSessionBindingRecord
+// = false; toPluginConversationBinding = null).
+
+const WEG_B_PLUGIN_ROOT = "/config/.openclaw/plugins/acp-dashboard-binding";
+
+function cfgWithDispatchMode(dispatchMode: unknown) {
+  return {
+    agents: HARNESS_CFG.agents,
+    plugins: {
+      entries: {
+        [CHANNEL_ID]: { config: { dispatchMode } },
+      },
+    },
+  };
+}
+
+describe("Weg-B dispatch mode (mode resolution)", () => {
+  afterEach(() => {
+    resetDashboardBindingDispatchModeForTest();
+  });
+
+  it("defaults to claim without any plugin config (status quo stays the safe default)", () => {
+    expect(resolvePluginDispatchMode(undefined)).toBe("claim");
+    expect(resolvePluginDispatchMode({ agents: { entries: {} } })).toBe("claim");
+    expect(resolvePluginDispatchMode(cfgWithDispatchMode(undefined))).toBe("claim");
+  });
+
+  it("reads plugins.entries['acp-dashboard-binding'].config.dispatchMode exactly", () => {
+    expect(resolvePluginDispatchMode(cfgWithDispatchMode("native"))).toBe("native");
+    expect(resolvePluginDispatchMode(cfgWithDispatchMode("claim"))).toBe("claim");
+    // Anything else (typo casing, garbage) falls back to claim — the rollback
+    // direction must never be reachable by accident.
+    expect(resolvePluginDispatchMode(cfgWithDispatchMode("NATIVE"))).toBe("claim");
+    expect(resolvePluginDispatchMode(cfgWithDispatchMode(true))).toBe("claim");
+  });
+
+  it("setDashboardBindingDispatchMode accepts only the exact 'native' literal", () => {
+    setDashboardBindingDispatchMode("native");
+    expect(isNativeDispatchModeEnabled()).toBe(true);
+    setDashboardBindingDispatchMode("NATIVE");
+    expect(isNativeDispatchModeEnabled()).toBe(false);
+    setDashboardBindingDispatchMode(undefined);
+    expect(isNativeDispatchModeEnabled()).toBe(false);
+  });
+});
+
+describe("Weg-B dispatch mode (adapter record shapes)", () => {
+  beforeEach(() => {
+    setDashboardBindingPluginRoot(WEG_B_PLUGIN_ROOT);
+  });
+  afterEach(() => {
+    resetDashboardBindingDispatchModeForTest();
+    resetDashboardBindingPluginRootForTest();
+  });
+
+  it("claim mode keeps the plugin-owned golden shape when a plugin root is registered", async () => {
+    const adapter = createDashboardBindingAdapter({ getConfig: () => HARNESS_CFG });
+    const record = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
+    expect(record).not.toBeNull();
+    const metadata = record?.metadata as Record<string, unknown>;
+    // The F4 ownership contract verbatim (isPluginOwnedSessionBindingRecord).
+    expect(metadata.pluginBindingOwner).toBe("plugin");
+    expect(metadata.pluginId).toBe(CHANNEL_ID);
+    expect(metadata.pluginRoot).toBe(WEG_B_PLUGIN_ROOT);
+    expect(typeof metadata.pluginName).toBe("string");
+  });
+
+  it("native mode emits the generic record: ownership keys stripped, informative fields intact", async () => {
+    setDashboardBindingDispatchMode("native");
+    const adapter = createDashboardBindingAdapter({ getConfig: () => HARNESS_CFG });
+    const record = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
+    expect(record).not.toBeNull();
+    const metadata = record?.metadata as Record<string, unknown>;
+    // Generic for the host: isPluginOwnedSessionBindingRecord must see false.
+    expect(metadata.pluginBindingOwner).toBeUndefined();
+    expect(metadata.pluginId).toBeUndefined();
+    expect(metadata.pluginRoot).toBeUndefined();
+    expect(metadata.pluginName).toBeUndefined();
+    // Informative fields survive the strip (UI/debug value, not dispatch).
+    expect(metadata.agentId).toBe("codex");
+    expect(metadata.acpAgentId).toBe("codex-harness");
+    expect(metadata.mode).toBe("oneshot");
+    // The target itself is untouched — native dispatch routes to the same key.
+    expect(record?.targetSessionKey).toBe(
+      buildAcpBindingSessionKey({ channel: "webchat", accountId: "default", conversationId: DASHBOARD_KEY, agentId: "codex" })
+    );
+  });
+
+  it("native mode strips ownership metadata from explicit binds too (bind returns generic)", async () => {
+    setDashboardBindingDispatchMode("native");
+    const adapter = createDashboardBindingAdapter({ getConfig: () => HARNESS_CFG });
+    const bound = await adapter.bind?.({
+      targetSessionKey: buildAcpBindingSessionKey({
+        channel: "webchat",
+        accountId: "default",
+        conversationId: DASHBOARD_KEY,
+        agentId: "codex"
+      }),
+      targetKind: "session",
+      conversation: { ...DASHBOARD_REF },
+      placement: "current"
+    });
+    expect(bound).not.toBeNull();
+    const metadata = bound?.metadata as Record<string, unknown>;
+    expect(metadata.pluginBindingOwner).toBeUndefined();
+    expect(metadata.pluginId).toBeUndefined();
+    expect(metadata.pluginRoot).toBeUndefined();
+  });
+
+  it("claim-mode and native-mode records differ ONLY in the ownership keys", async () => {
+    const claimAdapter = createDashboardBindingAdapter({ getConfig: () => HARNESS_CFG });
+    const claimRecord = await claimAdapter.resolveByConversationAsync!(DASHBOARD_REF);
+    setDashboardBindingDispatchMode("native");
+    const nativeAdapter = createDashboardBindingAdapter({ getConfig: () => HARNESS_CFG });
+    const nativeRecord = await nativeAdapter.resolveByConversationAsync!(DASHBOARD_REF);
+    // Direction anchors (the diff below means nothing without them).
+    expect(claimRecord?.metadata?.pluginBindingOwner).toBe("plugin");
+    expect(nativeRecord?.metadata?.pluginBindingOwner).toBeUndefined();
+    // Strip the ownership keys inside metadata on BOTH sides; everything else
+    // — record fields AND remaining informative metadata — must be identical.
+    const withoutOwnershipKeys = (record: DashboardBindingRecord | null) =>
+      record && {
+        ...record,
+        metadata: stripPluginOwnedBindingMetadata(record.metadata as Record<string, unknown> | undefined),
+      };
+    expect(withoutOwnershipKeys(nativeRecord)).toEqual(withoutOwnershipKeys(claimRecord));
   });
 });
 
