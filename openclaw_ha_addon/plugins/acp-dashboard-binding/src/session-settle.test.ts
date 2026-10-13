@@ -1,6 +1,7 @@
 /**
  * BRIDGE §19 tests: claim-path settlements (origin/clone session-node terminal
- * patches), the V39 spawnedBy stamp, and the boot sweep. The store is a fake
+ * patches), the V39→γ clone stamps (spawnedBy provenance + archivedAt hide),
+ * and the boot sweep incl. its γ archival leg. The store is a fake
  * plugin-sdk session-store-runtime (same public/patch semantics the live
  * module projects: update callback runs against the CURRENT entry, returning
  * null = no write).
@@ -9,9 +10,13 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   buildClaimSettlePatch,
+  buildCloneHiddenPatch,
+  isOursCloneArchive,
   settleClaimedTurnSessions,
+  stampCloneHidden,
   stampSubagentProvenance,
   sweepOwnedStuckSessions,
+  unarchiveHiddenClone,
   type SessionStoreApi,
   type SettleSessionEntryLike,
   type SweepSessionStoreApi,
@@ -209,7 +214,7 @@ describe("BRIDGE §19a: settleClaimedTurnSessions", () => {
 });
 
 describe("BRIDGE §19 / V39: stampSubagentProvenance", () => {
-  it("stamps spawnedBy = <origin key> on the clone entry (ControlUI excludeSubagents leg)", async () => {
+  it("stamps spawnedBy = <origin key> on the clone entry (provenance leg)", async () => {
     const store = createFakeStore({ entries: { [TARGET]: { status: "running" } } });
     const stamped = await stampSubagentProvenance({
       sessionStore: store,
@@ -218,6 +223,7 @@ describe("BRIDGE §19 / V39: stampSubagentProvenance", () => {
     });
     expect(stamped).toBe(true);
     expect((store.entries[TARGET] as SettleSessionEntryLike).spawnedBy).toBe(ORIGIN);
+    expect((store.entries[TARGET] as SettleSessionEntryLike).archivedAt).toBeUndefined();
   });
 
   it("is idempotent and never overrides foreign provenance or categorized entries", async () => {
@@ -253,6 +259,87 @@ describe("BRIDGE §19 / V39: stampSubagentProvenance", () => {
   });
 });
 
+describe("BRIDGE γ: buildCloneHiddenPatch / stampCloneHidden / unarchiveHiddenClone", () => {
+  it("buildCloneHiddenPatch archives uncategorized, unarchived entries only (archivedBy marker)", () => {
+    expect(buildCloneHiddenPatch({ status: "done" })).toEqual({
+      archivedAt: expect.any(Number),
+      archivedBy: { type: "system", id: "acp-dashboard-binding" },
+    });
+    // Already archived — ours or foreign — stays (never re-stamped here).
+    expect(buildCloneHiddenPatch({ status: "done", archivedAt: 7 })).toBeNull();
+    expect(buildCloneHiddenPatch({ status: "done", archivedAt: 7, archiveReason: "stale-dashboard" })).toBeNull();
+    // User-curated rows are never ours to hide.
+    expect(buildCloneHiddenPatch({ status: "done", category: "work" })).toBeNull();
+    expect(buildCloneHiddenPatch(undefined)).toBeNull();
+  });
+
+  it("isOursCloneArchive matches ONLY our archivedBy-id marker", () => {
+    // Our shape: archivedAt set, NO archiveReason, our archivedBy id.
+    expect(isOursCloneArchive({ archivedAt: 1, archivedBy: { type: "system", id: "acp-dashboard-binding" } })).toBe(true);
+    // Host maintenance shape (archiveReason set, archivedBy deleted).
+    expect(isOursCloneArchive({ archivedAt: 1, archiveReason: "age-retention" })).toBe(false);
+    // Manual user archive (archivedBy is a human actor).
+    expect(isOursCloneArchive({ archivedAt: 1, archivedBy: { type: "human" }, archiveReason: "manual" })).toBe(false);
+    // Unannotated-but-not-ours (foreign plugin stamp shape) → not ours.
+    expect(isOursCloneArchive({ archivedAt: 1 })).toBe(false);
+    expect(isOursCloneArchive({ archivedAt: 1, archivedBy: { type: "system", id: "other-plugin" } })).toBe(false);
+    // Not archived at all.
+    expect(isOursCloneArchive({})).toBe(false);
+    expect(isOursCloneArchive(undefined)).toBe(false);
+  });
+
+  it("stampCloneHidden archives the idle clone and is idempotent", async () => {
+    const store = createFakeStore({ entries: { [TARGET]: { status: "done", endedAt: 5 } } });
+    expect(await stampCloneHidden({ sessionStore: store, targetSessionKey: TARGET })).toBe(true);
+    const entry = store.entries[TARGET] as SettleSessionEntryLike;
+    expect(typeof entry.archivedAt).toBe("number");
+    expect(entry.archivedBy).toEqual({ type: "system", id: "acp-dashboard-binding" });
+    expect(entry.archiveReason).toBeUndefined();
+    expect(await stampCloneHidden({ sessionStore: store, targetSessionKey: TARGET })).toBe(false);
+    expect(store.patches).toHaveLength(1);
+  });
+
+  it("unarchiveHiddenClone clears ONLY our marker and never a foreign archive", async () => {
+    // Our marker → cleared (explicit-undefined patch; the fake store deletes
+    // undefined-valued fields like the host's mergeSessionEntry spread).
+    const ours = createFakeStore({
+      entries: {
+        [TARGET]: {
+          status: "done",
+          archivedAt: 100,
+          archivedBy: { type: "system", id: "acp-dashboard-binding" },
+          spawnedBy: ORIGIN,
+        },
+      },
+    });
+    expect(await unarchiveHiddenClone({ sessionStore: ours, targetSessionKey: TARGET })).toBe(true);
+    const cleared = ours.entries[TARGET] as SettleSessionEntryLike;
+    expect(Object.hasOwn(cleared, "archivedAt")).toBe(false);
+    expect(Object.hasOwn(cleared, "archivedBy")).toBe(false);
+    expect(cleared.spawnedBy).toBe(ORIGIN);
+
+    // Foreign archive reason → untouched (host/user lifecycle owns it).
+    const foreign = createFakeStore({
+      entries: { [TARGET]: { status: "done", archivedAt: 50, archiveReason: "stale-dashboard" } },
+    });
+    expect(await unarchiveHiddenClone({ sessionStore: foreign, targetSessionKey: TARGET })).toBe(false);
+    expect((foreign.entries[TARGET] as SettleSessionEntryLike).archivedAt).toBe(50);
+    expect((foreign.entries[TARGET] as SettleSessionEntryLike).archiveReason).toBe("stale-dashboard");
+
+    // Archived by the UI (manual + human actor) → untouched.
+    const manual = createFakeStore({
+      entries: { [TARGET]: { status: "done", archivedAt: 60, archivedBy: { type: "human" }, archiveReason: "manual" } },
+    });
+    expect(await unarchiveHiddenClone({ sessionStore: manual, targetSessionKey: TARGET })).toBe(false);
+    expect((manual.entries[TARGET] as SettleSessionEntryLike).archivedAt).toBe(60);
+
+    // Never-archived clone → no-op.
+    const fresh = createFakeStore({ entries: { [TARGET]: { status: "done" } } });
+    expect(await unarchiveHiddenClone({ sessionStore: fresh, targetSessionKey: TARGET })).toBe(false);
+    expect(fresh.patches).toEqual([]);
+  });
+});
+
 describe("BRIDGE §19c: sweepOwnedStuckSessions", () => {
   it("settles stuck owned entries (clone + dashboard grammar) and nothing else", async () => {
     const foreigner = "agent:claude:subagent:abc:123";
@@ -281,6 +368,56 @@ describe("BRIDGE §19c: sweepOwnedStuckSessions", () => {
     expect((store.entries[foreigner] as SettleSessionEntryLike).status).toBe("running");
     expect((store.entries[foreign] as SettleSessionEntryLike).status).toBe("running");
     expect((store.entries["agent:claude:dashboard:ff"] as SettleSessionEntryLike).status).toBe("running");
+  });
+
+  it("γ archival leg: stamps archivedAt on settled/running pre-cutoff clones, never on live entries, categorized rows, or foreign keys", async () => {
+    const foreigner = "agent:claude:subagent:abc:123";
+    const categorizedClone = "agent:claude:acp:binding:webchat:default:cafebabedeadbeef";
+    const liveClone = "agent:claude:acp:binding:webchat:default:feedface0011aa11";
+    const doneClone = "agent:claude:acp:binding:telegram:default:0123abcd04ef5678";
+    const store = createFakeStore({
+      entries: {
+        // Settled clone from a pre-γ boot → archived (no spawnedBy needed —
+        // the key grammar is ownership proof enough).
+        [doneClone]: { status: "done", endedAt: 5 },
+        // Running orphan clone → archival + orphan settle.
+        [TARGET]: { status: "running", updatedAt: 1 },
+        // User-categorized clone → never archived.
+        [categorizedClone]: { status: "done", category: "work" },
+        // Live in-process run → untouched.
+        [liveClone]: { status: "running", updatedAt: Date.now() },
+        // Foreign key grammar → untouched.
+        [foreigner]: { status: "done", endedAt: 5 },
+        // Already archived → untouched (never un-archived / re-stamped).
+        "agent:claude:acp:binding:webchat:default:aaaa0000bbbb1111": {
+          status: "done",
+          archivedAt: 7,
+          archiveReason: "age-retention",
+        },
+      },
+    });
+    const result = await sweepOwnedStuckSessions({
+      sessionStore: store,
+      agentIds: ["claude"],
+      cutoffMs: Date.now() - 1_000,
+    });
+    expect(result.archived.sort()).toEqual([doneClone, TARGET].sort());
+    const doneEntry = store.entries[doneClone] as SettleSessionEntryLike;
+    const targetEntry = store.entries[TARGET] as SettleSessionEntryLike;
+    expect(typeof doneEntry.archivedAt).toBe("number");
+    expect(doneEntry.archivedBy).toEqual({ type: "system", id: "acp-dashboard-binding" });
+    expect(typeof targetEntry.archivedAt).toBe("number");
+    expect(targetEntry.archivedBy).toEqual({ type: "system", id: "acp-dashboard-binding" });
+    // Running orphan was ALSO settled (interrupted — boot interrupted it).
+    expect(targetEntry.status).toBe("interrupted");
+    expect((store.entries[categorizedClone] as SettleSessionEntryLike).archivedAt).toBeUndefined();
+    expect((store.entries[liveClone] as SettleSessionEntryLike).archivedAt).toBeUndefined();
+    expect((store.entries[foreigner] as SettleSessionEntryLike).archivedAt).toBeUndefined();
+    expect((store.entries["agent:claude:acp:binding:webchat:default:aaaa0000bbbb1111"] as SettleSessionEntryLike).archivedAt).toBe(7);
+    // Dashboard-origin conversations are NOT archival candidates.
+    expect(
+      store.patches.filter((p) => p.sessionKey === ORIGIN).every((p) => p.patch.archivedAt === undefined),
+    ).toBe(true);
   });
 
   it("skips agents whose store listing fails and entries already settled", async () => {

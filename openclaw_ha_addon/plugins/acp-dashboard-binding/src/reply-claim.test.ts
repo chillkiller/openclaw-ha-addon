@@ -447,6 +447,81 @@ describe("F4 reply-delivery fix — inbound_claim dispatch (Weg A: subagent surf
     expect(targetPatches.some((p) => p.patch.status === "done")).toBe(false);
   });
 
+  it("γ archive-when-idle: clears OUR archive marker before dispatch and re-archives after a terminal settle", async () => {
+    const store = fakeClaimStore();
+    // The clone went idle during a previous turn and was γ-archived — seed it
+    // via the store's own patch path before the claim runs.
+    await store.store.patchSessionEntry({
+      sessionKey: CODEX_TEST_TARGET_KEY,
+      update: () => ({
+        archivedAt: 42,
+        archivedBy: { type: "system", id: "acp-dashboard-binding" },
+        spawnedBy: CODEX_DASHBOARD_KEY,
+      }),
+    });
+    const baseline = store.patches.length;
+    const { subagent, runCalls } = stubSubagent(
+      async () => ({ runId: "run-arch" }),
+      async () => ({ status: "ok", terminalReply: { disposition: "visible", text: "answer" } }),
+    );
+    const handler = createHarnessReplyClaimHandler({
+      getConfig: () => codexConfig(),
+      subagent,
+      isGatewayAvailable: async () => true,
+      sessionStore: store.store,
+    });
+    const result = await handler(event, claimContextCodex(PLUGIN_ROOT));
+    expect(result.handled).toBe(true);
+    const targetPatches = store.patches.slice(baseline).filter((p) => p.sessionKey === CODEX_TEST_TARGET_KEY);
+    // Patch 1 (pre-dispatch): OUR archive marker cleared so the `agent`
+    // gateway method's archived-session work-start gate passes.
+    expect(targetPatches[0]!.patch).toMatchObject({ archivedAt: undefined, archivedBy: undefined });
+    expect(targetPatches[0]!.patch).not.toHaveProperty("status");
+    // The run was started AFTER the un-archive (dispatch is not refused).
+    expect(runCalls).toHaveLength(1);
+    // Patch 2 (pre-dispatch provenance): no-op — spawnedBy already correct.
+    // Final patch (post-terminal): re-archived with our marker.
+    const rearchive = targetPatches[targetPatches.length - 1]!;
+    expect(typeof rearchive.patch.archivedAt).toBe("number");
+    expect(rearchive.patch.archivedBy).toEqual({ type: "system", id: "acp-dashboard-binding" });
+    // The target was settled (terminal wait) → terminal patch precedes.
+    expect(targetPatches.some((p) => p.patch.status === "done")).toBe(true);
+    const rearchiveIndex = targetPatches.length - 1;
+    const settleIndex = targetPatches.findIndex((p) => p.patch.status === "done");
+    expect(settleIndex).toBeLessThan(rearchiveIndex);
+  });
+
+  it("γ never un-archives a FOREIGN archive and never re-archives over it", async () => {
+    const store = fakeClaimStore();
+    await store.store.patchSessionEntry({
+      sessionKey: CODEX_TEST_TARGET_KEY,
+      update: () => ({ archivedAt: 42, archiveReason: "stale-dashboard" }),
+    });
+    const baseline = store.patches.length;
+    const { subagent, runCalls } = stubSubagent(
+      async () => ({ runId: "run-arch2" }),
+      async () => ({ status: "ok", terminalReply: { disposition: "visible", text: "answer" } }),
+    );
+    const handler = createHarnessReplyClaimHandler({
+      getConfig: () => codexConfig(),
+      subagent,
+      isGatewayAvailable: async () => true,
+      sessionStore: store.store,
+    });
+    const result = await handler(event, claimContextCodex(PLUGIN_ROOT));
+    expect(result.handled).toBe(true);
+    const targetPatches = store.patches.slice(baseline).filter((p) => p.sessionKey === CODEX_TEST_TARGET_KEY);
+    // Foreign archive untouched: no clearing patch, no re-archive patch —
+    // only the V39 spawnedBy provenance patch fires (the foreign-seeded entry
+    // carries no spawnedBy).
+    expect(
+      targetPatches.some(
+        (p) => Object.hasOwn(p.patch, "archivedAt") || Object.hasOwn(p.patch, "archivedBy"),
+      ),
+    ).toBe(false);
+    expect(runCalls).toHaveLength(1);
+  });
+
   // --- Phase 3.5: ack-precedes-registration race (observed live, ~200 ms) ----
   describe("waitForRun registration-lag retry (Phase 3.5)", () => {
     it("retries a FAST wait failure until the run is registered → real answer delivered", async () => {

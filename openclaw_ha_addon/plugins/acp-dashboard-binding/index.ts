@@ -321,6 +321,11 @@ function registerStuckSessionSweep(api: OpenClawPluginApi, sessionStore: Session
           `[${CHANNEL_ID}] boot sweep settled ${result.settled.length} stuck session(s): ${result.settled.join(", ")}`,
         );
       }
+      if (result.archived.length > 0) {
+        api.logger.info(
+          `[${CHANNEL_ID}] boot sweep archived ${result.archived.length} harness clone(s) (γ hidden from standard listings): ${result.archived.join(", ")}`,
+        );
+      }
     } catch (error) {
       api.logger?.warn?.(`[${CHANNEL_ID}] boot sweep failed — ${errorBrief(error)}`);
     }

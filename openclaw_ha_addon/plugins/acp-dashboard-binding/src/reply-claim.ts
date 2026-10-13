@@ -104,7 +104,9 @@ import {
 import { deriveDashboardBindingRecord } from "./binding-adapter.js";
 import {
   settleClaimedTurnSessions,
+  stampCloneHidden,
   stampSubagentProvenance,
+  unarchiveHiddenClone,
   type SessionStoreApi,
 } from "./session-settle.js";
 
@@ -442,16 +444,30 @@ export function createHarnessReplyClaimHandler(options: HarnessReplyClaimOptions
         }
       }
 
-      // BRIDGE §19 (V39): stamp the clone's spawnedBy provenance BEFORE the
-      // turn starts — idempotent patch; the host's session metadata seed
-      // leaves spawnedBy NULL, which is why the clone shows in ControlUI's
-      // sidebar at all. After a later turn-start/rewrite re-seeds the entry,
-      // this re-stamps (and the boot sweep covers the rest).
+      // BRIDGE §19 (V39) + γ archive-when-idle: before the turn starts, stamp
+      // the clone's spawnedBy provenance (requester resolution — the host's
+      // metadata seed leaves it NULL) and clear OUR previous archive stamp —
+      // the `agent` gateway method this dispatch rides REFUSES work on
+      // archived entries ("Session … is archived. Restore it before starting
+      // new work.", lifecycle resolveSessionWorkStartError; reached by the
+      // agent-turn service gates agent-turn-service-Bypy4dbg.mjs:1676/:877/
+      // :1037/:3886). unarchiveHiddenClone only ever clears OUR archivedBy-id
+      // marker (acp-dashboard-binding; a host archive — archiveReason or a
+      // human archivedBy — stays). The γ hide itself is stamped on SETTLE
+      // (stampCloneHidden) and by the boot sweep — an archive-while-runnable
+      // would break the NEXT turn on this conversation-deterministic clone key
+      // (agent-map acpBindingHash: sha256(channel:account:conversationId)).
       // §19a: with the session store wired we also settle the conversation
       // nodes after the turn — see the terminal branch below.
       if (options.sessionStore) {
         const originSessionKey = (binding?.conversationId ?? "").trim();
         if (parseAgentIdFromConversationId(originSessionKey)) {
+          await unarchiveHiddenClone({
+            sessionStore: options.sessionStore,
+            targetSessionKey: target,
+            agentId,
+            logger: log,
+          });
           await stampSubagentProvenance({
             sessionStore: options.sessionStore,
             targetSessionKey: target,
@@ -557,6 +573,20 @@ export function createHarnessReplyClaimHandler(options: HarnessReplyClaimOptions
               status === "ok" ? "success" : status === "error" ? "failed" : status === "timeout" ? "timeout" : "interrupted",
             logger: log,
           });
+          // γ archive-when-idle: a TERMINAL turn retires the clone back out of
+          // the standard listings (host archive filter, see session-settle.ts
+          // module doc — the earlier "excludeSubagents everywhere" claim was
+          // disproven live 2026-10-13). The clone stays dispatchable: the next
+          // turn un-archives it right before its run (above). stampCloneHidden
+          // never touches user-curated or foreign-archived entries.
+          if (wait != null && status !== "timeout" && status !== "pending") {
+            await stampCloneHidden({
+              sessionStore: options.sessionStore,
+              targetSessionKey: target,
+              agentId,
+              logger: log,
+            });
+          }
         }
       }
       // §20: mirror the terminal reply (answer or notice) into the origin

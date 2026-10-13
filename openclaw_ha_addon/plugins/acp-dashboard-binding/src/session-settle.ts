@@ -45,28 +45,53 @@
  * (server-plugins: `run: "active"` gates on row.status === "running"), so the
  * settled `status:"done"` is what kills the spinner.
  *
- * V39 (Klon-Unsichtbarkeit): the derive record's target key
- * (`agent:<id>:acp:binding:webchat:default:<hash>`) classifies as `isSubagent`
- * exactly when the entry carries `spawnedBy` and NO `category` (leg 2,
- * session-list-target-C2rmz7hN.mjs:39). The host's clone metadata seed
- * (acpManager.initializeSession → writeSessionMeta) leaves spawnedBy NULL for
- * our ensured clones — that is why the clone shows up in ControlUI's "ANDERE"
- * sidebar. We stamp `spawnedBy = <origin session key>` (idempotent patch after
- * each claim dispatch + in the boot sweep) so ControlUI lists (they ALL send
- * `excludeSubagents: true` — ui-bundle-verified 2026-10-12) hide the clone:
- * the requested "versteckte Sub-Session". Deliberately NOT the
- * `subagent:`-key-prefix leg (would break `isAcpSessionKey` dispatch routing)
- * and NO category stamp (would defeat leg 2). Stamp side-effect audited
- * acceptable: queued-cancellation requester resolution
- * (manager-4esWnBgv.mjs) then resolves the origin key — semantically correct,
- * the origin conversation IS the requester.
+ * V39→γ (Klon-Unsichtbarkeit, re-audited live 2026-10-13): the spawnedBy
+ * stamp ALONE does NOT hide the clone — the user's live challenge proved the
+ * V39 assumption ("all ControlUI lists send excludeSubagents") WRONG for the
+ * 2026.10.2 UI build: only the activity page, command palette and session
+ * counts send `excludeSubagents:true` (asset grep: activity-page-D0Znqhfw.js,
+ * command-palette-DQRbBHii.js, control-ui-boot-shared-CP6HFINY.js); the ACTIVE
+ * chat chain (index.html → boot-chat-DWc-tgnY.js → boot-shared-5tr2Rgvy.js)
+ * queries the rail WITHOUT the flag, has no client-side spawnedBy filter, and
+ * the chat child view even uses `spawnedBy` as its JOIN key
+ * (boot-shared: `{spawnedBy: parentKey, limit, includeGlobal:!1,…}`) — a
+ * spawnedBy stamp can never hide anything there. The host-parity hiding
+ * mechanism is the ARCHIVE filter instead: createSessionCandidateFilter drops
+ * every entry with `archivedAt !== void 0` from all standard listings unless
+ * the caller opts into `archived:"all"` (session-utils-list-C5iF7qnc.mjs:200 +
+ * :208), and the chat child query sends no archived param, so the server-side
+ * default (opts.archived !== "all") excludes archived rows there too.
+ *
+ * BUT an `archivedAt` stamp is DISPATCH-TOXIC for the clone: its session key
+ * is deterministic per conversation (agent-map acpBindingHash =
+ * sha256(channel:account:conversationId)), the `agent` gateway method the
+ * claim dispatch rides REFUSES work on archived entries (lifecycle
+ * resolveSessionWorkStartError: "Session … is archived. Restore it before
+ * starting new work." — reached from the agent-turn service gates
+ * agent-turn-service-Bypy4dbg.mjs:1676/:877/:1037/:3886), and the host
+ * maintenance itself archives-and-restores on that contract
+ * (store-maintenance-CGOlSbiV.mjs: `archiveReason` "age-retention" /
+ * "stale-dashboard"). So the hide rides the host's own archive/restore
+ * lifecycle — ARCHIVE-WHEN-IDLE: `stampCloneHidden` (marked with OUR
+ * archiveReason) runs at claim-target SETTLE and in the boot sweep;
+ * `unarchiveHiddenClone` clears only OUR marker right before dispatch, so the
+ * work-start gate passes again and a foreign (host/user) archive is never
+ * undone. The clone is therefore visible only while one of its turns is
+ * actually running (useful feedback), and hidden whenever it is idle.
+ * Deliberately NOT the `subagent:`-key-prefix leg (would break
+ * `isAcpSessionKey` dispatch routing) and NO category stamp (would defeat the
+ * spawnedBy leg).
  *
  * All patches are no-ops unless they are provably ours to make:
  *  - settle touches only `status === "running"` entries,
  *  - boot-sweep touches only entries with `updatedAt` before the sweep ran
  *    (no in-process run can predate gateway_start) AND keys this plugin owns
  *    (binding rows + their targets),
- *  - stamps only change a spawnedBy that differs from the expected value.
+ *  - stamps only change a spawnedBy that differs from the expected value,
+ *  - the γ archive stamp only ADDS archivedAt+archivedBy where no archive
+ *    exists (never un-archives, never clobbers a foreign archive), and the
+ *    pre-dispatch un-archive deletes only OUR stamped archive (archivedBy
+ *    id marker, no archiveReason).
  */
 
 import { parseAgentIdFromConversationId } from "./agent-map.js";
@@ -119,6 +144,9 @@ export type SettleSessionEntryLike = {
   startedAt?: unknown;
   updatedAt?: unknown;
   spawnedBy?: unknown;
+  archivedAt?: unknown;
+  archivedBy?: unknown;
+  archiveReason?: unknown;
   lifecycleRunId?: unknown;
   restartRecoveryDeliveryRunId?: unknown;
   [key: string]: unknown;
@@ -262,11 +290,11 @@ export async function settleClaimedTurnSessions(params: {
 }
 
 /**
- * V39: stamps `spawnedBy = <origin session key>` on a harness clone entry so
- * `readSessionListSelectionFacts` leg 2 classifies it as a subagent and
- * ControlUI lists (excludeSubagents: true) hide it. Idempotent; keeps an
- * already-correct stamp untouched and never touches entries that carry a
- * category (leg 2 requires none).
+ * V39: stamps `spawnedBy = <origin session key>` on a harness clone entry —
+ * provenance/requester-resolution semantics (see the module doc for why this
+ * ALONE does not hide the clone in the 2026.10.2 UI build). Idempotent; keeps
+ * an already-correct stamp untouched and never touches entries that carry a
+ * category (provenance leg requires none).
  */
 export async function stampSubagentProvenance(params: {
   sessionStore: SessionStoreApi;
@@ -295,12 +323,132 @@ export async function stampSubagentProvenance(params: {
       ...(params.sessionStore.requireWriteSuccess ? { requireWriteSuccess: true } : {}),
     });
     params.logger?.debug?.(
-      `[acp-dashboard-binding] stamped spawnedBy on ${params.targetSessionKey} → ${params.originSessionKey} (V39 clone hidden from ControlUI lists)`,
+      `[acp-dashboard-binding] stamped spawnedBy on ${params.targetSessionKey} → ${params.originSessionKey} (V39 clone provenance leg)`,
     );
     return true;
   } catch (error) {
     params.logger?.warn?.(
       `[acp-dashboard-binding] spawnedBy stamp of ${params.targetSessionKey} failed — ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return false;
+  }
+}
+
+/**
+ * γ archive marker. The hide rides the host's OWN archive filter
+ * (createSessionCandidateFilter drops `archivedAt !== void 0` entries from
+ * every standard listing — rail, chat child view, sessions page, palette,
+ * counts; live dist refs in the module doc) — NOT excludeSubagents, which the
+ * active UI chain does not send. The clone's session key is DETERMINISTIC per
+ * conversation (agent-map acpBindingHash), and the `agent` gateway method
+ * refuses work on archived entries ("Session … is archived. Restore it before
+ * starting new work." — lifecycle resolveSessionWorkStartError, reached from
+ * the agent-turn service gates agent-turn-service-Bypy4dbg.mjs:877/:1037/:
+ * :3886 via respondUnavailableAgentSessionForKey:1676). So the archive can
+ * NEVER be set while the clone must accept dispatch — it is stamped ONLY when
+ * the clone is idle (at claim-target settle + boot sweep) and cleared right
+ * before each dispatch (unarchiveHiddenClone, matching the host's own
+ * archive/restore contract: its maintenance archives with archiveReason,
+ * dispatch refuses until restored).
+ *
+ * The stamp is marked as OURS via `archivedBy`: {type:"system",
+ * id:"acp-dashboard-binding"}. `archiveReason` is a CLOSED enum
+ * (normalizeSessionEntryArchiveReason — store-entry-shape-NsPEyzA2.mjs:57 —
+ * keeps only manual|active-session-cap|age-retention|stale-dashboard|
+ * restart-recovery and DROPS custom values), so a custom reason cannot mark
+ * the stamp. Every host archive annotates itself (maintenance writes
+ * archiveReason and even deletes archivedBy — cleanup-service-nArszI9j.mjs;
+ * UI/manual writes archivedBy + "manual"), so the unarchive identifies OUR
+ * stamp exactly by `archivedAt set + NO archiveReason + our archivedBy id` —
+ * user restore semantics are never undone.
+ */
+export const CLONE_ARCHIVE_ACTOR = { type: "system", id: "acp-dashboard-binding" } as const;
+
+/** True exactly when the entry carries OUR γ archive stamp (see doc). */
+export function isOursCloneArchive(entry: SettleSessionEntryLike | undefined): boolean {
+  if (!entry || entry.archivedAt === undefined || entry.archiveReason !== undefined) return false;
+  const by = entry.archivedBy as { id?: unknown } | undefined;
+  return typeof by === "object" && by !== null && by.id === CLONE_ARCHIVE_ACTOR.id;
+}
+
+/**
+ * Archives an idle harness clone with our marker archivedBy. Guards: never
+ * touches user-curated entries (category set) and never overwrites a FOREIGN
+ * archive (someone else owns that lifecycle — user archived it in the UI).
+ * Idempotent: already-ours-archived entries are left untouched.
+ */
+export function buildCloneHiddenPatch(entry: SettleSessionEntryLike | undefined): SessionEntryPatch | null {
+  if (!entry || entry.category != null) return null;
+  if (entry.archivedAt !== void 0) return null; // any archive — ours or foreign — stays
+  return { archivedAt: Date.now(), archivedBy: CLONE_ARCHIVE_ACTOR };
+}
+
+export async function stampCloneHidden(params: {
+  sessionStore: SessionStoreApi;
+  targetSessionKey: string;
+  agentId?: string | null;
+  logger?: HarnessReplyClaimLogger;
+}): Promise<boolean> {
+  try {
+    const ref = {
+      sessionKey: params.targetSessionKey,
+      ...(params.agentId ? { agentId: params.agentId } : {}),
+    };
+    const entry = params.sessionStore.getSessionEntry(ref);
+    if (!buildCloneHiddenPatch(entry)) return false;
+    await params.sessionStore.patchSessionEntry({
+      ...ref,
+      update: (current) => buildCloneHiddenPatch(current),
+      ...(params.sessionStore.requireWriteSuccess ? { requireWriteSuccess: true } : {}),
+    });
+    params.logger?.debug?.(
+      `[acp-dashboard-binding] archived idle clone ${params.targetSessionKey} (γ hidden from standard listings)`,
+    );
+    return true;
+  } catch (error) {
+    params.logger?.warn?.(
+      `[acp-dashboard-binding] clone archival of ${params.targetSessionKey} failed — ${error instanceof Error ? error.message : String(error)}`,
+    );
+    return false;
+  }
+}
+
+/**
+ * Clears OUR γ archive stamp (and only ours — see isOursCloneArchive) from a
+ * clone entry just before dispatch, matching the host's restore contract —
+ * the `agent` gateway method refuses work on archived entries, so an archived
+ * clone cannot accept its next turn without this. An explicit-`undefined`
+ * patch deletes the fields (mergeSessionEntry is `{...existing, ...patch}` —
+ * types-BZlUzQZy.mjs:65).
+ */
+export async function unarchiveHiddenClone(params: {
+  sessionStore: SessionStoreApi;
+  targetSessionKey: string;
+  agentId?: string | null;
+  logger?: HarnessReplyClaimLogger;
+}): Promise<boolean> {
+  try {
+    const ref = {
+      sessionKey: params.targetSessionKey,
+      ...(params.agentId ? { agentId: params.agentId } : {}),
+    };
+    const entry = params.sessionStore.getSessionEntry(ref);
+    if (!isOursCloneArchive(entry)) return false;
+    await params.sessionStore.patchSessionEntry({
+      ...ref,
+      update: (current) =>
+        isOursCloneArchive(current)
+          ? ({ archivedAt: undefined, archivedBy: undefined } as SessionEntryPatch)
+          : null,
+      ...(params.sessionStore.requireWriteSuccess ? { requireWriteSuccess: true } : {}),
+    });
+    params.logger?.debug?.(
+      `[acp-dashboard-binding] un-archived clone ${params.targetSessionKey} for dispatch (γ archive-when-idle)`,
+    );
+    return true;
+  } catch (error) {
+    params.logger?.warn?.(
+      `[acp-dashboard-binding] clone un-archive of ${params.targetSessionKey} failed — ${error instanceof Error ? error.message : String(error)}`,
     );
     return false;
   }
@@ -404,10 +552,11 @@ export async function sweepOwnedStuckSessions(params: {
   /** Boot reference; entries updated after this mark are treated as live. */
   cutoffMs?: number;
   logger?: HarnessReplyClaimLogger;
-}): Promise<{ settled: string[] }> {
+}): Promise<{ settled: string[]; archived: string[] }> {
   const stoppedAt = Date.now();
   const cutoff = params.cutoffMs ?? stoppedAt;
   const settled: string[] = [];
+  const archived: string[] = [];
   for (const agentId of params.agentIds) {
     let rows: Array<{ sessionKey: string; entry: SettleSessionEntryLike }>;
     try {
@@ -424,12 +573,28 @@ export async function sweepOwnedStuckSessions(params: {
         .split(":")
         .slice(2)
         .join(":");
+      const updatedAt = typeof entry.updatedAt === "number" && entry.updatedAt > 0 ? entry.updatedAt : 0;
+      const updatedAtIsLive = updatedAt > cutoff;
+      // γ archival leg (clones only): archive every provably-ours idle clone —
+      // the key grammar (CLONE_KEY_REST_RE) is produced exclusively by this
+      // plugin's dispatch, so it is proof enough of ownership even when a
+      // pre-γ clone carries no spawnedBy yet. stampCloneHidden guards
+      // categories and foreign archives (buildCloneHiddenPatch).
+      if (CLONE_KEY_REST_RE.test(rest) && !updatedAtIsLive) {
+        const hidden = await stampCloneHidden({
+          sessionStore: params.sessionStore,
+          targetSessionKey: sessionKey,
+          agentId,
+          logger: params.logger,
+        });
+        if (hidden) archived.push(sessionKey);
+      }
+      // §19c orphan-settle leg (clones + dashboard-origin conversations).
       const isOwned = CLONE_KEY_REST_RE.test(rest) || DASHBOARD_KEY_REST_RE.test(rest);
       if (!isOwned) continue;
       const status = typeof entry.status === "string" ? entry.status : "";
       if (status !== "running") continue;
-      const updatedAt = typeof entry.updatedAt === "number" && entry.updatedAt > 0 ? entry.updatedAt : 0;
-      if (updatedAt > cutoff) continue;
+      if (updatedAtIsLive) continue;
       const patched = await settleOne({
         sessionStore: params.sessionStore,
         ref: { sessionKey, agentId },
@@ -447,5 +612,5 @@ export async function sweepOwnedStuckSessions(params: {
       if (patched) settled.push(sessionKey);
     }
   }
-  return { settled };
+  return { settled, archived };
 }
