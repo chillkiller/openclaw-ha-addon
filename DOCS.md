@@ -913,6 +913,11 @@ Go to **Settings → Apps → OpenClaw Assistant → Log** tab. Logs show startu
 
 **Fix**: Either restart the app (stale process cleanup), or change `terminal_port` to a different value (e.g., `7682`).
 
+**Note**: A ttyd that dies at runtime is restarted automatically by the app's
+internal supervision (≤ 30 s) — a terminal failure does not need (and never
+triggers) a full add-on restart. Only a persistent "port in use" situation
+needs operator action (free the port or change `terminal_port`).
+
 ### ERR_CONNECTION_REFUSED
 
 **Symptom**: Browser shows connection refused when opening the Gateway Web UI.

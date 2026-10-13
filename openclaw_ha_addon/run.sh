@@ -1516,22 +1516,36 @@ fi
 # Start web terminal (optional)
 TTYD_PID_FILE="/var/run/openclaw-ttyd.pid"
 
-# Clean up stale ttyd process from previous run using PID file
-if [ -f "$TTYD_PID_FILE" ]; then
-  OLD_PID=$(cat "$TTYD_PID_FILE" 2>/dev/null || echo "")
-  if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
-    echo "Stopping previous ttyd process (PID $OLD_PID)..."
-    kill "$OLD_PID" 2>/dev/null || true
-    sleep 1
-    # Force kill if still running
-    kill -9 "$OLD_PID" 2>/dev/null || true
+# Shared ttyd liveness helpers (boot cleanup + runtime supervisor below).
+stop_stale_ttyd() {
+  # Clean up stale ttyd process from previous run using PID file
+  if [ -f "$TTYD_PID_FILE" ]; then
+    OLD_PID=$(cat "$TTYD_PID_FILE" 2>/dev/null || echo "")
+    if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+      echo "Stopping previous ttyd process (PID $OLD_PID)..."
+      kill "$OLD_PID" 2>/dev/null || true
+      sleep 1
+      # Force kill if still running
+      kill -9 "$OLD_PID" 2>/dev/null || true
+    fi
+    rm -f "$TTYD_PID_FILE"
   fi
-  rm -f "$TTYD_PID_FILE"
-fi
+}
+start_ttyd() {
+  ttyd -W -i 127.0.0.1 -p "${TERMINAL_PORT}" -b /terminal bash -il &
+  TTYD_PID=$!
+  echo "$TTYD_PID" > "$TTYD_PID_FILE"
+  echo "ttyd started with PID $TTYD_PID"
+}
+ttyd_listening() {
+  command -v ss >/dev/null 2>&1 && ss -tlnp 2>/dev/null | grep -q ":${TERMINAL_PORT} "
+}
+
+stop_stale_ttyd
 
 if [ "$ENABLE_TERMINAL" = "true" ] || [ "$ENABLE_TERMINAL" = "1" ]; then
   # Check if the terminal port is already in use before starting ttyd
-  if command -v ss >/dev/null 2>&1 && ss -tlnp 2>/dev/null | grep -q ":${TERMINAL_PORT} "; then
+  if ttyd_listening; then
     echo ""
     echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     echo "!!  WARNING: terminal_port ${TERMINAL_PORT} IS ALREADY IN USE  !!"
@@ -1546,13 +1560,31 @@ if [ "$ENABLE_TERMINAL" = "true" ] || [ "$ENABLE_TERMINAL" = "1" ]; then
     echo ""
   fi
   echo "Starting web terminal (ttyd) on 127.0.0.1:${TERMINAL_PORT} ..."
-  ttyd -W -i 127.0.0.1 -p "${TERMINAL_PORT}" -b /terminal bash -il &
-  TTYD_PID=$!
-  echo "$TTYD_PID" > "$TTYD_PID_FILE"
-  echo "ttyd started with PID $TTYD_PID"
+  start_ttyd
 else
   echo "Terminal disabled (enable_terminal=$ENABLE_TERMINAL)"
 fi
+
+# ttyd runtime supervisor: the web terminal is the operator's fallback surface
+# (and the way into `oc-gateway` maintenance), but ttyd is loopback-only and
+# therefore invisible to the HA watchdog (tcp://[HOST]:49200 sees only nginx).
+# A dead ttyd used to leave the app terminal-less until the next full add-on
+# restart; a one-line local respawn beats a container restart, so HA stays out
+# of this by design. Checks the port (not just the PID — catches a process that
+# stopped listening), 30 s cadence, independent of the gateway supervision loop.
+supervise_ttyd() {
+  while [ "$ENABLE_TERMINAL" = "true" ] || [ "$ENABLE_TERMINAL" = "1" ]; do
+    if ttyd_listening; then
+      sleep 30
+      continue
+    fi
+    echo "WARN: web terminal (ttyd) not listening on ${TERMINAL_PORT}; restarting it..."
+    stop_stale_ttyd
+    start_ttyd
+    sleep 30
+  done
+}
+( supervise_ttyd ) &
 
 # Start ingress reverse proxy (nginx). This provides the app UI inside HA.
 # Token handling (audit comment fix): the token is injected server-side into
