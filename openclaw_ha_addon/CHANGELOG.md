@@ -1,10 +1,14 @@
 ## [0.7.13.27] - 2026-10-13
 
 ### Fixed
+- **harness-config-writer silent no-op (writer γ):** the writer read `api.config.harnesses` but `api.config` is the full OpenClawConfig — config now resolves from `api.pluginConfig` with fallback drill into `plugins.entries` (non-empty `harnesses` gates each source). First real writer deploy on the host is expected with this release.
 - **γ re-archive race (PUSHBUG, acp-dashboard-binding):** the terminal γ re-archive is deferred (5 min, fire-time re-checks) out of the claim turn's commit window — no more lost replies via "Terminal write owner changed before commit" (live evidence 15:07:37 + 16:00:35).
 - **V39 over-hiding:** triggered session-provenance stamps now refuse REAL `agent:<id>:acp:<uuid>` keys (clone-grammar guard) — the audited 18 hidden real sessions are restored (20/20) and cannot be re-stamped by this plugin.
 - **Boot sweep native gate + idle grace:** the γ archival leg is gated OFF in native dispatch (`archiveIdleClones: false` — prevents "archive-forever" after a flip, audit C7) and uses a 15-min idle grace so recently-active clones are no longer archived at boot (live 14:12 miss).
-- Tests: vitest binding 220/220, strict tsc 0. Codex audit GO.
+
+### Added
+- **harness-writer multi-model γ + γ.1 (merged from `feature/harness-writer-multimodel`):** model enrichment from OpenClaw's model providers into codex profiles / opencode map / claude `CLAUDE_MODEL_CONFIG`, addon model as default; new option `ollama_acp_claude_model` + ambient `ANTHROPIC_MODEL` ladder; codex `model_catalog_json` (operator-maintained contextWindow metadata, live-verified via `codex debug models`).
+- Tests: vitest binding 220/220, vitest harness-writer 70/70, python helper 46/46, strict tsc both plugins. Codex audit GO (binding fix scope).
 - Note: flip to `dispatchMode:"native"` is NOT part of this release — it stays a separate GO with its own smoke plan.
 
 ## [0.7.13.26] - 2026-10-13
