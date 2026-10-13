@@ -1,3 +1,11 @@
+## 0.7.13.26 (2026-10-13) — fix: benign wait-cancellation (client-disconnect edge, no failure framing)
+
+- **Fixed (binding, live-root-caused):** the "agent.wait observation cancelled" soap (`Harness turn dispatched … but waiting for its reply failed`) is now recognized as a **benign client-disconnect edge**: a UI reload/reconnect kills the delivering webchat connection, which aborts only the plugin's `agent.wait` OBSERVATION — never the harness run itself (the run keeps running and its reply lands via the §19a settle + §20 mirror chain). Host-contract evidence: `runWithGatewayObservationScope` aborts on `AbortSignal.any([drain, callerWork, …requestSignals])` where the observation-scope facade passes `[signal, options.client?.connectionSignal]`; gateway restart/suspension drain is excluded by construction (different host string, stays on the failure path). Root cause verified live 2026-10-13 (run 5087eb55): both conns died code=1000 and the wait failed 4 ms later.
+- The plugin now logs this edge as `info` (`benign client-conn edge` + runId) instead of `warn`, and delivers a benign still-running notice — no more "failed" framing, no more error artefact in the mirror. §19a settle and §20 mirror run identically on both routes (Codex-verified parity, K3).
+- Codex audit **GO mit Nachträgen** (`agents/coding-review/findings/2026-10-13-benign-wait-cancel-audit.md`); both Nachträge applied in `414c039`: K2 scope note in `isBenignObservationCancel`, K6 BRIDGE §22 dist-hash anchors replaced with stable semantic function names.
+- Tests: vitest binding 215/215 (incl. new benign-observation-cancel test; generic wait-failure regression guard kept), strict tsc 0.
+- **Newly documented (no fix yet):** internal wake-up turns (background-task notifications) neither persist their reply in the live session transcript nor broadcast when no UI connection is alive — the 12:04 audit-report turn is absent from the transcript entirely (gap between seq 10 and seq 11). Host-segment / upstream candidate; backlog.
+
 ## 0.7.13.25 (2026-10-13) — γ: Weg-B native dispatch + gateway lifecycle (latch, oc-gateway, ttyd supervision, boot gate)
 
 - **Fixed (γ-v2, clone invisibility):** the archive-when-idle fix — idle harness clone nodes vanish from the user-visible surface without dispatch-path toxicity. Codex delta-audit **GO**.

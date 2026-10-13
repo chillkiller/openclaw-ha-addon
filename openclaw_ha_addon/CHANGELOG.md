@@ -1,3 +1,12 @@
+## [0.7.13.26] - 2026-10-13
+
+### Fixed
+- **Benign wait-cancellation (acp-dashboard-binding):** "agent.wait observation cancelled" during a UI reload/reconnect is now handled as a benign client-disconnect edge — info-level log (`benign client-conn edge`), still-running notice without "failed" framing instead of the error soap. The harness run itself is never cancelled by the wait (host contract, dist + live verified); §19a settle + §20 mirror self-heal chain unchanged and Codex-verified as route-identical for benign and generic failures. Codex audit GO mit Nachträgen (both applied: scope note + stable semantic dist anchors in BRIDGE §22).
+- Tests: vitest binding 215/215 (new benign-observation-cancel case), strict tsc 0.
+
+### Docs
+- BRIDGE.md §22: full root-cause record for the observation-cancel edge (live timeline incl. the 60s+2s red herring, dist evidence with build-stable function anchors, fix description, verification status).
+
 ## [0.7.13.25] - 2026-10-13
 
 ### Fixed
