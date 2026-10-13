@@ -1,3 +1,8 @@
+## [0.7.13.24] - 2026-10-13
+
+### Fixed
+- **Boot sweep now actually dispatched:** `gateway_start` is typed-hook-runner-only (live-boot log proof); the sweep moved from an inert `registerHook` registration to `api.on("gateway_start", …)`, so the §19c stuck-session settle runs on every boot (Denken-Bug root).
+
 ## [0.7.13.23] - 2026-10-13
 
 ### Fixed
