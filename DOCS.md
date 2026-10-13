@@ -1127,6 +1127,38 @@ Restart the app — it will generate a fresh config. You'll need to run `opencla
 VBoxManage modifymedium disk haos.vdi --resize 64000
 ```
 
+### Taking the gateway DOWN for maintenance (doctor, repairs)
+
+**Background**: HA supervises the whole add-on container — but the OpenClaw gateway
+itself is only watched by the add-on's internal supervision loop (the gateway binds
+to loopback, invisible to HA's `tcp://[HOST]:49200` watchdog). That means the plain
+`openclaw gateway stop` from the terminal is futile: the loop respawns the daemon
+within seconds. This matters for `openclaw doctor` / `openclaw doctor --fix`, which
+must never run against a live gateway.
+
+**Fix**: the add-on ships an operator helper, `oc-gateway` (installed in
+`/usr/local/bin` on every start, available in the web terminal):
+
+```
+oc-gateway status      # gateway status (probe capped at 10 s)
+oc-gateway health      # quick health check
+oc-gateway stop        # touch the maintenance latch, stop the gateway, HOLD it
+                       # down (supervision loop will not respawn; no auto-doctor)
+oc-gateway resume      # remove the latch; gateway respawns within ~5 s
+oc-gateway restart     # restart the whole add-on (HA Supervisor API)
+oc-gateway update      # update hint (updates go through the HA UI)
+```
+
+`oc-gateway stop` writes a latch flag at `/config/.openclaw/.gateway-maintenance`
+and stops the daemon. While the flag exists the gateway stays down, nginx and the
+web terminal stay reachable, and the automatic doctor-repair gate is held back so
+you can run doctor manually. The latch deliberately survives an add-on restart
+(an explicit operator hold is not undone by a supervisor bounce) — always pair a
+`stop` with a `resume`.
+
+**Full add-on restart without the HA UI** (e.g. from the terminal):
+`oc-gateway restart`.
+
 ---
 
 ## 11. FAQ
