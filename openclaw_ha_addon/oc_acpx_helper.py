@@ -96,6 +96,10 @@ OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 # gemma4 was only ever a budget-emergency placeholder; never ship it as default.
 OLLAMA_CODEX_MODEL = os.environ.get("OLLAMA_CODEX_MODEL") or "kimi-k2.7-code:cloud"
 OLLAMA_OPENCODE_MODEL = os.environ.get("OLLAMA_OPENCODE_MODEL") or "glm-5.3-flash:cloud"
+# γ (2026-10-13): the third flagship harness default — claude never had a
+# config.yaml option (historically ambient OLLAMA_ACP_MODEL via run.sh:125ff).
+# Mirror ladder lives in run.sh's ANTHROPIC_MODEL fallback (sync rule).
+OLLAMA_CLAUDE_MODEL_DEFAULT = "glm-5.3-flash:cloud"
 
 # Template tokens that must never be committed as real infra data (AGENTS.md
 # security hygiene: LAN addresses stay out of the repository).
@@ -598,6 +602,7 @@ def harness_writer_managed_files() -> list[Path]:
 
     Mirrors harness-config-writer.ts deploy targets:
       - codex:    <acpx>/codex-home/auth.json + <.codex>/config.toml
+                  + <.codex>/model-catalog.json (γ.1 metadata catalog)
       - opencode: <acpx>/opencode-home/opencode.jsonc, <opencode>/opencode.jsonc
                   + legacy <acpx>/opencode-home/config.toml neutralization
       - env:      <acpx>/harness-env/<id>.env for canonical ENV-MECHANISM ids
@@ -605,6 +610,7 @@ def harness_writer_managed_files() -> list[Path]:
     files = [
         ACPX_DIR / "codex-home" / "auth.json",
         CODEX_SOURCE_HOME / "config.toml",
+        CODEX_SOURCE_HOME / "model-catalog.json",
         ACPX_DIR / "opencode-home" / "opencode.jsonc",
         OPENCODE_GLOBAL_DIR / "opencode.jsonc",
         ACPX_DIR / "opencode-home" / "config.toml",
@@ -826,9 +832,11 @@ def _writer_harness_excluded() -> set[str]:
 
 def _writer_model_for(harness_id: str) -> str:
     """Shared model line wins; codex/opencode keep their existing dedicated
-    add-on options (ollama_acp_*_model) as per-harness default; env-IDs ohne
-    Modellvorgabe → "" (TS-Entry valide: model Pflicht — wir erzeugen sie
-    dann NICHT statt einen unbrauchbaren Eintrag zu schreiben)."""
+    add-on options (ollama_acp_*_model) as per-harness default; claude γ: own
+    option (OLLAMA_CLAUDE_MODEL) → legacy ambient OLLAMA_ACP_MODEL → default;
+    remaining env-IDs ohne Modellvorgabe → "" (TS-Entry valide: model Pflicht —
+    wir erzeugen sie dann NICHT statt einen unbrauchbaren Eintrag zu
+    schreiben)."""
     shared = os.environ.get("HARNESS_WRITER_MODEL", "").strip()
     if shared:
         return shared
@@ -836,6 +844,10 @@ def _writer_model_for(harness_id: str) -> str:
         return os.environ.get("OLLAMA_CODEX_MODEL", "").strip() or OLLAMA_CODEX_MODEL
     if harness_id == "opencode":
         return os.environ.get("OLLAMA_OPENCODE_MODEL", "").strip() or OLLAMA_OPENCODE_MODEL
+    if harness_id == "claude":
+        return (os.environ.get("OLLAMA_CLAUDE_MODEL", "").strip()
+                or os.environ.get("OLLAMA_ACP_MODEL", "").strip()
+                or OLLAMA_CLAUDE_MODEL_DEFAULT)
     return ""
 
 

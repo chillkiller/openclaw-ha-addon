@@ -85,6 +85,10 @@ export OLLAMA_BASE_URL
 # GaRoN 2026-10-10): forwarded as env for oc_acpx_helper.py + acpx templates.
 export OLLAMA_CODEX_MODEL=$(jq -r '.ollama_acp_codex_model // empty' "$OPTIONS_FILE")
 export OLLAMA_OPENCODE_MODEL=$(jq -r '.ollama_acp_opencode_model // empty' "$OPTIONS_FILE")
+# γ (2026-10-13): third flagship harness default (claude) — mirrors the
+# helper's _writer_model_for claude ladder (OLLAMA_CLAUDE_MODEL → legacy
+# OLLAMA_ACP_MODEL → default glm-5.3-flash:cloud).
+export OLLAMA_CLAUDE_MODEL=$(jq -r '.ollama_acp_claude_model // empty' "$OPTIONS_FILE")
 export ACP_ADDITIONAL_ALLOWED_AGENTS=$(jq -r '.acp_additional_allowed_agents // empty' "$OPTIONS_FILE")
 # Phase 2.15 (GaRoN): plugin deploy is opt-in — same env-forwarding pattern as
 # ACP_ADDITIONAL_ALLOWED_AGENTS. GaRoN 2026-10-12 semantics: unset = binding
@@ -126,7 +130,9 @@ export OPENCLAW_UTILITY_MODEL=$(jq -r '.utility_model // empty' "$OPTIONS_FILE" 
 if [ -z "${ANTHROPIC_API_KEY:-}" ]; then
   export ANTHROPIC_BASE_URL="$OLLAMA_BASE_URL"
   export ANTHROPIC_AUTH_TOKEN="ollama"
-  export ANTHROPIC_MODEL="${OLLAMA_ACP_MODEL:-glm-5.3-flash:cloud}"
+  # γ (2026-10-13): ambient ladder mirrors the helper's claude default
+  # (ollama_acp_claude_model → legacy OLLAMA_ACP_MODEL → default).
+  export ANTHROPIC_MODEL="${OLLAMA_CLAUDE_MODEL:-${OLLAMA_ACP_MODEL:-glm-5.3-flash:cloud}}"
 fi
 
 

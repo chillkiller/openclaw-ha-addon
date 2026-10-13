@@ -6,7 +6,32 @@
  *
  *   plugins.entries['harness-config-writer'].config.harnesses
  *     = { <harnessId>: { model, baseUrl?, apiKey?, thinking?, smallModel?,
- *                        trustProjects? } }
+ *                        trustProjects?, models? } }
+ *
+ * Multi-Model (γ, 2026-10-13, Owner-Briefing): zusätzlich zum Default-Modell
+ * (`model` — bleibt in ALLEN Fällen der Default) schreibt der Writer die
+ * VERFÜGBAREN Modelle je nach Surface:
+ *   - opencode : provider.models-Map (native Multi-Model-Surface)
+ *   - codex    : [profiles."<id>"]-Blöcke in der Source-config.toml — Caveat:
+ *                renderIsolatedCodexConfig vererbt KEINE Profiles (nur
+ *                model/model_provider/model_reasoning_effort/sandbox_mode +
+ *                [model_providers.*], acpx-dist verifiziert); Profile nutzen
+ *                direkte codex-CLI-Nutzer mit CODEX_HOME auf dieser Datei.
+ *   - claude   : CLAUDE_MODEL_CONFIG ENV (claude-agent-acp-dist-belegt:
+ *                JSON { availableModels: [...] }).
+ *   - übrige ENV-Harnesses : Kommentar-Block (informational, keine
+ *                Multi-Model-Surface).
+ * `models`-Präzedenz: explizite Entry-Liste (non-empty) gewinnt über
+ * Auto-Matching aus `api.config.models.providers` (baseUrl-Match); `[]`
+ * = Opt-out; abwesig = Auto-Matching. Details: BRIDGE.md §15.10.
+ *
+ * Multi-Model γ.1 (2026-10-13): codex Modell-Metadaten-Katalog — die
+ * Operator-Metadaten aus `models.providers[*].models[*].contextWindow`
+ * wandern in /config/.codex/model-catalog.json und die config.toml tragt
+ * `model_catalog_json` (key-Verifizierung am DEPLOYED binary: `codex debug
+ * models` parsed die Datei, Custom-Slugs haben echte Metadaten statt
+ * Fallback-Warnung). Caveat: ersetzt den built-in Katalog; acpx vererbt den
+ * key NICHT → nur direkte CLI-Nutzer (BRIDGE §15.10).
  *
  * ADDITIV-GARANTIE (bindend): das Plugin ist ein Add-on zum bundled acpx,
  * kein Ersatz. Fehlt ein Harness in `harnesses` (oder die Section ganz),
@@ -18,14 +43,16 @@
  * acp-agents/quickstart+setup, 10:37 live-gefetched):
  *   A FILE : codex   → CODEX_HOME auth.json + /config/.codex/config.toml
  *                      (die acpx-Inheritance-Quelle; Semantik VERBATIM aus
- *                      oc_acpx_helper.py deploy_harness_configs)
+ *                      oc_acpx_helper.py deploy_harness_configs) + Multi-Model
+ *                      via [profiles.*] (Caveat above)
  *            opencode → opencode.jsonc nach opencode-home/ UND /config/opencode/
  *                      (beide wie der Helper) + legacy config.toml neutralisiert
- *   B ENV  : claude (ANTHROPIC_*), gemini (GEMINI_*), droid (FACTORY_API_KEY),
- *            qwen (OPENAI_*), kimi (KIMI_MODEL_*), kiro (KIRO_API_KEY),
- *            iflow (IFLOW_*) — je eine env-Datei pro Harness
- *            (harness-env/<id>.env), gesourcet vom acpx-Command-Override
- *            plugins.entries.acpx.config.agents.<id>.command/args
+ *                      + Multi-Model via provider.models-Map
+ *   B ENV  : claude (ANTHROPIC_* + CLAUDE_MODEL_CONFIG), gemini (GEMINI_*),
+ *            droid (FACTORY_API_KEY), qwen (OPENAI_*), kimi (KIMI_MODEL_*),
+ *            kiro (KIRO_API_KEY), iflow (IFLOW_*) — je eine env-Datei pro
+ *            Harness (harness-env/<id>.env), gesourcet vom acpx-Command-
+ *            Override plugins.entries.acpx.config.agents.<id>.command/args
  *            (BRIDGE.md §15). Alle ENV-Namen docs-verifiziert (2026-10-11).
  *   C NONE : copilot/cursor und alle übrigen CLI-OAuth-owned Harnesses —
  *            Skip, das Plugin schreibt für sie nichts.
@@ -79,10 +106,31 @@ export type HarnessConfigEntry = {
   thinking?: string;
   smallModel?: string;
   trustProjects?: string[];
+  /**
+   * Verfügbare Modelle (Multi-Model γ): aufgelöste, normalisierte Liste.
+   * Präzedenz: explizite Entry-Liste (non-empty) > Auto-Matching über
+   * `api.config.models.providers` (baseUrl-Match) > absent. `entry.model`
+   * bleibt der Default (prepend wenn fehlend, bei explicit/matched).
+   */
+  models?: string[];
 };
 
 /** plugins.entries['harness-config-writer'].config.harnesses (roh geparsed). */
 export type HarnessConfigs = Record<string, HarnessConfigEntry>;
+
+// Multi-Model Caps (γ): echte Surfaces (opencode models-Map, codex profiles,
+// claude availableModels-JSON) cappen auf MAX_MODELS; ENV-Kommentar-Listen auf
+// COMMENT_MODEL_CAP (keine 200-zeiligen env-Dateien).
+export const MAX_MODELS = 200;
+export const COMMENT_MODEL_CAP = 25;
+
+/**
+ * Self-Recognition-Signatur (γ): writer-generierte codex config.toml tragen
+ * diese erste Zeile; upgradeOrNoteIfMissingOrDiffers updatet nur Dateien MIT
+ * dieser Signatur bytes-genau — signaturlose (operator-/legacy-) Dateien mit
+ * [model_providers.-Block bleiben "customized, never overwritten" (NOTE).
+ */
+export const CODEX_SIGNATURE_LINE = "# harness-config-writer (generated)";
 
 /** Zielwurzel-Layout, identisch zu den Helper-Konstanten (oc_acpx_helper.py). */
 export type HarnessWriterPaths = {
@@ -106,6 +154,8 @@ export type HarnessDeployResult = {
   mechanism: HarnessMechanism;
   warnings: string[];
   files: HarnessDeployFile[];
+  /** Multi-Model γ: Quellkennung der verwendeten Modellliste (explicit/matched/none). */
+  modelsSource?: ResolvedModelsSource;
 };
 
 export type HarnessDeployReport = {
@@ -182,9 +232,12 @@ function writeFileIfMissingOrDiffers(path: string, content: string): FileAction 
 }
 
 /**
- * codex config.toml-Semantik VERBATIM (helper deploy_harness_configs):
- *   install-if-missing / upgrade NUR wenn current keinen [model_providers.-
- *   Block trägt / customized (+[model_providers.) = NIE überschrieben (NOTE).
+ * codex config.toml-Semantik VERBATIM (helper deploy_harness_configs) +
+ * Self-Recognition (γ): Dateien MIT `CODEX_SIGNATURE_LINE`-Erstzeile sind
+ * nachweislich writer-generiert und werden bytes-genau geupdatet — nur so
+ * wirken Modelllisten-Änderungen über den [model_providers.-Block hinaus,
+ * der den heutigen NOTE-Zweig sonst einfrieren würde (BRIDGE.md §15.10).
+ * Signaturlose Dateien MIT [model_providers.-Block bleiben customized (NOTE).
  */
 function upgradeOrNoteIfMissingOrDiffers(path: string, desired: string): FileAction {
   if (!existsSync(path)) {
@@ -193,6 +246,10 @@ function upgradeOrNoteIfMissingOrDiffers(path: string, desired: string): FileAct
   }
   const current = tryOr(() => readFileSync(path, "utf-8"), null);
   if (current === desired) return "unchanged";
+  if (current !== null && current.startsWith(CODEX_SIGNATURE_LINE)) {
+    atomicWrite(path, desired);
+    return "updated";
+  }
   if (current !== null && current.includes("[model_providers.")) {
     return "note (customized, left intact)";
   }
@@ -268,6 +325,253 @@ function tomlString(value: string): string {
 }
 
 // ---------------------------------------------------------------------------
+// Multi-Model (γ) — Modellkatalog aus der vollen Gateway-Config + Entry-
+// Auflösung. Die Writer (buildCodexConfigToml / buildOpencodeConfigJsonc /
+// ENV_MECHANISM / deployHarnessEnvFile) bleiben reine Entry-Konsumenten; der
+// Dispatcher ist der EINZIGE Ort, der Enrichment + Warnings orchestriert.
+// ---------------------------------------------------------------------------
+
+export type ModelCatalog = {
+  /** normalisierte baseUrl → deduped model-ids (first-occurrence, kuratiert). */
+  byBaseUrl: Map<string, string[]>;
+  /**
+   * γ.1 codex-Metadaten: model-id → vom Operator in openclaw.json gepflegte
+   * Werte (contextWindow/maxTokens). NUR belegte Werte landen hier — der
+   * Writer rät niemals ein Kontextfenster (Ownership-Regel).
+   */
+  metaById: Map<string, ModelMeta>;
+};
+
+/** Operator-gepflegte Modell-Metadaten aus `models.providers[*].models[*]`. */
+export type ModelMeta = {
+  contextWindow?: number;
+  maxTokens?: number;
+};
+
+export type ResolvedModelsSource = "explicit" | "matched" | "none";
+
+export type ResolvedModels = {
+  models: string[];
+  source: ResolvedModelsSource;
+  warnings: string[];
+};
+
+/**
+ * Match-Ebene für baseUrl: trailing Slashes + trailing "/v1" neutralisiert,
+ * Host lowercased, Pfad erhalten (deriveProviderId-Catch-Pattern für
+ * scheme-lose Input). http://Host:PORT/path ↔ https-Varianten matchen bewusst
+ * über Host:PORT — der Gateway-Catalog schreibt dieselbe baseUrl wie die
+ * Harness-Entry, nur Normalisierung, keine Content-Transformation.
+ */
+export function normalizeBaseUrlForMatch(baseUrl: string): string {
+  const trimmed = baseUrl.trim().replace(/\/+$/, "").replace(/\/v1$/i, "").replace(/\/+$/, "");
+  try {
+    const url = new URL(trimmed.includes("://") ? trimmed : `http://${trimmed}`);
+    const path = url.pathname === "/" ? "" : url.pathname;
+    return `${url.protocol}//${url.host.toLowerCase()}${path}`;
+  } catch {
+    return trimmed.toLowerCase();
+  }
+}
+
+/** dedupe first-occurrence — Operator-/Katalog-Reihenfolge bleibt kuratiert. */
+function dedupeModelIds(ids: readonly string[]): string[] {
+  return [...new Set(ids)];
+}
+
+/** Auf Cap zuschneiden (vor Cap-Größe melden). */
+function capModelIds(ids: string[], max: number): { ids: string[]; dropped: number } {
+  if (ids.length <= max) return { ids, dropped: 0 };
+  return { ids: ids.slice(0, max), dropped: ids.length - max };
+}
+
+type NormalizedModelList = {
+  ids: string[];
+  /** `models: []` = explizites Opt-out ("bewusst nichts", nicht "nicht gesagt"). */
+  explicitEmpty: boolean;
+};
+
+/**
+ * Entry-`models` fail-soft validieren: nicht-Array → Warning + null-Fall
+ * (Fallback auf Matched/None — ein kaputtes models-Feld tötet NIEMALS den
+ * Default-Model-Deploy); leere Items werden gefiltert; dedupe + Cap 200.
+ */
+function normalizeModelListInternal(
+  raw: unknown,
+  warnings: string[],
+  label: string,
+): NormalizedModelList | null {
+  if (raw === undefined) return null;
+  if (!Array.isArray(raw)) {
+    warnings.push(`${label} models ignored (must be array of non-empty strings)`);
+    return { ids: [], explicitEmpty: false };
+  }
+  if (raw.length === 0) {
+    return { ids: [], explicitEmpty: true };
+  }
+  const invalidBefore = raw.length;
+  let ids = dedupeModelIds(
+    raw.filter((m): m is string => typeof m === "string" && m.trim().length > 0).map((m) => m.trim()),
+  );
+  const dropped = invalidBefore - ids.length;
+  if (dropped > 0) {
+    warnings.push(`${label} models: ${dropped} invalid ids dropped`);
+  }
+  const capped = capModelIds(ids, MAX_MODELS);
+  ids = capped.ids;
+  if (capped.dropped > 0) {
+    warnings.push(`${label} models capped at ${MAX_MODELS} (${capped.dropped} dropped)`);
+  }
+  return { ids, explicitEmpty: false };
+}
+
+/**
+ * Modellkatalog aus der vollen Gateway-Config (`api.config.models.providers`):
+ * je Provider `baseUrl` + `models[].id` (+ `contextWindow`/`maxTokens` für
+ * γ.1 codex-Metadaten). Fail-soft — garbage Config ergibt einen leeren
+ * Katalog + Sammel-Warning, nie einen Crash. Provider-Keys sortiert
+ * (deterministische Merge-Order), ids first-occurrence-deduped; metaById
+ * first-occurrence (kollidierende Provider-Settings entscheiden die erste,
+ * sortiert ermittelte Provider — bewusst, dokumentiert in BRIDGE §15.10).
+ */
+export function buildModelCatalog(fullConfig: unknown, warnings: string[]): ModelCatalog {
+  const byBaseUrl = new Map<string, string[]>();
+  const metaById = new Map<string, ModelMeta>();
+  try {
+    const models = typeof fullConfig === "object" && fullConfig !== null
+      ? (fullConfig as Record<string, unknown>).models
+      : undefined;
+    const providers =
+      typeof models === "object" && models !== null
+        ? (models as Record<string, unknown>).providers
+        : undefined;
+    if (providers === null || providers === undefined) {
+      return { byBaseUrl, metaById };
+    }
+    if (typeof providers !== "object" || Array.isArray(providers)) {
+      warnings.push("models.providers: unexpected shape (object expected) — catalog skipped");
+      return { byBaseUrl, metaById };
+    }
+    let malformed = 0;
+    for (const key of Object.keys(providers).sort()) {
+      const provider = (providers as Record<string, unknown>)[key];
+      if (typeof provider !== "object" || provider === null) {
+        malformed += 1;
+        continue;
+      }
+      const p = provider as Record<string, unknown>;
+      const baseUrl = typeof p.baseUrl === "string" ? p.baseUrl.trim() : "";
+      const rawModels = p.models;
+      if (!baseUrl || !Array.isArray(rawModels)) {
+        malformed += 1;
+        continue;
+      }
+      const normalized = normalizeBaseUrlForMatch(baseUrl);
+      if (!normalized) {
+        malformed += 1;
+        continue;
+      }
+      // γ.1 Metadaten: nur positive Zahlen zählen (contextWindow/maxTokens).
+      for (const m of rawModels) {
+        if (typeof m !== "object" || m === null) continue;
+        const rec = m as Record<string, unknown>;
+        const id = typeof rec.id === "string" ? rec.id.trim() : "";
+        if (!id || metaById.has(id)) continue;
+        const meta: ModelMeta = {};
+        if (typeof rec.contextWindow === "number" && rec.contextWindow > 0) {
+          meta.contextWindow = rec.contextWindow;
+        }
+        if (typeof rec.maxTokens === "number" && rec.maxTokens > 0) {
+          meta.maxTokens = rec.maxTokens;
+        }
+        if (meta.contextWindow !== undefined || meta.maxTokens !== undefined) {
+          metaById.set(id, meta);
+        }
+      }
+      const ids = dedupeModelIds(
+        rawModels
+          .map((m) => (typeof m === "object" && m !== null ? (m as Record<string, unknown>).id : m))
+          .filter((id): id is string => typeof id === "string" && id.trim().length > 0)
+          .map((id) => id.trim()),
+      );
+      const merged = capModelIds(
+        dedupeModelIds([...(byBaseUrl.get(normalized) ?? []), ...ids]),
+        MAX_MODELS,
+      );
+      if (merged.dropped > 0) {
+        warnings.push(
+          `model catalog (${normalized}): capped at ${MAX_MODELS} (${merged.dropped} dropped)`,
+        );
+      }
+      byBaseUrl.set(normalized, merged.ids);
+    }
+    if (malformed > 0) {
+      warnings.push(`models.providers: skipped ${malformed} malformed entries`);
+    }
+  } catch (error) {
+    warnings.push(`model catalog build failed (fail-soft): ${briefError(error)}`);
+  }
+  return { byBaseUrl, metaById };
+}
+
+/** Default-prepend (claude-Adapter: models[0] = Fallback-Default). */
+function prependDefaultModel(entry: HarnessConfigEntry, ids: string[]): string[] {
+  const defaultModel = entry.model?.trim() ?? "";
+  if (!defaultModel || ids.includes(defaultModel)) return ids;
+  return [defaultModel, ...ids];
+}
+
+/**
+ * Entry-Modell-Auflösung (Multi-Model γ): explizite Entry-Liste gewinnt über
+ * Auto-Matching (catalog.byBaseUrl über normalisierte baseUrl); `models: []`
+ * = explizites Opt-out; abwesig + kein Katalogmatch → none. `entry.model`
+ * bleibt der Default und wird (falls fehlend) an Position 0 prependet, NUR bei
+ * explicit/matched — bei "none" bleibt die models-Surface ABWESEND, weil der
+ * Adapter-Fallback models[0] sonst eine single-Modell-Allowlist suggerieren
+ * würde (Default läuft weiterhin über `model`/ANTHROPIC_MODEL).
+ */
+export function resolveEntryModels(
+  entry: HarnessConfigEntry,
+  catalog: ModelCatalog | null,
+): ResolvedModels {
+  const warnings: string[] = [];
+  // Bewusst als raw gelesen: invalid shapes fliegen nicht (fail-soft), der
+  // Caller bekommt die Warning und der Entry bleibt lebenstüchtig.
+  const rawEntry = entry as { models?: unknown };
+  const explicit = normalizeModelListInternal(rawEntry.models, warnings, "entry");
+  if (explicit?.explicitEmpty) {
+    return { models: [], source: "none", warnings };
+  }
+  if (explicit !== null && explicit.ids.length > 0) {
+    const withDefault = prependDefaultModel(entry, explicit.ids);
+    const capped = capModelIds(withDefault, MAX_MODELS);
+    if (capped.dropped > 0) {
+      warnings.push(`models capped at ${MAX_MODELS} (${capped.dropped} dropped)`);
+    }
+    return { models: capped.ids, source: "explicit", warnings };
+  }
+  if (explicit !== null && explicit.ids.length === 0) {
+    // non-empty gewollt, aber alle Items invalid → Fallback auf matched/none
+    // (Warning trägt den Befund; der Default-Deploy bleibt unberührt).
+    warnings.push("entry models resolved to nothing — falling back to catalog match");
+  }
+  let matched: string[] = [];
+  if (catalog !== null) {
+    const key = normalizeBaseUrlForMatch(entry.baseUrl ?? "");
+    matched = catalog.byBaseUrl.get(key) ?? [];
+  }
+  if (matched.length === 0) {
+    return { models: [], source: "none", warnings };
+  }
+  const withDefault = prependDefaultModel(entry, matched);
+  const capped = capModelIds(withDefault, MAX_MODELS);
+  if (capped.dropped > 0) {
+    warnings.push(`models capped at ${MAX_MODELS} (${capped.dropped} dropped)`);
+  }
+  return { models: capped.ids, source: "matched", warnings };
+}
+
+// ---------------------------------------------------------------------------
 // Mechanismus B — ENV-Mapping je CLI (alle Namen docs-verifiziert 2026-10-11).
 // ---------------------------------------------------------------------------
 
@@ -290,6 +594,8 @@ function envMapping(
  * - claude : ANTHROPIC_MODEL/BASE_URL/AUTH_TOKEN (+ ANTHROPIC_SMALL_FAST_MODEL
  *            für smallModel). BASE_URL verbatim — die Anthropic-API ist Root,
  *            kein /v1-Suffix (Helper-Doku: "claude ANTHROPIC_*" ambient env).
+ *            Multi-Model γ: CLAUDE_MODEL_CONFIG = JSON { availableModels } —
+ *            Surface dist-belegt (claude-agent-acp parseModelConfig).
  * - gemini : GEMINI_API_KEY, GEMINI_MODEL, GOOGLE_GEMINI_BASE_URL (Root, vgl.
  *            gemini-cli / Cloudflare AI Gateway docs).
  * - droid  : FACTORY_API_KEY — kein docs-verifizierter Base-URL-Env ⇒ Warnung
@@ -313,6 +619,14 @@ const ENV_MECHANISM: Record<
       ["ANTHROPIC_BASE_URL", nonEmpty(e.baseUrl)],
       ["ANTHROPIC_AUTH_TOKEN", nonEmpty(e.apiKey)],
       ["ANTHROPIC_SMALL_FAST_MODEL", nonEmpty(e.smallModel)],
+      // Multi-Model γ (dist-belegt): availableModels-Env — nur gesetzt bei
+      // non-empty Liste; ANTHROPIC_MODEL ist/PRIORITÄT-1 bleibt der Default.
+      [
+        "CLAUDE_MODEL_CONFIG",
+        e.models && e.models.length > 0
+          ? JSON.stringify({ availableModels: e.models })
+          : undefined,
+      ],
     ]),
   gemini: (e) =>
     envMapping([
@@ -398,6 +712,64 @@ export function deployCodexAuth(
 }
 
 /**
+ * γ.1 codex Modell-Metadaten-Katalog (`model_catalog_json`, binary-verifiziert
+ * 2026-10-13 am DEPLOYED binary via `codex debug models`): die Datei ersetzt
+ * den built-in Katalog — Custom-Modelle (Ollama) bekommen ECHTE Metadaten
+ * statt der Fallback-Warnung "Model metadata for `X` not found". Pflichtfelder
+ * der deployed Binary (parse-error-iteriert belegt): base_instructions,
+ * supports_parallel_tool_calls, experimental_supported_tools + die Struktur-
+ * Felder unten; Optionals entfallen. Die Modelle NUR mit Operator-Metadaten
+ * aus openclaw.json (`contextWindow`) — Ids ohne Kontextfenster werden
+ * geskippt und geplant (never guess). Semantik: catalog REPLACE-ALL (gpt-*
+ * built-ins verschwinden aus dem Picker — für Ollama-only-Setups gewollt,
+ * BRIDGE §15.10).
+ */
+const CODEX_MODEL_CATALOG_LIMIT = 10000;
+
+export function buildCodexModelCatalogJson(
+  modelIds: readonly string[],
+  metaById: ReadonlyMap<string, ModelMeta>,
+): { content: string; included: number; skipped: string[] } | null {
+  const entries: Record<string, unknown>[] = [];
+  const skipped: string[] = [];
+  for (const id of dedupeModelIds(modelIds)) {
+    const meta = metaById.get(id);
+    if (!meta?.contextWindow || meta.contextWindow <= 0) {
+      skipped.push(id);
+      continue;
+    }
+    const contextWindow = Math.floor(meta.contextWindow);
+    entries.push({
+      slug: id,
+      display_name: id,
+      description: "Ollama model (metadata from openclaw.json models.providers)",
+      base_instructions: "",
+      supported_reasoning_levels: [],
+      shell_type: "shell_command",
+      visibility: "list",
+      supported_in_api: true,
+      priority: 1,
+      support_verbosity: false,
+      default_reasoning_summary: "auto",
+      web_search_tool_type: "text",
+      truncation_policy: { mode: "bytes", limit: CODEX_MODEL_CATALOG_LIMIT },
+      supports_parallel_tool_calls: false,
+      experimental_supported_tools: [],
+      input_modalities: ["text"],
+      context_window: contextWindow,
+      max_context_window: contextWindow,
+      effective_context_window_percent: 95,
+    });
+  }
+  if (entries.length === 0) return null;
+  return {
+    content: `${JSON.stringify({ models: entries }, null, 2)}\n`,
+    included: entries.length,
+    skipped,
+  };
+}
+
+/**
  * codex config.toml — die acpx-Inheritance-Quelle (der acpx-Plugin-Codex-Wrapper
  * regeneriert daraus das operative codex-home/config.toml bei JEDEM Gateway-
  * Start; inheritiert nur model/model_provider/model_reasoning_effort/
@@ -411,17 +783,40 @@ export function deployCodexAuth(
  * model_reasoning_effort nur wenn `thinking` nicht-leer gesetzt,
  * [projects."<p>"] trust_level = "trusted" je unique trustProjects (dedupe+
  * sort — tomllib rejected duplicate table headers, Template-Kommentar verbatim).
+ *
+ * γ.1: `modelCatalogPath` → top-level `model_catalog_json` key (Metadaten-
+ * Katalog für Custom-Modelle). NICHT acpx-vererbt (BRIDGE §15.10) — nur
+ * direkte codex-CLI-Nutzer mit CODEX_HOME auf dieser Datei bekommen den
+ * Katalog live; ACP-Sessions bleiben bundled-catalog.
  */
-export function buildCodexConfigToml(entry: HarnessConfigEntry): string {
+export function buildCodexConfigToml(
+  entry: HarnessConfigEntry,
+  modelCatalogPath?: string,
+): string {
   const baseUrl = withV1Suffix(entry.baseUrl ?? "");
   const providerId = deriveProviderId(entry.baseUrl ?? "");
   const lines: string[] = [
+    CODEX_SIGNATURE_LINE,
+    // Self-Recognition + Refresh-Aufnahme (γ): nachweislich writer-generierte
+    // Dateien werden bytes-sync aktualisiert; Hands-Edits haben nach dem
+    // ersten Upgrade verloren (BRIDGE.md §15.10, one-time-Migration Doku).
+    "# Multi-Model γ: [profiles.*] blocks are NOT inherited by acpx",
+    "# renderIsolatedCodexConfig (only model/model_provider/model_reasoning_effort/",
+    "# sandbox_mode + [model_providers.*]); profiles serve direct codex-CLI users",
+    "# pointing CODEX_HOME at this file.",
     `model = ${tomlString(entry.model)}`,
     `model_provider = ${tomlString(providerId)}`,
   ];
   const thinking = nonEmpty(entry.thinking);
   if (thinking) {
     lines.push(`model_reasoning_effort = ${tomlString(thinking)}`);
+  }
+  if (modelCatalogPath) {
+    lines.push(
+      // γ.1: Metadaten-Katalog für Custom-Modelle (binary-verifiziert). Nur
+      // direkte CLI-Nutzer — acpx inheritiert den key nicht (BRIDGE §15.10).
+      `model_catalog_json = ${tomlString(modelCatalogPath)}`,
+    );
   }
   lines.push(
     `sandbox_mode = "workspace-write"`,
@@ -433,6 +828,17 @@ export function buildCodexConfigToml(entry: HarnessConfigEntry): string {
     `requires_openai_auth = true`,
     ``,
   );
+  // Multi-Model γ: je verfügbares Modell ein [profiles."id"]-Block (quoted
+  // keys — ':' in Ollama-Ids ist als quoted TOML-Header safe). Default
+  // (entry.model) bleibt top-level; die Profile sind die Wahl-Surfaces.
+  if (entry.models && entry.models.length > 0) {
+    const thinkLine = thinking ? `model_reasoning_effort = ${tomlString(thinking)}` : null;
+    for (const modelId of dedupeModelIds(entry.models)) {
+      lines.push(`[profiles.${tomlString(modelId)}]`, `model = ${tomlString(modelId)}`);
+      if (thinkLine) lines.push(thinkLine);
+      lines.push(`model_provider = ${tomlString(providerId)}`, ``);
+    }
+  }
   // Trailing-Slash-Normalisierung vor dedupe (sonst doppelt-Header-Risiko
   // auf "/pfad" + "/pfad/"); path "/" als Root wird erhalten.
   const trust = [
@@ -458,6 +864,7 @@ export function deployCodexHarnessFiles(
   paths: HarnessWriterPaths,
   logger?: HarnessWriterLogger,
   harnessId = "codex",
+  modelCatalog?: ModelCatalog,
 ): { warnings: string[]; files: HarnessDeployFile[] } {
   const warnings: string[] = [];
   const files: HarnessDeployFile[] = [];
@@ -470,13 +877,39 @@ export function deployCodexHarnessFiles(
   // 2) /config/.codex/config.toml — Inheritance-Quelle, install-if-missing /
   //    upgrade-only-no-providers / customized NEVER overwritten (NOTE).
   const tomlPath = join(paths.codexSourceHome, "config.toml");
-  const action = upgradeOrNoteIfMissingOrDiffers(tomlPath, buildCodexConfigToml(entry));
+  const catalogPath = modelCatalog ? join(paths.codexSourceHome, "model-catalog.json") : undefined;
+  const action = upgradeOrNoteIfMissingOrDiffers(
+    tomlPath,
+    buildCodexConfigToml(entry, catalogPath),
+  );
   if (action === "note (customized, left intact)") {
     logger?.info?.(
       `[${harnessId}] ${tomlPath} is customized; leaving intact (helper semantics)`,
     );
   }
   files.push({ path: tomlPath, action });
+
+  // 3) γ.1 Metadaten-Katalog — NUR wenn die TOML writer-kontrolliert ist
+  //    (NOTE = customized → KEIN models.json-Orphan um eine Datei streuen,
+  //    die den Key bewusst nie trägt). Ids ohne Operator-Kontextfenster
+  //    bleiben draußen (never guess); Info-Log macht die Lücke sichtbar.
+  if (modelCatalog && entry.models && entry.models.length > 0 && action !== "note (customized, left intact)") {
+    const built = buildCodexModelCatalogJson(entry.models, modelCatalog.metaById);
+    if (built) {
+      const catalogFile = writeFileIfMissingOrDiffers(catalogPath!, built.content);
+      files.push({ path: catalogPath!, action: catalogFile });
+      logger?.info?.(
+        `[${harnessId}] model catalog ${catalogPath}: ${built.included} model(s) with operator metadata` +
+          (built.skipped.length > 0
+            ? `; ${built.skipped.length} skipped (no contextWindow in openclaw.json)`
+            : ""),
+      );
+    } else {
+      logger?.info?.(
+        `[${harnessId}] model catalog skipped: no model of the list has contextWindow in openclaw.json (codex falls back to its bundled-metadata warning)`,
+      );
+    }
+  }
   return { warnings, files };
 }
 
@@ -496,6 +929,16 @@ export function buildOpencodeConfigJsonc(entry: HarnessConfigEntry): string {
   const baseUrl = entry.baseUrl ?? "";
   const providerId = deriveProviderId(baseUrl);
   const smallModel = nonEmpty(entry.smallModel) ?? entry.model;
+  // Multi-Model γ: mit verfügbarer Modellliste wandern ALLE ids in die
+  // provider.models-Map (native Multi-Model-Surface; entry.model zuerst =
+  // Default, smallModel bei Differ ebenfalls). OHNE models bleibt der Output
+  // byte-identisch zum Vor-γ-Stand (single-entry Map, kein smallModel-Entry).
+  let modelIds: string[];
+  if (entry.models && entry.models.length > 0) {
+    modelIds = dedupeModelIds([entry.model, ...entry.models, smallModel]);
+  } else {
+    modelIds = [entry.model];
+  }
   const cfg = {
     $schema: "https://opencode.ai/config.json",
     provider: {
@@ -506,9 +949,7 @@ export function buildOpencodeConfigJsonc(entry: HarnessConfigEntry): string {
           baseURL: withV1Suffix(baseUrl),
           apiKey: entry.apiKey ?? "ollama",
         },
-        models: {
-          [entry.model]: {},
-        },
+        models: Object.fromEntries(modelIds.map((id) => [id, {}])),
       },
     },
     model: `${providerId}/${entry.model}`,
@@ -579,6 +1020,7 @@ export function deployHarnessEnvFile(
   entry: HarnessConfigEntry,
   paths: HarnessWriterPaths,
   logger?: HarnessWriterLogger,
+  modelsComment?: readonly string[],
 ): { warnings: string[]; file: HarnessDeployFile | null } {
   const mapping = ENV_MECHANISM[harnessId]?.(entry) ?? null;
   if (!mapping) {
@@ -591,7 +1033,22 @@ export function deployHarnessEnvFile(
     "plugins.entries.acpx.config.agents.<id>.command/args — BRIDGE.md §15.2.",
     "GENERIERT (Phase 3): Hand-Edits werden beim nächsten Boot überschrieben.",
   ];
-  const action = writeFileIfMissingOrDiffers(path, renderEnvFile(mapping.vars, header));
+  let content = renderEnvFile(mapping.vars, header);
+  // Multi-Model γ: ENV-Harnesses ohne Multi-Model-Surface bekommen die
+  // verfügbaren Modelle als INFORMATIONAL-Kommentar (cap 25 + more-Zeile).
+  if (modelsComment !== undefined && modelsComment.length > 0) {
+    const shown = modelsComment.slice(0, COMMENT_MODEL_CAP);
+    const lines = [
+      "",
+      `# available models (informational — ${harnessId} exposes no multi-model env surface):`,
+      ...shown.map((id) => `# - ${id.replace(/\r?\n/g, " ")}`),
+    ];
+    if (modelsComment.length > shown.length) {
+      lines.push(`# (+${modelsComment.length - shown.length} more)`);
+    }
+    content += `${lines.join("\n")}\n`;
+  }
+  const action = writeFileIfMissingOrDiffers(path, content);
   if (action !== "unchanged") {
     logger?.info?.(`[${harnessId}] ${action} ${path} (${Object.keys(mapping.vars).join(", ")})`);
   }
@@ -616,6 +1073,11 @@ export function deployHarnessEnvFile(
  * C (NONE, Additiv-Garantie: copilot/cursor + alle nicht katalogisierten ids
  * bewusst STUMM — kein Warn-Noise für den normalen acpx-Default-Fall).
  *
+ * Multi-Model γ: `modelCatalog` (aus der vollen Gateway-Config, index.ts ist
+ * der EINZIGE api.config-Konsument) reichert je Entry die Modellliste an
+ * (resolveEntryModels: explicit > matched > none) und hält `modelsSource` im
+ * Report fest. Mechanismus C wird NICHT angereichert (OAuth-owned, stumm).
+ *
  * Fehlt die Section / ist sie leer / kein Harness-Object → report.skipped
  * und NICHTS wird angefasst (kein mkdir, kein Write). Entries müssen
  * non-empty `model: string` tragen (configSchema required); invalide Entries
@@ -625,6 +1087,7 @@ export function deployHarnessConfigs(
   pluginConfig: unknown,
   paths: HarnessWriterPaths,
   logger?: HarnessWriterLogger,
+  modelCatalog?: ModelCatalog,
 ): HarnessDeployReport {
   const harnesses = readHarnessSection(pluginConfig);
   if (harnesses === null) {
@@ -642,6 +1105,20 @@ export function deployHarnessConfigs(
       });
       continue;
     }
+    const resolvedModels =
+      harnessId === "codex" || harnessId === "opencode" || harnessId in ENV_MECHANISM
+        ? resolveEntryModels(entry, modelCatalog ?? null)
+        : null;
+    const enriched: HarnessConfigEntry =
+      resolvedModels !== null
+        ? {
+            ...entry,
+            models: resolvedModels.models.length > 0 ? resolvedModels.models : undefined,
+          }
+        : entry;
+    const entryWarnings = [
+      ...(resolvedModels?.warnings ?? []),
+    ];
     if (harnessId === "codex" || harnessId === "opencode") {
       // FILE-Mechanismus ohne baseUrl kann keine sinnvolle Provider-Route
       // erzeugen (base_url wäre "/v1") → skip mit Warning, kein Write.
@@ -649,28 +1126,46 @@ export function deployHarnessConfigs(
         results.push({
           harnessId,
           mechanism: harnessId === "codex" ? "file-codex" : "file-opencode",
-          warnings: ["baseUrl (non-empty) ist für den FILE-Mechanismus Pflicht — skipt"],
+          warnings: [
+            ...entryWarnings,
+            "baseUrl (non-empty) ist für den FILE-Mechanismus Pflicht — skipt",
+          ],
           files: [],
         });
         continue;
       }
       const deploy =
         harnessId === "codex"
-          ? deployCodexHarnessFiles(entry, paths, logger, harnessId)
-          : deployOpencodeHarnessFiles(entry, paths, logger, harnessId);
+          ? // γ.1: Katalog (metabyId) für die codex-Metadaten-Datei mitgeben.
+            deployCodexHarnessFiles(enriched, paths, logger, harnessId, modelCatalog)
+          : deployOpencodeHarnessFiles(enriched, paths, logger, harnessId);
       results.push({
         harnessId,
         mechanism: harnessId === "codex" ? "file-codex" : "file-opencode",
         ...deploy,
+        warnings: [...entryWarnings, ...deploy.warnings],
+        modelsSource: resolvedModels?.source,
       });
       continue;
     }
     if (harnessId in ENV_MECHANISM) {
-      const { warnings, file } = deployHarnessEnvFile(harnessId, entry, paths, logger);
+      const { warnings, file } = deployHarnessEnvFile(
+        harnessId,
+        enriched,
+        paths,
+        logger,
+        // Multi-Model γ: ENV-Dateien ohne echte Multi-Model-Surface (nicht
+        // claude — deren CLAUDE_MODEL_CONFIG ist die echte Surface) tragen die
+        // verfügbaren Modelle als informational Kommentar.
+        harnessId !== "claude" && (resolvedModels?.models.length ?? 0) > 0
+          ? (resolvedModels?.models ?? [])
+          : undefined,
+      );
       results.push({
         harnessId,
         mechanism: "env",
-        warnings,
+        warnings: [...entryWarnings, ...warnings],
+        modelsSource: resolvedModels?.source,
         files: file ? [file] : [],
       });
       continue;
