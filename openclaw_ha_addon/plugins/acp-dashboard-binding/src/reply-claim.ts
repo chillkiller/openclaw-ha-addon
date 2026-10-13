@@ -196,6 +196,22 @@ function clampYieldMs(value: unknown): number {
   return Math.min(MAX_POST_SETTLE_YIELD_MS, Math.floor(value));
 }
 
+/**
+ * Benign edge, root cause verified live 2026-10-13 (run 5087eb55; transcript +
+ * log-window forensics): the host rejects a wait whose observation work signal
+ * aborted as "<method> observation cancelled" (server-methods errorShape,
+ * retryable). The in-process `agent.wait` the claim rides inherits the
+ * DELIVERYING webchat client's connectionSignal (server-plugin-in-process-
+ * dispatch wraps the captured scope.client; runWithGatewayObservationScope
+ * AbortSignal.any-chains client.connectionSignal), so a UI reload/reconnect
+ * during a long turn cancels the wait — never the run (waitForRun contract:
+ * the wait does not cancel the run), and §19a settle + §20 mirror below heal
+ * the delivery. Not a failure: no failure framing in the notice text.
+ */
+export function isBenignObservationCancel(note: string): boolean {
+  return note.includes("observation cancelled");
+}
+
 /** Plugin config (`plugins.entries['<CHANNEL_ID>'].config`) view we read here. */
 type DashboardPluginReplyConfig = {
   harnessReplyWaitMs?: unknown;
@@ -513,7 +529,23 @@ export function createHarnessReplyClaimHandler(options: HarnessReplyClaimOptions
       );
       if (settled.errorMessage !== undefined) {
         const note = settled.errorMessage;
-        log.warn?.(`[${CHANNEL_ID}] inbound_claim: waitForRun failed for run ${runId} — ${note}`);
+        const benignObservationCancel = isBenignObservationCancel(note);
+        if (benignObservationCancel) {
+          // 2026-10-13 live forensics (run 5087eb55, root cause verified): the
+          // host rejects a wait whose observation work signal aborted as
+          // "<method> observation cancelled" (server-methods errorShape,
+          // retryable) — and one abort source is the DELIVERING webchat
+          // connection itself: the in-process dispatch wraps the captured
+          // scope.client, whose connectionSignal rides
+          // runWithGatewayObservationScope's AbortSignal.any chain. A UI
+          // reload/reconnect during a long turn cancels the WAIT, never the
+          // run (waitForRun contract: the wait does not cancel the run) —
+          // §19a settle + §20 mirror below self-heal the delivery. Not a
+          // failure: no failure framing, quieter log.
+          log.info?.(`[${CHANNEL_ID}] inbound_claim: wait observation cancelled (benign client-conn edge) for run ${runId} — turn keeps running`);
+        } else {
+          log.warn?.(`[${CHANNEL_ID}] inbound_claim: waitForRun failed for run ${runId} — ${note}`);
+        }
         // §19a: the fallback reply ENDS the origin dispatch from the user's
         // view (terminal delivery) — settle the origin node now (nonterminal:
         // the clone run may genuinely still be going) or the Denken-Spinner
@@ -536,8 +568,9 @@ export function createHarnessReplyClaimHandler(options: HarnessReplyClaimOptions
           {
             handled: true,
             reply: {
-              text:
-                `Harness turn dispatched to \`${target}\` (run \`${runId}\`) but waiting for its reply failed: ${note} — the turn is still running there.`,
+              text: benignObservationCancel
+                ? `Harness turn \`${target}\` (run \`${runId}\`) is still running — this chat connection ended while the reply was pending, so the reply is kept in the harness transcript.`
+                : `Harness turn dispatched to \`${target}\` (run \`${runId}\`) but waiting for its reply failed: ${note} — the turn is still running there.`,
             },
           },
           (binding?.conversationId ?? "").trim(),

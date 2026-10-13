@@ -1379,3 +1379,69 @@ erforderlich.
   Backup `claude-agent-acp-wrapper.mjs.bak-subagent-mapping-20261013`) —
   falls der Writer den Wrapper je regeneriert, Mapping nachziehen.
 - Migration alter Klon-Artefakte: γ-Stamps bleiben als Legacy-Räumung im Sweep.
+
+## 22. Benigne Wait-Cancellation („agent.wait observation cancelled") — Root Cause + Soap-Suppression (v0.7.13.25+, 2026-10-13)
+
+### §22.1 Befund (live-forensisch, run `5087eb55`)
+
+Turn 1 eines neuen Webchats endete mit dem Error-Notice
+`… waiting for its reply failed: agent.wait observation cancelled — the turn is
+still running there.` — **und zeigte danach trotzdem die Antwort** (Self-Heal).
+Beweiskette aus Live-Log + Transkript-DB:
+
+| t (local, +02:00) | Event |
+|---|---|
+| 10:32:47.841 | Message 1 via Control-UI-conn `0f28fd74…` (`dispatchInboundMessage`) |
+| 10:32:54.477 | `inbound_claim: dispatching harness turn` → Binding-Session (γ-v2 `spawnedBy`-Stamp live) |
+| 10:33:56.176/.439 | **beide Webchat-Conns starben** (code=1000, Dauer 326 391/340 988 ms — Page-Reload-/conn-Lebenszeit, nicht idle: letzte Aktivität 69 s vorher) |
+| 10:33:56.443 | `waitForRun failed — agent.wait observation cancelled` (**4 ms nach Conn-Tod**) |
+| 10:33:56.469 | §19a-Settle (Origin nonterminal) |
+| 10:33:56.514 | §20-Mirror `acp-claim-final:5087eb55…` — **β2 erstmals live beobachtet** |
+
+Der 60s+2s-Fingerprint (61,97 s ≈ `addTimerTimeoutGraceMs`) war ein rotes
+Herring — kein Timer. Ausgeschlossen: Plugin-Timeout (120 s Default, Config
+`{}`), `clampTimerTimeoutMs`-Max, `requestEntryLifetime` (nur Shutdown),
+in-process-10s-Cap, Drain-Signal.
+
+### §22.2 Root Cause (dist verifiziert)
+
+Der in-process `agent.wait` der Claim-Wait **erbt die Lifetime der
+zustellenden WebSocket-Conn**: `dispatchGatewayMethodInProcessRaw` wrapped den
+erfassten `scope.client` (server-plugin-in-process-dispatch-DoFGQ0iV.mjs:64),
+dessen `connectionSignal` in die Observation-Scope-Kette geht
+(server-methods-DiAePJ8B.mjs `runWithGatewayObservationScope` =
+`AbortSignal.any([drain, callerWork, client.connectionSignal])`). Ein
+UI-Reload/conn-Drop während eines langen Turns bricht **den Wait, nie den Run**
+(`waitForRun`-Kontrakt: der Wait cancelt den Run nicht) — der Host konvertiert
+den Work-Abort in UNAVAILABLE „observation cancelled" (retryable). Das erklärt
+den von GaRoN berichteten „Lag": Reload während eines Lang-Turns → Spinner →
+Notice/Soap → Antwort kommt verspätet über den Mirror-Pfad.
+
+Konsequenz aus dem Transkript-Beweis: die Soap wurde als **assistant-Row ins
+Origin-Transkript gespiegelt** (§20-Mirror des Notice-Texts) — Reload-Reiter
+zeigt das Error-Artefakt als „Antwort". Die echte Antwort bleibt im
+Target/Binding-Transkript (designed Layout, Phase-3.5-Doku).
+
+### §22.3 Fix (Plugin-Defense, src/reply-claim.ts)
+
+- `isBenignObservationCancel(note)` — Detektion über „observation cancelled"
+  (immer benign per Kontrakt: der Wait cancelt den Run nie).
+- Wait-Fail-Branch: auf dem benignen Edge `log.info` („benign client-conn
+  edge") statt `warn`, Notice-Text ohne Failure-Framing
+  („is still running — this chat connection ended …, reply is kept in the
+  harness transcript"). §19a-Settle + §20-Mirror unverändert (Self-Heal-Path
+  identisch wie live belegt).
+- Kein Re-Request des Waits: ein erneuter in-process wait erbt dasselbe
+  Conn-Signal (bereits abgebrochen) und abortet instant — geprüft gegen
+  `throwIfGatewayDispatchAborted`.
+- Upstream-Kandidat (unser Nicht-Segment): Observations sollen nicht an der
+  delivering-conn hängen — das `forceSyntheticClient`-Konzept existiert im
+  Dispatch-Layer bereits (deleteSession nutzt es), ist für agent.wait aber
+  nicht generisch zugreifbar.
+
+### §22.4 Verifikation
+
+Binding-Suite 215/215 (neu: „observation-cancelled wait is a benign
+still-running notice, not a failure frame"; Regression „waitForRun throwing →
+wait-failure notice" unverändert grün), strict tsc 0. Live-Deploy des Fixes
+wartet auf GaRoN-GO (kein Release im „kein Risiko"-Regime).

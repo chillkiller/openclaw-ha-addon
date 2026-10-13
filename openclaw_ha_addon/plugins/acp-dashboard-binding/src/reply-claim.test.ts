@@ -450,6 +450,44 @@ describe("F4 reply-delivery fix — inbound_claim dispatch (Weg A: subagent surf
     expect(targetPatches.some((p) => p.patch.status === "done")).toBe(false);
   });
 
+  it("observation-cancelled wait is a benign still-running notice, not a failure frame", async () => {
+    // 2026-10-13 live root cause (run 5087eb55): the in-process agent.wait the
+    // claim rides inherits the DELIVERING webchat connection's connectionSignal
+    // (host observation scope chains client.connectionSignal), so a UI
+    // reload/reconnect during a long turn cancels the wait — never the run.
+    // The wait-failure branch must state the edge WITHOUT the failure framing.
+    const store = fakeClaimStore();
+    const infos: string[] = [];
+    const warns: string[] = [];
+    const handler = createHarnessReplyClaimHandler({
+      getConfig: () => codexConfig(),
+      subagent: stubSubagent(async () => ({ runId: "run-ob" }), async () => {
+        throw new Error("agent.wait observation cancelled");
+      }).subagent,
+      isGatewayAvailable: async () => true,
+      waitRetryDelaysMs: [0, 0, 0, 0],
+      sessionStore: store.store,
+      logger: {
+        info: (message: string) => infos.push(message),
+        warn: (message: string) => warns.push(message),
+      },
+    });
+    const result = await handler(event, claimContextCodex(PLUGIN_ROOT));
+    expect(result.handled).toBe(true);
+    // Benign framing: the run keeps going, nothing "failed".
+    expect(result.reply?.text).toContain("is still running");
+    expect(result.reply?.text).toContain("run-ob");
+    expect(result.reply?.text).not.toContain("failed");
+    // Quiet log edge, not the warn path.
+    expect(warns).toHaveLength(0);
+    expect(infos.some((m) => m.includes("benign client-conn edge"))).toBe(true);
+    // Same §19a settle as the generic wait-failure edge: origin nonterminal.
+    const originSettle = store.patches.filter((p) => p.sessionKey === CODEX_DASHBOARD_KEY);
+    expect(originSettle).toHaveLength(1);
+    expect(originSettle[0]!.patch.status).toBe("interrupted");
+    expect(originSettle[0]!.patch.abortedLastRun).toBe(true);
+  });
+
   it("γ archive-when-idle: clears OUR archive marker before dispatch and re-archives after a terminal settle", async () => {
     const store = fakeClaimStore();
     // The clone went idle during a previous turn and was γ-archived — seed it
