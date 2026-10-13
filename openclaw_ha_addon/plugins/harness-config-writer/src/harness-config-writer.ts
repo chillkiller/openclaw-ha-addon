@@ -25,6 +25,14 @@
  * Auto-Matching aus `api.config.models.providers` (baseUrl-Match); `[]`
  * = Opt-out; abwesig = Auto-Matching. Details: BRIDGE.md §15.10.
  *
+ * Multi-Model γ.1 (2026-10-13): codex Modell-Metadaten-Katalog — die
+ * Operator-Metadaten aus `models.providers[*].models[*].contextWindow`
+ * wandern in /config/.codex/model-catalog.json und die config.toml tragt
+ * `model_catalog_json` (key-Verifizierung am DEPLOYED binary: `codex debug
+ * models` parsed die Datei, Custom-Slugs haben echte Metadaten statt
+ * Fallback-Warnung). Caveat: ersetzt den built-in Katalog; acpx vererbt den
+ * key NICHT → nur direkte CLI-Nutzer (BRIDGE §15.10).
+ *
  * ADDITIV-GARANTIE (bindend): das Plugin ist ein Add-on zum bundled acpx,
  * kein Ersatz. Fehlt ein Harness in `harnesses` (oder die Section ganz),
  * wird für ihn NICHTS geschrieben — native Abos (Claude Pro, ChatGPT Plus,
@@ -326,6 +334,18 @@ function tomlString(value: string): string {
 export type ModelCatalog = {
   /** normalisierte baseUrl → deduped model-ids (first-occurrence, kuratiert). */
   byBaseUrl: Map<string, string[]>;
+  /**
+   * γ.1 codex-Metadaten: model-id → vom Operator in openclaw.json gepflegte
+   * Werte (contextWindow/maxTokens). NUR belegte Werte landen hier — der
+   * Writer rät niemals ein Kontextfenster (Ownership-Regel).
+   */
+  metaById: Map<string, ModelMeta>;
+};
+
+/** Operator-gepflegte Modell-Metadaten aus `models.providers[*].models[*]`. */
+export type ModelMeta = {
+  contextWindow?: number;
+  maxTokens?: number;
 };
 
 export type ResolvedModelsSource = "explicit" | "matched" | "none";
@@ -407,12 +427,16 @@ function normalizeModelListInternal(
 
 /**
  * Modellkatalog aus der vollen Gateway-Config (`api.config.models.providers`):
- * je Provider `baseUrl` + `models[].id`. Fail-soft — garbage Config ergibt
- * einen leeren Katalog + Sammel-Warning, nie einen Crash. Provider-Keys
- * sortiert (deterministische Merge-Order), ids first-occurrence-deduped.
+ * je Provider `baseUrl` + `models[].id` (+ `contextWindow`/`maxTokens` für
+ * γ.1 codex-Metadaten). Fail-soft — garbage Config ergibt einen leeren
+ * Katalog + Sammel-Warning, nie einen Crash. Provider-Keys sortiert
+ * (deterministische Merge-Order), ids first-occurrence-deduped; metaById
+ * first-occurrence (kollidierende Provider-Settings entscheiden die erste,
+ * sortiert ermittelte Provider — bewusst, dokumentiert in BRIDGE §15.10).
  */
 export function buildModelCatalog(fullConfig: unknown, warnings: string[]): ModelCatalog {
   const byBaseUrl = new Map<string, string[]>();
+  const metaById = new Map<string, ModelMeta>();
   try {
     const models = typeof fullConfig === "object" && fullConfig !== null
       ? (fullConfig as Record<string, unknown>).models
@@ -422,11 +446,11 @@ export function buildModelCatalog(fullConfig: unknown, warnings: string[]): Mode
         ? (models as Record<string, unknown>).providers
         : undefined;
     if (providers === null || providers === undefined) {
-      return { byBaseUrl };
+      return { byBaseUrl, metaById };
     }
     if (typeof providers !== "object" || Array.isArray(providers)) {
       warnings.push("models.providers: unexpected shape (object expected) — catalog skipped");
-      return { byBaseUrl };
+      return { byBaseUrl, metaById };
     }
     let malformed = 0;
     for (const key of Object.keys(providers).sort()) {
@@ -446,6 +470,23 @@ export function buildModelCatalog(fullConfig: unknown, warnings: string[]): Mode
       if (!normalized) {
         malformed += 1;
         continue;
+      }
+      // γ.1 Metadaten: nur positive Zahlen zählen (contextWindow/maxTokens).
+      for (const m of rawModels) {
+        if (typeof m !== "object" || m === null) continue;
+        const rec = m as Record<string, unknown>;
+        const id = typeof rec.id === "string" ? rec.id.trim() : "";
+        if (!id || metaById.has(id)) continue;
+        const meta: ModelMeta = {};
+        if (typeof rec.contextWindow === "number" && rec.contextWindow > 0) {
+          meta.contextWindow = rec.contextWindow;
+        }
+        if (typeof rec.maxTokens === "number" && rec.maxTokens > 0) {
+          meta.maxTokens = rec.maxTokens;
+        }
+        if (meta.contextWindow !== undefined || meta.maxTokens !== undefined) {
+          metaById.set(id, meta);
+        }
       }
       const ids = dedupeModelIds(
         rawModels
@@ -470,7 +511,7 @@ export function buildModelCatalog(fullConfig: unknown, warnings: string[]): Mode
   } catch (error) {
     warnings.push(`model catalog build failed (fail-soft): ${briefError(error)}`);
   }
-  return { byBaseUrl };
+  return { byBaseUrl, metaById };
 }
 
 /** Default-prepend (claude-Adapter: models[0] = Fallback-Default). */
@@ -671,6 +712,64 @@ export function deployCodexAuth(
 }
 
 /**
+ * γ.1 codex Modell-Metadaten-Katalog (`model_catalog_json`, binary-verifiziert
+ * 2026-10-13 am DEPLOYED binary via `codex debug models`): die Datei ersetzt
+ * den built-in Katalog — Custom-Modelle (Ollama) bekommen ECHTE Metadaten
+ * statt der Fallback-Warnung "Model metadata for `X` not found". Pflichtfelder
+ * der deployed Binary (parse-error-iteriert belegt): base_instructions,
+ * supports_parallel_tool_calls, experimental_supported_tools + die Struktur-
+ * Felder unten; Optionals entfallen. Die Modelle NUR mit Operator-Metadaten
+ * aus openclaw.json (`contextWindow`) — Ids ohne Kontextfenster werden
+ * geskippt und geplant (never guess). Semantik: catalog REPLACE-ALL (gpt-*
+ * built-ins verschwinden aus dem Picker — für Ollama-only-Setups gewollt,
+ * BRIDGE §15.10).
+ */
+const CODEX_MODEL_CATALOG_LIMIT = 10000;
+
+export function buildCodexModelCatalogJson(
+  modelIds: readonly string[],
+  metaById: ReadonlyMap<string, ModelMeta>,
+): { content: string; included: number; skipped: string[] } | null {
+  const entries: Record<string, unknown>[] = [];
+  const skipped: string[] = [];
+  for (const id of dedupeModelIds(modelIds)) {
+    const meta = metaById.get(id);
+    if (!meta?.contextWindow || meta.contextWindow <= 0) {
+      skipped.push(id);
+      continue;
+    }
+    const contextWindow = Math.floor(meta.contextWindow);
+    entries.push({
+      slug: id,
+      display_name: id,
+      description: "Ollama model (metadata from openclaw.json models.providers)",
+      base_instructions: "",
+      supported_reasoning_levels: [],
+      shell_type: "shell_command",
+      visibility: "list",
+      supported_in_api: true,
+      priority: 1,
+      support_verbosity: false,
+      default_reasoning_summary: "auto",
+      web_search_tool_type: "text",
+      truncation_policy: { mode: "bytes", limit: CODEX_MODEL_CATALOG_LIMIT },
+      supports_parallel_tool_calls: false,
+      experimental_supported_tools: [],
+      input_modalities: ["text"],
+      context_window: contextWindow,
+      max_context_window: contextWindow,
+      effective_context_window_percent: 95,
+    });
+  }
+  if (entries.length === 0) return null;
+  return {
+    content: `${JSON.stringify({ models: entries }, null, 2)}\n`,
+    included: entries.length,
+    skipped,
+  };
+}
+
+/**
  * codex config.toml — die acpx-Inheritance-Quelle (der acpx-Plugin-Codex-Wrapper
  * regeneriert daraus das operative codex-home/config.toml bei JEDEM Gateway-
  * Start; inheritiert nur model/model_provider/model_reasoning_effort/
@@ -684,8 +783,16 @@ export function deployCodexAuth(
  * model_reasoning_effort nur wenn `thinking` nicht-leer gesetzt,
  * [projects."<p>"] trust_level = "trusted" je unique trustProjects (dedupe+
  * sort — tomllib rejected duplicate table headers, Template-Kommentar verbatim).
+ *
+ * γ.1: `modelCatalogPath` → top-level `model_catalog_json` key (Metadaten-
+ * Katalog für Custom-Modelle). NICHT acpx-vererbt (BRIDGE §15.10) — nur
+ * direkte codex-CLI-Nutzer mit CODEX_HOME auf dieser Datei bekommen den
+ * Katalog live; ACP-Sessions bleiben bundled-catalog.
  */
-export function buildCodexConfigToml(entry: HarnessConfigEntry): string {
+export function buildCodexConfigToml(
+  entry: HarnessConfigEntry,
+  modelCatalogPath?: string,
+): string {
   const baseUrl = withV1Suffix(entry.baseUrl ?? "");
   const providerId = deriveProviderId(entry.baseUrl ?? "");
   const lines: string[] = [
@@ -703,6 +810,13 @@ export function buildCodexConfigToml(entry: HarnessConfigEntry): string {
   const thinking = nonEmpty(entry.thinking);
   if (thinking) {
     lines.push(`model_reasoning_effort = ${tomlString(thinking)}`);
+  }
+  if (modelCatalogPath) {
+    lines.push(
+      // γ.1: Metadaten-Katalog für Custom-Modelle (binary-verifiziert). Nur
+      // direkte CLI-Nutzer — acpx inheritiert den key nicht (BRIDGE §15.10).
+      `model_catalog_json = ${tomlString(modelCatalogPath)}`,
+    );
   }
   lines.push(
     `sandbox_mode = "workspace-write"`,
@@ -750,6 +864,7 @@ export function deployCodexHarnessFiles(
   paths: HarnessWriterPaths,
   logger?: HarnessWriterLogger,
   harnessId = "codex",
+  modelCatalog?: ModelCatalog,
 ): { warnings: string[]; files: HarnessDeployFile[] } {
   const warnings: string[] = [];
   const files: HarnessDeployFile[] = [];
@@ -762,13 +877,39 @@ export function deployCodexHarnessFiles(
   // 2) /config/.codex/config.toml — Inheritance-Quelle, install-if-missing /
   //    upgrade-only-no-providers / customized NEVER overwritten (NOTE).
   const tomlPath = join(paths.codexSourceHome, "config.toml");
-  const action = upgradeOrNoteIfMissingOrDiffers(tomlPath, buildCodexConfigToml(entry));
+  const catalogPath = modelCatalog ? join(paths.codexSourceHome, "model-catalog.json") : undefined;
+  const action = upgradeOrNoteIfMissingOrDiffers(
+    tomlPath,
+    buildCodexConfigToml(entry, catalogPath),
+  );
   if (action === "note (customized, left intact)") {
     logger?.info?.(
       `[${harnessId}] ${tomlPath} is customized; leaving intact (helper semantics)`,
     );
   }
   files.push({ path: tomlPath, action });
+
+  // 3) γ.1 Metadaten-Katalog — NUR wenn die TOML writer-kontrolliert ist
+  //    (NOTE = customized → KEIN models.json-Orphan um eine Datei streuen,
+  //    die den Key bewusst nie trägt). Ids ohne Operator-Kontextfenster
+  //    bleiben draußen (never guess); Info-Log macht die Lücke sichtbar.
+  if (modelCatalog && entry.models && entry.models.length > 0 && action !== "note (customized, left intact)") {
+    const built = buildCodexModelCatalogJson(entry.models, modelCatalog.metaById);
+    if (built) {
+      const catalogFile = writeFileIfMissingOrDiffers(catalogPath!, built.content);
+      files.push({ path: catalogPath!, action: catalogFile });
+      logger?.info?.(
+        `[${harnessId}] model catalog ${catalogPath}: ${built.included} model(s) with operator metadata` +
+          (built.skipped.length > 0
+            ? `; ${built.skipped.length} skipped (no contextWindow in openclaw.json)`
+            : ""),
+      );
+    } else {
+      logger?.info?.(
+        `[${harnessId}] model catalog skipped: no model of the list has contextWindow in openclaw.json (codex falls back to its bundled-metadata warning)`,
+      );
+    }
+  }
   return { warnings, files };
 }
 
@@ -995,7 +1136,8 @@ export function deployHarnessConfigs(
       }
       const deploy =
         harnessId === "codex"
-          ? deployCodexHarnessFiles(enriched, paths, logger, harnessId)
+          ? // γ.1: Katalog (metabyId) für die codex-Metadaten-Datei mitgeben.
+            deployCodexHarnessFiles(enriched, paths, logger, harnessId, modelCatalog)
           : deployOpencodeHarnessFiles(enriched, paths, logger, harnessId);
       results.push({
         harnessId,

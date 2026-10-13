@@ -20,6 +20,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   buildCodexConfigToml,
+  buildCodexModelCatalogJson,
   buildModelCatalog,
   buildOpencodeConfigJsonc,
   deployHarnessConfigs,
@@ -624,6 +625,145 @@ describe("codex writer multi-model", () => {
     const toml = readText(tomlPath);
     expect(toml).toContain('model = "kimi-k2.7-code:cloud"');
     expect(toml).toContain('[profiles."a"]');
+  });
+});
+
+describe("codex model metadata catalog (γ.1)", () => {
+  const META_CATALOG = buildModelCatalog(
+    {
+      models: {
+        providers: {
+          ollama: {
+            baseUrl: "http://localhost:11434/v1",
+            models: [
+              { id: "kimi-k2.7-code:cloud", contextWindow: 262144, maxTokens: 8192 },
+              { id: "gemma4", contextWindow: 128000 },
+              { id: "no-meta" },
+              { id: "bad", contextWindow: 0 },
+              { id: "bad", contextWindow: -5 },
+              { id: "bad", contextWindow: "junk" },
+            ],
+          },
+        },
+      },
+    },
+    [],
+  );
+
+  it("buildModelCatalog collects operator metadata (first-occurrence, positive numbers only)", () => {
+    expect(META_CATALOG.metaById.get("kimi-k2.7-code:cloud")).toEqual({
+      contextWindow: 262144,
+      maxTokens: 8192,
+    });
+    expect(META_CATALOG.metaById.get("gemma4")).toEqual({ contextWindow: 128000 });
+    expect(META_CATALOG.metaById.has("no-meta")).toBe(false);
+    expect(META_CATALOG.metaById.has("bad")).toBe(false);
+  });
+
+  it("buildCodexModelCatalogJson emits only models with contextWindow (never guesses)", () => {
+    const built = buildCodexModelCatalogJson(
+      ["kimi-k2.7-code:cloud", "gemma4", "no-meta", "kimi-k2.7-code:cloud"],
+      META_CATALOG.metaById,
+    );
+    expect(built).not.toBeNull();
+    expect(built!.included).toBe(2);
+    expect(built!.skipped).toEqual(["no-meta"]);
+    const parsed = JSON.parse(built!.content) as { models: Record<string, unknown>[] };
+    expect(parsed.models).toHaveLength(2);
+    const kimi = parsed.models[0];
+    // Binary-verified (2026-10-13, deployed binary via `codex debug models`):
+    // genau DIESE Pflicht-/Metadaten-Felder — Optionals entfallen.
+    expect(kimi).toEqual({
+      slug: "kimi-k2.7-code:cloud",
+      display_name: "kimi-k2.7-code:cloud",
+      description: "Ollama model (metadata from openclaw.json models.providers)",
+      base_instructions: "",
+      supported_reasoning_levels: [],
+      shell_type: "shell_command",
+      visibility: "list",
+      supported_in_api: true,
+      priority: 1,
+      support_verbosity: false,
+      default_reasoning_summary: "auto",
+      web_search_tool_type: "text",
+      truncation_policy: { mode: "bytes", limit: 10000 },
+      supports_parallel_tool_calls: false,
+      experimental_supported_tools: [],
+      input_modalities: ["text"],
+      context_window: 262144,
+      max_context_window: 262144,
+      effective_context_window_percent: 95,
+    });
+  });
+
+  it("no model has metadata → null (no catalog file, no config key)", () => {
+    expect(buildCodexModelCatalogJson(["no-meta"], new Map())).toBeNull();
+  });
+
+  it("buildCodexConfigToml references model_catalog_json only when a path is given", () => {
+    const withPath = buildCodexConfigToml({ ...OLLAMA }, "/config/.codex/model-catalog.json");
+    expect(withPath).toMatch(
+      /^model_catalog_json = "\/config\/\.codex\/model-catalog\.json"$/m,
+    );
+    const without = buildCodexConfigToml({ ...OLLAMA });
+    expect(without).not.toMatch(/^model_catalog_json =/m);
+  });
+
+  it("e2e: writer toml + model-catalog.json bytes-synced, idempotent (2nd deploy unchanged)", () => {
+    const p = paths();
+    const catalogReport = deployHarnessConfigs(
+      { harnesses: { codex: { ...OLLAMA, models: ["gemma4", "no-meta"] } } },
+      p,
+      SILENT,
+      META_CATALOG,
+    );
+    const toml = readText(join(p.codexSourceHome, "config.toml"));
+    expect(toml).toMatch(/^model_catalog_json = /m);
+    const catalogPath = join(p.codexSourceHome, "model-catalog.json");
+    const first = readText(catalogPath);
+    const parsed = JSON.parse(first) as { models: Record<string, unknown>[] };
+    // prependDefaultModel: entry.model (kimi, HAT Metadaten) an Pos. 0 —
+    // no-meta bleibt draußen (never guess).
+    expect(parsed.models).toHaveLength(2);
+    expect(parsed.models.map((m) => m.slug)).toEqual(["kimi-k2.7-code:cloud", "gemma4"]);
+    expect(
+      catalogReport.results[0].files.find((f) => f.path === catalogPath)?.action,
+    ).toBe("created");
+    // 2. Deploy → beide Dateien unchanged (bytes-idempotent).
+    const again = deployHarnessConfigs(
+      { harnesses: { codex: { ...OLLAMA, models: ["gemma4", "no-meta"] } } },
+      p,
+      SILENT,
+      META_CATALOG,
+    );
+    expect(
+      again.results[0].files.find((f) => f.path === catalogPath)?.action,
+    ).toBe("unchanged");
+    expect(
+      again.results[0].files.find((f) => f.path === join(p.codexSourceHome, "config.toml"))
+        ?.action,
+    ).toBe("unchanged");
+    expect(readText(catalogPath)).toBe(first);
+  });
+
+  it("customized config.toml (NOTE) → NO orphan catalog file", () => {
+    const p = paths();
+    mkdirSync(join(root, "config", ".codex"), { recursive: true });
+    writeFileSync(
+      join(p.codexSourceHome, "config.toml"),
+      "# custom\ngaron = true\n[model_providers.garon_ollama]\nbase_url = \"x\"\n",
+      "utf-8",
+    );
+    const report = deployHarnessConfigs(
+      { harnesses: { codex: { ...OLLAMA, models: ["gemma4"] } } },
+      p,
+      SILENT,
+      META_CATALOG,
+    );
+    expect(
+      report.results[0].files.find((f) => f.path.endsWith("config.toml"))?.action,
+    ).toBe("note (customized, left intact)");
+    expect(existsSync(join(p.codexSourceHome, "model-catalog.json"))).toBe(false);
   });
 });
 
