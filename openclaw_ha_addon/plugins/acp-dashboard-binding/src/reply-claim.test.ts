@@ -55,6 +55,7 @@ import {
   type InboundClaimContextLike,
   type InboundClaimEventLike,
 } from "./reply-claim.js";
+import { CLONE_HIDE_DEFER_MS } from "./session-settle.js";
 
 const DASHBOARD_UUID = "123e4567-e89b-12d3-a456-426614174000";
 const CODEX_DASHBOARD_KEY = `agent:codex:dashboard:${DASHBOARD_UUID}`;
@@ -439,14 +440,15 @@ describe("F4 reply-delivery fix — inbound_claim dispatch (Weg A: subagent surf
     // mark_interrupted parity: abortedLastRun goes true.
     expect(originSettle[0]!.patch.status).toBe("interrupted");
     expect(originSettle[0]!.patch.abortedLastRun).toBe(true);
-    // V39 stamp on the TARGET fired (this test config dispatches to the
-    // harnessSessions key, not the derived clone key), but the target itself
-    // was NOT settled (the wait never went terminal — the run may still go).
+    // V39 guard (live 2026-10-13, 18 REAL sessions hidden): this test config
+    // dispatches to the harnessSessions REAL key, not the derived clone key —
+    // the spawnedBy provenance stamp is now REFUSED there (clone grammar
+    // only), so the target must not receive ANY patch (the wait never went
+    // terminal → no settle either).
     const targetPatches = store.patches.filter(
       (p) => p.sessionKey === CODEX_TEST_TARGET_KEY,
     );
-    expect(targetPatches).toHaveLength(1);
-    expect(targetPatches[0]!.patch.spawnedBy).toBe(CODEX_DASHBOARD_KEY);
+    expect(targetPatches).toHaveLength(0);
     expect(targetPatches.some((p) => p.patch.status === "done")).toBe(false);
   });
 
@@ -505,11 +507,18 @@ describe("F4 reply-delivery fix — inbound_claim dispatch (Weg A: subagent surf
       async () => ({ runId: "run-arch" }),
       async () => ({ status: "ok", terminalReply: { disposition: "visible", text: "answer" } }),
     );
+    // Deferred archival seam (mechanism A / PUSHBUG): the terminal re-archive
+    // must NOT run inside the turn's commit window anymore.
+    const stampTimers: Array<{ fn: () => void; ms: number }> = [];
     const handler = createHarnessReplyClaimHandler({
       getConfig: () => codexConfig(),
       subagent,
       isGatewayAvailable: async () => true,
       sessionStore: store.store,
+      setCloneStampTimer: (fn, ms) => {
+        stampTimers.push({ fn, ms });
+        return { unref: () => {} };
+      },
     });
     const result = await handler(event, claimContextCodex(PLUGIN_ROOT));
     expect(result.handled).toBe(true);
@@ -521,15 +530,22 @@ describe("F4 reply-delivery fix — inbound_claim dispatch (Weg A: subagent surf
     // The run was started AFTER the un-archive (dispatch is not refused).
     expect(runCalls).toHaveLength(1);
     // Patch 2 (pre-dispatch provenance): no-op — spawnedBy already correct.
-    // Final patch (post-terminal): re-archived with our marker.
-    const rearchive = targetPatches[targetPatches.length - 1]!;
+    // The target was settled (terminal wait) — and the re-archive is DEFERRED:
+    // nothing after the settle patch, no archivedAt write in the turn window.
+    expect(targetPatches.some((p) => p.patch.status === "done")).toBe(true);
+    expect(targetPatches.some((p) => p.patch.archivedAt !== undefined)).toBe(false);
+    expect(stampTimers).toHaveLength(1);
+    expect(stampTimers[0]!.ms).toBe(CLONE_HIDE_DEFER_MS);
+    // Fire the deferred archival — only NOW does the marker land. The fired
+    // callback is an async IIFE; flush its microtasks before asserting.
+    stampTimers[0]!.fn();
+    await new Promise((resolve) => setImmediate(resolve));
+    const rearchive = store.patches
+      .slice(baseline)
+      .filter((p) => p.sessionKey === CODEX_TEST_TARGET_KEY)
+      .at(-1)!;
     expect(typeof rearchive.patch.archivedAt).toBe("number");
     expect(rearchive.patch.archivedBy).toEqual({ type: "system", id: "acp-dashboard-binding" });
-    // The target was settled (terminal wait) → terminal patch precedes.
-    expect(targetPatches.some((p) => p.patch.status === "done")).toBe(true);
-    const rearchiveIndex = targetPatches.length - 1;
-    const settleIndex = targetPatches.findIndex((p) => p.patch.status === "done");
-    expect(settleIndex).toBeLessThan(rearchiveIndex);
   });
 
   it("γ never un-archives a FOREIGN archive and never re-archives over it", async () => {

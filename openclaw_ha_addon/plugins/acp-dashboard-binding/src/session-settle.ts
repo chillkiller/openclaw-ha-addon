@@ -304,6 +304,23 @@ export async function stampSubagentProvenance(params: {
   logger?: HarnessReplyClaimLogger;
 }): Promise<boolean> {
   try {
+    const rest = params.targetSessionKey.trim().split(":").slice(2).join(":");
+    if (!CLONE_KEY_REST_RE.test(rest)) {
+      // V39 over-hiding guard (audited 2026-10-13: two audits, one blind spot
+      // closed first-hand; 18 REAL sessions hidden live): the stamp may only
+      // ever land on OUR clone grammar. A REAL session targeted by a
+      // binding/discussion (e.g. a spawned `agent:<id>:acp:<uuid>` audit
+      // session) must stay visible — the host's isSubagent predicate treats
+      // ANY set spawnedBy outside a `dashboard:` rest + no category as a
+      // subagent (session-list-target-C2rmz7hN.mjs:39) and hides it from all
+      // excludeSubagents listings. Debug (not warn): for configs that target
+      // the harnessSessions REAL key directly the refusal is the NEW NORMAL
+      // on every turn — warn would be per-turn log noise.
+      params.logger?.debug?.(
+        `[acp-dashboard-binding] spawnedBy stamp refused — ${params.targetSessionKey} is not clone grammar (V39 guard)`,
+      );
+      return false;
+    }
     const ref = {
       sessionKey: params.targetSessionKey,
       agentId: params.agentId ?? parseAgentIdFromConversationId(params.originSessionKey),
@@ -414,6 +431,82 @@ export async function stampCloneHidden(params: {
 }
 
 /**
+ * Delay before the terminal γ-archival re-archive fires (mechanism A /
+ * PUSHBUG, witness 2026-10-13-v39-spawnedby-overhiding.md §4). The original
+ * stamp ran SYNCHRONOUSLY at the claim turn's terminal — one second before
+ * the host commits the final reply over a write-owner context opened at turn
+ * start; our archivedAt patch between those writes dist-threw
+ * "Terminal write owner changed before commit"
+ * (agent-run-terminal-writes-CXNCfj5F.mjs:39) and the reply never persisted
+ * (live: 15:07:37 + 16:00:35). Deferring past the whole commit-and-deliver
+ * window keeps the archival contract ("idle clones drop out of standard
+ * listings") without ever touching the turn's terminal write.
+ */
+export const CLONE_HIDE_DEFER_MS = 5 * 60_000;
+
+/**
+ * Schedules the terminal re-archive OUTSIDE the turn's commit window. Guards
+ * re-checked at fire time (the world can move in between): nothing to do when
+ * the entry is gone or already archived any-why, when a run is LIVE again
+ * (stamping an in-flight target is exactly the γ design's "never while
+ * dispatchable" violation), or when native dispatch went live mid-flight
+ * (archive-forever trap, GO-blocker C7). Fire-and-forget: a lost timer only
+ * delays the archival to the next boot sweep — it can never fail a turn.
+ */
+export function scheduleCloneHiddenStamp(params: {
+  sessionStore: SessionStoreApi;
+  targetSessionKey: string;
+  agentId?: string | null;
+  logger?: HarnessReplyClaimLogger;
+  delayMs?: number;
+  /** Test seam over setTimeout. */
+  setTimer?: (fn: () => void, ms: number) => { unref?: () => void };
+  /** Native-mode gate (passed in from reply-claim to keep this module SDK-free). */
+  isNativeDispatchMode?: () => boolean;
+}): void {
+  const timer = (params.setTimer ?? globalThis.setTimeout) as NonNullable<
+    NonNullable<typeof params.setTimer>
+  >;
+  const timerId = timer(() => {
+    void (async () => {
+      const native = params.isNativeDispatchMode?.() ?? false;
+      if (native) {
+        params.logger?.debug?.(
+          `[acp-dashboard-binding] deferred clone archival skipped — native dispatch has no un-archive leg (Weg B)`,
+        );
+        return;
+      }
+      const ref = {
+        sessionKey: params.targetSessionKey,
+        ...(params.agentId ? { agentId: params.agentId } : {}),
+      };
+      const entry = params.sessionStore.getSessionEntry(ref);
+      if (!entry) return;
+      if (entry.archivedAt !== undefined) return; // already hidden (ours or foreign)
+      if (entry.status === "running") {
+        params.logger?.debug?.(
+          `[acp-dashboard-binding] deferred clone archival skipped — ${params.targetSessionKey} is running again`,
+        );
+        return;
+      }
+      await stampCloneHidden({
+        sessionStore: params.sessionStore,
+        targetSessionKey: params.targetSessionKey,
+        agentId: params.agentId,
+        logger: params.logger,
+      });
+    })().catch((error) => {
+      params.logger?.warn?.(
+        `[acp-dashboard-binding] deferred clone archival failed — ${params.targetSessionKey}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+  }, params.delayMs ?? CLONE_HIDE_DEFER_MS);
+  // A pending archival must never hold the gateway's event loop open on
+  // shutdown — the next boot sweep archives whatever survived.
+  timerId?.unref?.();
+}
+
+/**
  * Clears OUR γ archive stamp (and only ours — see isOursCloneArchive) from a
  * clone entry just before dispatch, matching the host's restore contract —
  * the `agent` gateway method refuses work on archived entries, so an archived
@@ -453,6 +546,15 @@ export async function unarchiveHiddenClone(params: {
     return false;
   }
 }
+
+/**
+ * Boot-sweep archival idle grace (PUSHBUG fix 3): an entry touched within this
+ * window before the boot sweep must NEVER be γ-archived — the live 14:12 miss
+ * (v0.7.13.26 boot) archived the ACTIVE chat binding because the sweep's
+ * cutoff was the boot instant and the binding's updatedAt predated it by
+ * seconds. 15 min converts the archival into a real "archive-when-IDLE".
+ */
+export const CLONE_ARCHIVE_IDLE_GRACE_MS = 15 * 60_000;
 
 /**
  * §19c boot sweep: at gateway_start no in-process run can predate the process,
@@ -551,10 +653,28 @@ export async function sweepOwnedStuckSessions(params: {
   agentIds: readonly string[];
   /** Boot reference; entries updated after this mark are treated as live. */
   cutoffMs?: number;
+  /**
+   * γ archival leg master switch. Native dispatch (BRIDGE.md §21, audited
+   * GO-blocker C7) has NO un-archive leg — `unarchiveHiddenClone` lives behind
+   * the claim-hook stand-down, so an archived native target is unreachable
+   * forever ("archive-forever"). The archive must be OFF in native; the call
+   * site passes `!isNativeDispatchModeEnabled()`.
+   */
+  archiveIdleClones?: boolean;
+  /**
+   * Idle grace for the archival leg in ms (0 = legacy "anything not touched
+   * after boot" seconds-window). The live 14:12 miss archived the ACTIVE chat
+   * binding seconds after boot because its entry's updatedAt predated the
+   * sweep — a real idle grace ("not touched for ≥15 min") is the
+   * archive-when-IDLE contract the γ design intended.
+   */
+  archiveIdleAfterMs?: number;
   logger?: HarnessReplyClaimLogger;
 }): Promise<{ settled: string[]; archived: string[] }> {
   const stoppedAt = Date.now();
   const cutoff = params.cutoffMs ?? stoppedAt;
+  const archiveIdleClones = params.archiveIdleClones ?? true;
+  const archiveIdleAfterMs = params.archiveIdleAfterMs ?? 0;
   const settled: string[] = [];
   const archived: string[] = [];
   for (const agentId of params.agentIds) {
@@ -579,8 +699,13 @@ export async function sweepOwnedStuckSessions(params: {
       // the key grammar (CLONE_KEY_REST_RE) is produced exclusively by this
       // plugin's dispatch, so it is proof enough of ownership even when a
       // pre-γ clone carries no spawnedBy yet. stampCloneHidden guards
-      // categories and foreign archives (buildCloneHiddenPatch).
-      if (CLONE_KEY_REST_RE.test(rest) && !updatedAtIsLive) {
+      // categories and foreign archives (buildCloneHiddenPatch). Gated OFF in
+      // native dispatch (no un-archive leg exists — "archive-forever" trap,
+      // GO-blocker C7 of the 2026-10-13 Weg-B audit) and subject to the idle
+      // grace so the boot window cannot archive a still-active binding.
+      const updatedAtIsIdle =
+        !updatedAtIsLive && updatedAt <= stoppedAt - archiveIdleAfterMs;
+      if (CLONE_KEY_REST_RE.test(rest) && !updatedAtIsLive && updatedAtIsIdle && archiveIdleClones) {
         const hidden = await stampCloneHidden({
           sessionStore: params.sessionStore,
           targetSessionKey: sessionKey,

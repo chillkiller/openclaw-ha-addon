@@ -104,8 +104,8 @@ import {
 } from "./dashboard-bridge.js";
 import { deriveDashboardBindingRecord } from "./binding-adapter.js";
 import {
+  scheduleCloneHiddenStamp,
   settleClaimedTurnSessions,
-  stampCloneHidden,
   stampSubagentProvenance,
   unarchiveHiddenClone,
   type SessionStoreApi,
@@ -344,6 +344,11 @@ export type HarnessReplyClaimOptions = {
     claimRunId: string;
     replyText: string;
   }) => Promise<void>;
+  /**
+   * Test seam over setTimeout for the deferred terminal γ-archival
+   * (scheduleCloneHiddenStamp). Absent → globalThis.setTimeout.
+   */
+  setCloneStampTimer?: (fn: () => void, ms: number) => { unref?: () => void };
   logger?: HarnessReplyClaimLogger;
 };
 
@@ -633,12 +638,22 @@ export function createHarnessReplyClaimHandler(options: HarnessReplyClaimOptions
           // disproven live 2026-10-13). The clone stays dispatchable: the next
           // turn un-archives it right before its run (above). stampCloneHidden
           // never touches user-curated or foreign-archived entries.
+          //
+          // DEFERRED (mechanism A / PUSHBUG, witness §4): the stamp used to run
+          // right HERE — 1 s before the host persisted the final reply over its
+          // turn-start write-owner context → "Terminal write owner changed
+          // before commit" (agent-run-terminal-writes-CXNCfj5F.mjs:39) → the
+          // reply never persisted (live 15:07:37 + 16:00:35). The archival now
+          // fires after the full commit-and-deliver window; guards re-check at
+          // fire time (running-again → skip; native mid-flight → skip).
           if (wait != null && status !== "timeout" && status !== "pending") {
-            await stampCloneHidden({
+            scheduleCloneHiddenStamp({
               sessionStore: options.sessionStore,
               targetSessionKey: target,
               agentId,
               logger: log,
+              ...(options.setCloneStampTimer ? { setTimer: options.setCloneStampTimer } : {}),
+              isNativeDispatchMode: isNativeDispatchModeEnabled,
             });
           }
         }
