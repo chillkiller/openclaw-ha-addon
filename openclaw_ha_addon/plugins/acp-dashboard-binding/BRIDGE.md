@@ -1277,3 +1277,105 @@ Parität zu Telegram; bei einem künftigen Host-Mirror mit eigenem Key wäre das
 Resultat ein zweiter (deduplizierbarer) Assistent-Record — in Kauf genommen,
 dokumentiert (session-transcript-runtime erkennt Channel-Endre
 Equivalent-Antworten nur keyless).
+
+## 21. Weg-B Native Dispatch (Non-Mirror) — config-gated `dispatchMode` (GaRoN „Re-Engineering GO“, 2026-10-13)
+
+### §21.1 Befund: der native Pfad war genau EIN Metadatum entfernt
+
+Die Forensik im Live-Dist (2026.10.2 Pin) hat gezeigt, dass der gesamte
+Non-Mirror-Umbau keine neue Dispatch-Logik braucht — der Host hat den nativen
+Pfad komplett eingebaut, er ist nur hinter dem plugin-owned-Metadatum
+verschlossen:
+
+1. **Gate:** `conversation-binding-metadata-CFOhDjMh.mjs:7` —
+   `isPluginOwnedSessionBindingRecord(record)` = `metadata.pluginBindingOwner
+   === "plugin" && typeof pluginId === "string" && typeof pluginRoot ===
+   "string"`.
+2. **Dispatch:** `dispatch-from-config-C7FQOe54.mjs:170-194`
+   `resolveBoundAcpDispatchSessionKey` — bei `:186` steigt die Funktion AUS,
+   sobald das Binding plugin-owned ist (Claim-Branch); bei generischem
+   Metadata (`:194`) liefert sie den **Target-ACP-Session-Key** zurück → der
+   Turn läuft **nativ** in der Target-Session.
+3. **Claim-Branch tot bei generisch:** `:2521/:2525` —
+   `toPluginConversationBinding(record)` → `null` bei generischem Metadata ⇒
+   `pluginOwnedBinding = null` ⇒ kein `runInboundClaimForPluginOutcome`, kein
+   Plugin-Fallback, kein `persistPluginBindingUserTurn`.
+4. **Alle Konsequenz-Sites drehen mit:** `get-reply-CtePPkmr.mjs:4838`
+   (boundSessionKey-Route), `get-reply:5010` (Reset-Suppression greift nur bei
+   plugin-owned → in Weg B **fährt `/reset` der Harness selbst** — löst den
+   /reset-Finding), `chat-send-handler-M9HxenMX.mjs:2387` (Origin-Emission),
+   plugin-binding-Projektion.
+
+Der historische Weg-A-Grund (F4, Phase 2.20) — plugin-owned Marker gegen den
+F3-Blocker (synthetische Targets ohne acp_sessions-Row →
+ACP_SESSION_INIT_FAILED) — ist seit Phase 2.21 (Ensure-Provisioning,
+`ensureConfiguredAcpBindingReady` → `ensureConfiguredAcpBindingSession`,
+persistent-bindings.lifecycle-11LczMOa.mjs:23-60) weg. Weg A ist Historie,
+ Weg B ist die Zielarchitektur.
+
+### §21.2 Design: `dispatchMode: "claim" | "native"` (Config-Gate)
+
+Feature-Branch `feature/weg-b-native-dispatch` (ab γ-v2-Fix `abddcd8`),
+Commit `a705d0f`. Als **Risiko-Controller** (GaRoN „kein Risiko mehr“):
+
+- `plugins.entries["acp-dashboard-binding"].config.dispatchMode`:
+  `"claim"` (Default, Status quo inkl. γ-v2) | `"native"` (Weg B).
+- Resolution in `registerFull` (`resolvePluginDispatchMode(api.config)` →
+  `setDashboardBindingDispatchMode`) — **Flip greift beim nächsten Boot**, bewusst
+  nicht hot mid-flight.
+- **In `native`:** JEGLICHER Record-Pfad antwortet generisch —
+  `buildPluginOwnedBindingMetadata()` → `null` (agent-map.ts:137), dazu
+  `projectRecordForDispatchMode` am Adapter an allen Rückgaben (resolve,
+  resolveByConversationAsync, bind, listBySession) und
+  `withPluginOwnedMetadata` als Modus-Gate im Bridge (Synthese +
+  Legacy-Row-Re-Arm am Hydrate). Ownership-Keys
+  (`pluginBindingOwner/pluginId/pluginRoot/pluginName`, `OWNERSHIP_METADATA_KEYS`)
+  werden gestrippt, informative Metadata bleibt.
+- **Claim-Hook steht still:** erster Check in
+  `createHarnessReplyClaimHandler` (`reply-claim.ts:400`) — `native` →
+  `{handled:false}` VOR jedem Guard/Pre-Flight/Run/Wait/Settle/§20-Mirror.
+  Second Line of Defense für einen Mid-Flight-Flip (Config-Reload, bevor ein
+  stale plugin-owned Row neu ausgelöst wurde). Weg-A-Blöcke bleiben im Code,
+  unerreicht — Rollback-Sicherheit.
+- **Session-settle/Boot-Sweep unverändert:** die Sweep-Legs zielen auf Legacy-
+  Klon-Keys; in native entstehen keine neuen, Altlasten werden weiter weggeräumt.
+
+**Rollback = Config-Flip auf `"claim"` + Restart.** Kein Code-Rollback
+erforderlich.
+
+### §21.3 Verifikation (4 Stufen, alle grün, 2026-10-13)
+
+1. **Suite:** vitest 214/214 (8 Dateien; +8 Weg-B-Tests: Modus-Resolution
+   inkl. Garbage-falls-back-to-claim, Claim-Golden-Shape vs Native-Generic,
+   „differ ONLY in the ownership keys“-Invariante, Bind-Pfad, Handler-Stand-Down
+   ink. Fremd-Plugin-Priorität, Rollback-Re-Entry, Hook-Inventar unverändert in
+   beiden Modi). Strict `tsc -p tsconfig.check.json` 0 Fehler, esbuild-Bundle
+   clean.
+2. **Host-Parity-Prädikate** (`/tmp/wegb-sandbox/repro.mjs`): gegen REAL-Dist —
+   claim: `isPluginOwnedSessionBindingRecord = true`,
+   `toPluginConversationBinding` non-null; native: beides null/false, Gate
+   liefert den Target-Session-Key.
+3. **Deep Host-Parity** (`/tmp/wegb-sandbox/dispatch-parity.mjs`) — die volle
+   Dispatch-Pfad-Form, nicht nur Prädikate: unser ECHTER Adapter via
+   `registerSessionBindingAdapter` am echten Host-Service registriert, Route-
+   Facts via echtem `withConversationBindingRouteFacts` gebaut, dann die reale
+   `resolveBoundAcpDispatchSessionKey` gelaufen: claim → `undefined` (Claim-
+   Branch engaged, `:186`), native → **Target-ACP-Session-Key** (`:194`),
+   `isAcpSessionKey = true`, unmanaged Conversations bleiben draußen. 7/7 PASS.
+4. **Live-Beweis NACH GaRoN-GO** (Deploy gehalten): neuer Control-UI-Chat an
+   Harness-Agent mit `dispatchMode:"native"` → Chat-Panel rendert natively das
+   Harness-Transkript, `/reset` resettet sichtbar (Harness fährt selbst), KEIN
+   Klon-Knoten (`agent:…:acp:binding:`) im Sessions-Panel, keine
+   `plugin-binding-`-Logzeilen.
+
+### §21.4 Bewusst NICHT in diesem Zug (Backlog)
+
+- **Adapter-Gap** (`compileConfiguredBinding` + `matchInboundConversation` am
+  Channel-Plugin, configured-binding-registry-Dbpv38Br.mjs:131-147) →
+  deklarative `bindings[]`-Entries für webchat; eigener Schritt nach der
+  Native-Bestätigung.
+- **Wrapper-Regeneration-Aufpasser** (B1-Regel): das acpx-`claude`-Wrapper
+  trägt jetzt das Subagent-Model-Mapping (Ollama-Katalog statt Claude-IDs,
+  Backup `claude-agent-acp-wrapper.mjs.bak-subagent-mapping-20261013`) —
+  falls der Writer den Wrapper je regeneriert, Mapping nachziehen.
+- Migration alter Klon-Artefakte: γ-Stamps bleiben als Legacy-Räumung im Sweep.
