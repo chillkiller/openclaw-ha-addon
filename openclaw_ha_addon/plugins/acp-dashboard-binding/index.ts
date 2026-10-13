@@ -283,40 +283,48 @@ function createClaimReplyMirror(
  * harness clone targets) among roster harness agents is an orphan.
  */
 function registerStuckSessionSweep(api: OpenClawPluginApi, sessionStore: SessionStoreApi): void {
-  api.registerHook(
-    ["gateway_start"],
-    async () => {
-      try {
-        const cfg = api.config as { agents?: { entries?: Record<string, unknown> } } | undefined;
-        const agentIds = Object.keys(cfg?.agents?.entries ?? {}).filter((agentId) =>
-          createConfigHarnessRoster(api.config).isHarnessAgent(agentId),
+  // LIVE evidence 2026-10-13 (v0.7.13.23 boot log): "hook event gateway_start
+  // is dispatched by the typed hook runner only; api.registerHook
+  // registrations for it are not invoked. Use api.on(gateway_start, ...)
+  // instead." A registry-named registerHook call is contract-legal but INERT
+  // for this event. (registerHook here was also the nameless-opts sync-throw
+  // shape that dropped the whole plugin on every 0.7.13.22 boot — forensics
+  // §9.) api.on fixes the dispatch AND needs no registry name (typed-hook
+  // runner contract, same surface as the inbound_claim claim hook below).
+  if (typeof (api as { on?: unknown }).on !== "function") {
+    api.logger?.warn?.(
+      `[${CHANNEL_ID}] plugin api has no typed hook registration (api.on); boot sweep disabled`,
+    );
+    return;
+  }
+  (api.on as (
+    hookName: string,
+    handler: (event: unknown, ctx: unknown) => Promise<void>,
+  ) => void)("gateway_start", async () => {
+    try {
+      const cfg = api.config as { agents?: { entries?: Record<string, unknown> } } | undefined;
+      const agentIds = Object.keys(cfg?.agents?.entries ?? {}).filter((agentId) =>
+        createConfigHarnessRoster(api.config).isHarnessAgent(agentId),
+      );
+      if (agentIds.length === 0) return;
+      const sweep = sweepOwnedStuckSessions({
+        sessionStore: sessionStore as SweepSessionStoreApi,
+        agentIds,
+        logger: {
+          debug: (message) => api.logger.debug?.(message),
+          warn: (message) => api.logger.warn(message),
+        },
+      });
+      const result = await sweep;
+      if (result.settled.length > 0) {
+        api.logger.info(
+          `[${CHANNEL_ID}] boot sweep settled ${result.settled.length} stuck session(s): ${result.settled.join(", ")}`,
         );
-        if (agentIds.length === 0) return;
-        const sweep = sweepOwnedStuckSessions({
-          sessionStore: sessionStore as SweepSessionStoreApi,
-          agentIds,
-          logger: {
-            debug: (message) => api.logger.debug?.(message),
-            warn: (message) => api.logger.warn(message),
-          },
-        });
-        const result = await sweep;
-        if (result.settled.length > 0) {
-          api.logger.info(
-            `[${CHANNEL_ID}] boot sweep settled ${result.settled.length} stuck session(s): ${result.settled.join(", ")}`,
-          );
-        }
-      } catch (error) {
-        api.logger?.warn?.(`[${CHANNEL_ID}] boot sweep failed — ${errorBrief(error)}`);
       }
-    },
-    // v0.7.13.24: registry contract (openclaw 2026.10.2, registry
-    // registry-854ZO8XT.mjs:2940) throws "hook registration missing name" for
-    // nameless registrations — undefined opts here was the SYNC register-time
-    // thrower that dropped the whole plugin on every 0.7.13.22 boot (the
-    // bridge's nameless call threw the same error, but un-awaited/async).
-    { name: "acp-dashboard-binding:boot-sweep" },
-  );
+    } catch (error) {
+      api.logger?.warn?.(`[${CHANNEL_ID}] boot sweep failed — ${errorBrief(error)}`);
+    }
+  });
 }
 
 /**

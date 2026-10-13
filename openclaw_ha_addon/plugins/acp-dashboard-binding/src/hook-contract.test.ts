@@ -80,7 +80,7 @@ function createHookContractApi() {
 }
 
 describe("registerFull vs host hook-name contract (§9.2, register-crash forensics)", () => {
-  it("registers every hook NAMED — boot sweep, bridge inbound, claim typed hook", async () => {
+  it("registers bridge inbound hook NAMED + sweep/claim via typed hook runner", async () => {
     const { api, registry, typedHooks, unhandled, offUnhandled } = createHookContractApi();
     try {
       const entry = (await import("../index.js")).default;
@@ -89,13 +89,16 @@ describe("registerFull vs host hook-name contract (§9.2, register-crash forensi
       // registerFull launches the bridge un-awaited; let its async body reach
       // its own registerHook so the contract sees the complete inventory.
       await new Promise((resolve) => setTimeout(resolve, 100));
+      // The boot sweep rides the typed hook runner (LIVE 0.7.13.23 boot
+      // evidence: "hook event gateway_start is dispatched by the typed hook
+      // runner only; api.registerHook registrations for it are not invoked")
+      // — the only registerHook registration left is the bridge inbound one.
       expect(
         registry.map((hook) => `${hook.name}`,
         ),
-      ).toEqual(["acp-dashboard-binding:boot-sweep", "acp-dashboard-binding:inbound"]);
-      expect(registry[0].events).toEqual(["gateway_start"]);
-      expect(registry[1].events).toEqual(["message_received", "before_dispatch"]);
-      expect(typedHooks).toEqual(["inbound_claim"]);
+      ).toEqual(["acp-dashboard-binding:inbound"]);
+      expect(registry[0].events).toEqual(["message_received", "before_dispatch"]);
+      expect(typedHooks).toEqual(["inbound_claim", "gateway_start"]);
       expect(unhandled).toEqual([]);
     } finally {
       offUnhandled();
@@ -159,9 +162,11 @@ describe("registerHook call-site inventory (§9.2a static tripwire)", () => {
         }
       }
     }
-    // Guard the scanner itself: it must see both real call sites (sweep +
-    // bridge) plus the projection forward, otherwise this test proves nothing.
-    expect(found.length, JSON.stringify({ found, violations })).toBeGreaterThanOrEqual(3);
+    // Guard the scanner itself: it must see the two remaining real call sites
+    // (bridge inbound + projection forward) — the boot sweep moved to api.on
+    // (typed hook runner) per the live 0.7.13.23 boot evidence, otherwise
+    // this test proves nothing.
+    expect(found.length, JSON.stringify({ found, violations })).toBeGreaterThanOrEqual(2);
     expect(violations).toEqual([]);
   });
 });
