@@ -1516,22 +1516,36 @@ fi
 # Start web terminal (optional)
 TTYD_PID_FILE="/var/run/openclaw-ttyd.pid"
 
-# Clean up stale ttyd process from previous run using PID file
-if [ -f "$TTYD_PID_FILE" ]; then
-  OLD_PID=$(cat "$TTYD_PID_FILE" 2>/dev/null || echo "")
-  if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
-    echo "Stopping previous ttyd process (PID $OLD_PID)..."
-    kill "$OLD_PID" 2>/dev/null || true
-    sleep 1
-    # Force kill if still running
-    kill -9 "$OLD_PID" 2>/dev/null || true
+# Shared ttyd liveness helpers (boot cleanup + runtime supervisor below).
+stop_stale_ttyd() {
+  # Clean up stale ttyd process from previous run using PID file
+  if [ -f "$TTYD_PID_FILE" ]; then
+    OLD_PID=$(cat "$TTYD_PID_FILE" 2>/dev/null || echo "")
+    if [ -n "$OLD_PID" ] && kill -0 "$OLD_PID" 2>/dev/null; then
+      echo "Stopping previous ttyd process (PID $OLD_PID)..."
+      kill "$OLD_PID" 2>/dev/null || true
+      sleep 1
+      # Force kill if still running
+      kill -9 "$OLD_PID" 2>/dev/null || true
+    fi
+    rm -f "$TTYD_PID_FILE"
   fi
-  rm -f "$TTYD_PID_FILE"
-fi
+}
+start_ttyd() {
+  ttyd -W -i 127.0.0.1 -p "${TERMINAL_PORT}" -b /terminal bash -il &
+  TTYD_PID=$!
+  echo "$TTYD_PID" > "$TTYD_PID_FILE"
+  echo "ttyd started with PID $TTYD_PID"
+}
+ttyd_listening() {
+  command -v ss >/dev/null 2>&1 && ss -tlnp 2>/dev/null | grep -q ":${TERMINAL_PORT} "
+}
+
+stop_stale_ttyd
 
 if [ "$ENABLE_TERMINAL" = "true" ] || [ "$ENABLE_TERMINAL" = "1" ]; then
   # Check if the terminal port is already in use before starting ttyd
-  if command -v ss >/dev/null 2>&1 && ss -tlnp 2>/dev/null | grep -q ":${TERMINAL_PORT} "; then
+  if ttyd_listening; then
     echo ""
     echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
     echo "!!  WARNING: terminal_port ${TERMINAL_PORT} IS ALREADY IN USE  !!"
@@ -1546,13 +1560,48 @@ if [ "$ENABLE_TERMINAL" = "true" ] || [ "$ENABLE_TERMINAL" = "1" ]; then
     echo ""
   fi
   echo "Starting web terminal (ttyd) on 127.0.0.1:${TERMINAL_PORT} ..."
-  ttyd -W -i 127.0.0.1 -p "${TERMINAL_PORT}" -b /terminal bash -il &
-  TTYD_PID=$!
-  echo "$TTYD_PID" > "$TTYD_PID_FILE"
-  echo "ttyd started with PID $TTYD_PID"
+  start_ttyd
+  # Boot gate: the terminal is the FIRST surface and the only way into the
+  # openclaw CLI (operator commands + oc-gateway maintenance), so give it a
+  # bounded moment to bind before the slow gateway start claims the boot.
+  # NOT a hard hostage-gate: if ttyd can't bind (port conflict), holding the
+  # gateway forever leaves NO workable surface at all — warn loudly and let
+  # the gateway (and via Ingress at least the landing page) come up anyway.
+  TTYD_BOOT_WAITS=0
+  until ttyd_listening || [ "$TTYD_BOOT_WAITS" -ge 6 ]; do
+    TTYD_BOOT_WAITS=$((TTYD_BOOT_WAITS + 1))
+    sleep 5
+  done
+  if ! ttyd_listening; then
+    echo "WARN: web terminal (ttyd) did not bind 127.0.0.1:${TERMINAL_PORT} within 30 s;"
+    echo "      continuing WITHOUT terminal (operator CLI unavailable) — fix"
+    echo "      'terminal_port' in the app configuration."
+  fi
+  # The runtime supervisor subshell below keeps ttyd alive from here on.
 else
   echo "Terminal disabled (enable_terminal=$ENABLE_TERMINAL)"
 fi
+
+# ttyd runtime supervisor: the web terminal is the operator's fallback surface
+# (and the way into `oc-gateway` maintenance), but ttyd is loopback-only and
+# therefore invisible to the HA watchdog (tcp://[HOST]:49200 sees only nginx).
+# A dead ttyd used to leave the app terminal-less until the next full add-on
+# restart; a one-line local respawn beats a container restart, so HA stays out
+# of this by design. Checks the port (not just the PID — catches a process that
+# stopped listening), 30 s cadence, independent of the gateway supervision loop.
+supervise_ttyd() {
+  while [ "$ENABLE_TERMINAL" = "true" ] || [ "$ENABLE_TERMINAL" = "1" ]; do
+    if ttyd_listening; then
+      sleep 30
+      continue
+    fi
+    echo "WARN: web terminal (ttyd) not listening on ${TERMINAL_PORT}; restarting it..."
+    stop_stale_ttyd
+    start_ttyd
+    sleep 30
+  done
+}
+( supervise_ttyd ) &
 
 # Start ingress reverse proxy (nginx). This provides the app UI inside HA.
 # Token handling (audit comment fix): the token is injected server-side into
@@ -1685,16 +1734,174 @@ except Exception:
 # nginx and the terminal stay up so the operator can repair the setup through
 # HA Ingress; the supervisor loop below retries the start. GW_IS_CHILD=false
 # plus an empty GW_PID makes the loop skip `wait` and enter the restart path.
-if ! start_openclaw_runtime; then
-  echo "WARN: OpenClaw runtime failed to start; ingress UI stays up, retrying in the supervisor loop."
+
+# --- Operator maintenance latch (terminal gateway lifecycle) ------------------
+# HA supervises this add-on container; this loop is the only watcher the
+# loopback-only gateway has (issue #95 topology). Maintenance that needs the
+# gateway DOWN — `openclaw doctor` / `doctor --fix` ("must never run against a
+# live gateway"), manual config surgery — was impossible: HA has no per-gateway
+# watchdog (tcp://HOST:49200 only sees the nginx ingress), and `openclaw gateway
+# stop` in the terminal was futile because this loop respawned the daemon.
+# The latch flag is that missing "take it down and hold it" switch; the
+# `oc-gateway` helper (installed below, before boot) drives it from the web terminal.
+install_oc_gateway_helper() {
+  # Idempotent: regenerated on every add-on start so the helper always matches
+  # this run.sh (marker line documents generation). OC_GATEWAY_FLAG stays an
+  # environment override for testing.
+  local helper_tmp target_dir
+  helper_tmp="$(mktemp /tmp/oc-gateway.XXXXXX)" || return 1
+  cat > "$helper_tmp" <<'OC_GATEWAY_HELPER'
+#!/bin/bash
+# oc-gateway — operator tool for the OpenClaw gateway inside this add-on.
+# Generated by run.sh (OC_GATEWAY_HELPER_GEN_STAMP); regenerated on every
+# add-on start — hand edits here are overwritten. Test hook: OC_GATEWAY_FLAG.
+set -u
+export OPENCLAW_CONFIG_DIR="${OPENCLAW_CONFIG_DIR:-/config/.openclaw}"
+FLAG="${OC_GATEWAY_FLAG:-${OPENCLAW_CONFIG_DIR}/.gateway-maintenance}"
+PORT="${OC_GATEWAY_PORT:-@@GW_PORT@@}"
+SUPERVISOR_BASE="${OC_SUPERVISOR_BASE:-http://supervisor}"
+
+usage() {
+  cat <<'USAGE'
+oc-gateway — gateway lifecycle from the web terminal.
+
+  oc-gateway status      gateway status (probe capped at 10 s)
+  oc-gateway health      quick health check
+  oc-gateway stop        touch the maintenance latch, stop the gateway, HOLD it
+                         down (supervision loop will not respawn) — use for
+                         `openclaw doctor` / repairs / config surgery
+  oc-gateway resume      remove the latch; gateway respawns within ~5 s
+  oc-gateway restart     restart the whole add-on (HA Supervisor API — this is
+                         what also brings the gateway back, fresh)
+  oc-gateway update      how to update the add-on (HA-UI / Supervisor, not CLI)
+
+The latch flag lives at $FLAG and survives add-on restarts on purpose: an
+explicit operator hold is not undone by a supervisor bounce. Clear it with
+`oc-gateway resume` (or delete the file).
+USAGE
+}
+
+wait_port_free() {
+  local i
+  for i in $(seq 1 15); do
+    if ! command -v ss >/dev/null 2>&1 || ! ss -tln 2>/dev/null | grep -q ":${PORT} "; then
+      return 0
+    fi
+    sleep 1
+  done
+  return 1
+}
+
+case "${1:-}" in
+  status)
+    exec timeout 20 openclaw gateway status --timeout 10000
+    ;;
+  health)
+    exec timeout 20 openclaw gateway health
+    ;;
+  stop|maintenance)
+    [ "${2:-}" = "--help" ] && { usage; exit 0; }
+    mkdir -p "$(dirname "$FLAG")"
+    touch "$FLAG"
+    echo "Maintenance latch set: $FLAG"
+    if command -v openclaw >/dev/null 2>&1; then
+      # Non-interactive shells refuse a plain stop (operator-service guard);
+      # --force is the documented intent signal for exactly this case.
+      timeout 90 openclaw gateway stop --force \
+        || pkill -TERM -f "openclaw-gateway" 2>/dev/null || true
+    else
+      pkill -TERM -f "openclaw-gateway" 2>/dev/null || true
+    fi
+    if wait_port_free; then
+      echo "Gateway stopped and HELD down. nginx + web terminal stay up."
+      echo "Run your maintenance now (e.g. 'openclaw doctor' / 'openclaw doctor --fix')."
+      echo "Resume afterwards with: oc-gateway resume"
+    else
+      echo "WARN: gateway port ${PORT} still occupied after 15 s; the supervision"
+      echo "      loop already holds the gateway down — leaving the daemon alone."
+    fi
+    ;;
+  resume)
+    if [ -f "$FLAG" ]; then
+      rm -f "$FLAG" && echo "Maintenance latch removed; gateway respawns within ~5 s."
+    else
+      echo "No maintenance latch present (gateway supervision is active)."
+    fi
+    ;;
+  maintenance-status)
+    [ -f "$FLAG" ] && { echo "HELD DOWN (latch present: $FLAG)"; exit 0; }
+    echo "SUPERVISED (no latch)"; exit 1
+    ;;
+  restart)
+    if [ -n "${SUPERVISOR_TOKEN:-}" ]; then
+      curl -sS -X POST \
+        -H "Authorization: Bearer ${SUPERVISOR_TOKEN}" \
+        -H "Content-Type: application/json" \
+        "${SUPERVISOR_BASE}/addons/self/restart" \
+        && echo "Add-on restart requested — the terminal will reconnect when HA brings it back."
+    else
+      echo "SUPERVISOR_TOKEN not available in this shell; restart via the HA UI:"
+      echo "Settings -> Add-ons -> OpenClaw HA Add-on -> Restart."
+    fi
+    ;;
+  update)
+    echo "Update the add-on via the HA UI (Settings -> Add-ons -> Updates) or the"
+    echo "Supervisor add-on panel. A CLI-only update is not supported here."
+    ;;
+  help|-h|--help)
+    usage
+    ;;
+  *)
+    usage
+    echo
+    echo "Unknown command: ${1:-<none>}" >&2
+    exit 2
+    ;;
+esac
+OC_GATEWAY_HELPER
+  sed -i "s|@@GW_PORT@@|${GATEWAY_INTERNAL_PORT:-18790}|g" "$helper_tmp" || { rm -f "$helper_tmp"; return 1; }
+  sed -i "s|OC_GATEWAY_HELPER_GEN_STAMP|generated $(date -u +%Y-%m-%dT%H:%M:%SZ) by run.sh|" "$helper_tmp" || true
+  chmod 0755 "$helper_tmp"
+  if [ -d /usr/local/bin ] && [ -w /usr/local/bin ]; then
+    target_dir="/usr/local/bin"
+  else
+    target_dir="${OPENCLAW_CONFIG_DIR}/bin"
+    mkdir -p "$target_dir"
+  fi
+  mv -f "$helper_tmp" "${target_dir}/oc-gateway" || { rm -f "$helper_tmp"; return 1; }
+  case ":${PATH}:" in
+    *":${target_dir}:"*) ;;
+    *) echo "WARN: oc-gateway installed in ${target_dir} which is not on PATH;" >&2
+       echo "      call it as '${target_dir}/oc-gateway'." >&2 ;;
+  esac
+  echo "INFO: oc-gateway helper installed: ${target_dir}/oc-gateway"
+  return 0
+}
+install_oc_gateway_helper || echo "WARN: could not install oc-gateway helper; the maintenance latch still works via the flag file."
+
+# Boot-time latch check: the flag survives add-on restarts on purpose, so a
+# boot that starts WITH the flag present must not even attempt the initial
+# start (doctor sessions survive an operator's container restart). The
+# supervisor loop's latch block then holds the gateway down until resume.
+GATEWAY_MAINTENANCE_FLAG="${OPENCLAW_CONFIG_DIR}/.gateway-maintenance"
+if [ -f "${GATEWAY_MAINTENANCE_FLAG}" ]; then
+  echo "NOTICE: Maintenance latch present at boot ($GATEWAY_MAINTENANCE_FLAG);"
+  echo "        gateway NOT started. nginx + web terminal are up."
+  echo "        Resume with 'oc-gateway resume'."
   GW_IS_CHILD=false
   GW_PID=""
-fi
-# Only a successful (re)start updates the boot timer; if-form on purpose so a
-# failed initial start (empty GW_PID) can never kill the supervisor shell.
-if [ -n "${GW_PID:-}" ]; then
-  GW_BOOT_START=$(date +%s)
-  GW_PREV_BOOT_ALIVE=1   # the initial boot actually came up (audit P2-1)
+else
+  if ! start_openclaw_runtime; then
+    echo "WARN: OpenClaw runtime failed to start; ingress UI stays up, retrying in the supervisor loop."
+    GW_IS_CHILD=false
+    GW_PID=""
+  fi
+  # Only a successful (re)start updates the boot timer; if-form on purpose so a
+  # failed initial start (empty GW_PID) can never kill the supervisor shell.
+  if [ -n "${GW_PID:-}" ]; then
+    GW_BOOT_START=$(date +%s)
+    GW_PREV_BOOT_ALIVE=1   # the initial boot actually came up (audit P2-1)
+  fi
 fi
 
 start_gw_relay
@@ -1800,6 +2007,42 @@ while true; do
     GW_IS_CHILD=false
     GW_BOOT_START=$(date +%s)
     GW_PREV_BOOT_ALIVE=1
+    continue
+  fi
+
+  # --- Operator maintenance latch: hold the gateway down on request ----------
+  # Checked AFTER exit detection (so a live daemon keeps running until it
+  # exits or is stopped by 'oc-gateway stop') and BEFORE backoff/doctor —
+  # the whole point: `openclaw doctor` must never race the respawner. The
+  # flag survives add-on restarts deliberately (explicit operator state).
+  if [ -f "$GATEWAY_MAINTENANCE_FLAG" ]; then
+    echo "NOTICE: Maintenance latch present; gateway held down (no respawn, no auto-doctor)."
+    echo "        Run your maintenance now (e.g. 'openclaw doctor')."
+    echo "        Resume with 'oc-gateway resume' — or delete ${GATEWAY_MAINTENANCE_FLAG}."
+    while [ -f "$GATEWAY_MAINTENANCE_FLAG" ]; do
+      sleep 5
+      [ "$SHUTTING_DOWN" = "true" ] && break 2
+    done
+    if [ "$SHUTTING_DOWN" = "true" ]; then
+      break
+    fi
+    echo "INFO: Maintenance latch removed; restarting gateway with a fresh state."
+    GW_PID=""
+    GW_IS_CHILD=false
+    GW_BOOT_START=$(date +%s)
+    GW_PREV_BOOT_ALIVE=0
+    GW_CONSECUTIVE_FAILS=0
+    if start_openclaw_runtime; then
+      GW_IS_CHILD=true
+      GW_BOOT_START=$(date +%s)
+      GW_PREV_BOOT_ALIVE=1
+      start_gw_relay
+    else
+      echo "ERROR: Failed to restart OpenClaw runtime after maintenance; re-entering supervision."
+      GW_PID=""
+      GW_IS_CHILD=false
+      GW_CONSECUTIVE_FAILS=0
+    fi
     continue
   fi
 
