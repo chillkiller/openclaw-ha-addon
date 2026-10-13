@@ -1561,6 +1561,23 @@ if [ "$ENABLE_TERMINAL" = "true" ] || [ "$ENABLE_TERMINAL" = "1" ]; then
   fi
   echo "Starting web terminal (ttyd) on 127.0.0.1:${TERMINAL_PORT} ..."
   start_ttyd
+  # Boot gate: the terminal is the FIRST surface and the only way into the
+  # openclaw CLI (operator commands + oc-gateway maintenance), so give it a
+  # bounded moment to bind before the slow gateway start claims the boot.
+  # NOT a hard hostage-gate: if ttyd can't bind (port conflict), holding the
+  # gateway forever leaves NO workable surface at all — warn loudly and let
+  # the gateway (and via Ingress at least the landing page) come up anyway.
+  TTYD_BOOT_WAITS=0
+  until ttyd_listening || [ "$TTYD_BOOT_WAITS" -ge 6 ]; do
+    TTYD_BOOT_WAITS=$((TTYD_BOOT_WAITS + 1))
+    sleep 5
+  done
+  if ! ttyd_listening; then
+    echo "WARN: web terminal (ttyd) did not bind 127.0.0.1:${TERMINAL_PORT} within 30 s;"
+    echo "      continuing WITHOUT terminal (operator CLI unavailable) — fix"
+    echo "      'terminal_port' in the app configuration."
+  fi
+  # The runtime supervisor subshell below keeps ttyd alive from here on.
 else
   echo "Terminal disabled (enable_terminal=$ENABLE_TERMINAL)"
 fi
