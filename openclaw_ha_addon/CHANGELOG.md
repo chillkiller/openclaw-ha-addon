@@ -1,3 +1,17 @@
+## [0.7.13.25] - 2026-10-13
+
+### Fixed
+- **γ-v2 clone invisibility (archive-when-idle):** idle harness clone nodes no longer surface in the user-visible session list; archived state keeps the dispatch path clean (no binding-record toxicity). Codex delta-audit GO.
+
+### Added
+- **Weg-B native dispatch (non-mirror, config-gated):** `dispatchMode: "claim" | "native"` (default `claim` — zero behavior change until flipped). `native` emits generic binding records (ownership metadata `pluginBindingOwner/pluginId/pluginRoot/pluginName` stripped; all informative fields kept), so the host dispatch gate routes the webchat conversation natively into the target ACP session — the conversation IS the harness session, no clone/mirror/claim, and `/reset` is the harness's own flow. Rollback = flip back to `claim` (applies at next boot). Docs + verification record: `plugins/acp-dashboard-binding/BRIDGE.md` §21; deep host-parity suite against the real 2026.10.2 dist (real adapter service, real route facts, real `resolveBoundAcpDispatchSessionKey`) 7/7.
+- **Gateway lifecycle operators (`oc-gateway`, installed on boot to `/usr/local/bin`):** `status` (probe capped 10 s), `health`, `stop` (latch + `openclaw gateway stop --force` + pkill fallback + port-free wait), `resume`, `maintenance-status`, `restart` (Supervisor API), `update` hint. Maintainance latch flag `/config/.openclaw/.gateway-maintenance` survives addon restarts by design; the supervision loop checks it AFTER exit detection and BEFORE backoff/auto-doctor, and a boot that starts with the flag skips the initial gateway start entirely.
+- **ttyd runtime supervisor:** port-based (not PID-based) liveness check every 30 s; one-line local respawn when the terminal went silent; disabled when `enable_terminal=false`.
+- **Terminal-first boot gate:** gateway start waits up to 30 s for the terminal to listen; warning + continue on permanent failure (nginx/Ingress + agent remain the escape hatches).
+
+### Docs
+- DOCS.md: "Taking the gateway DOWN for maintenance" troubleshooting section (oc-gateway usage, latch semantics).
+
 ## [0.7.13.24] - 2026-10-13
 
 ### Fixed
