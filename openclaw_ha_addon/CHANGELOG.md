@@ -1,3 +1,22 @@
+## [0.7.13.30] - 2026-10-14
+
+### Fixed
+- **harness-config-writer lebte LIVE als stummer No-op** (Owner-Design "leere/unvollständige configs aktualisiert, schon korrekte so belassen"): der Plugin-Read nutzte `api.config.harnesses` (die VOLLE OpenClawConfig → immer undefined) statt `api.pluginConfig` (dist-belegt; auch im .29-Live-Dist nachgewiesen). Fix: `resolvePluginConfig` — primär `api.pluginConfig`, Fallback-Drill über die volle Config; Legacy-Key unter `acp-dashboard-binding` erzeugt jetzt ein sichtbares WARN statt eines stillen No-ops (M2).
+- **Review-Fix-Batch M1–M5 + N1–N3** (adversariale 4er-Session 2026-10-14, ALLE Fixings vor dem GO): M1 `model_catalog_json` NUR bei non-null Katalog-Build (kein dangling Key auf eine nie geschriebene Datei); M3 opencode.jsonc 0600 + Secret-Files schreiben ihren Mode am TMP VOR dem rename (kein Exposé-Fenster; Updates behalten den bestehenden Mode); M4 maxTokens-Sammlung entfernt (keine konsumierende Surface); M5 "SKIP ⇒ Picker-Verlust (REPLACE-ALL)" in §15.7 R9 + §15.11 dokumentiert; N1 Doppel-Warning bei invalid `models`; N2 `modelsSource:"optout"` (Operator-`models: []` ≠ Katalog-"none"); N3 neutraler Katalog-`description` ("custom model …").
+
+### Added
+- **Multi-Model γ re-landed** (Cherry-Picks `e6dbb18` + `7a0351e` auf main): alle openclaw.json-Provider-Modelle wandern in die Harness-Surfaces (codex-[profiles.*], opencode models-Map, claude `CLAUDE_MODEL_CONFIG`, ENV-Kommentarlisten); das Add-on-Modell bleibt Default; Signatur-Semantik (`# harness-config-writer (generated)`) macht writer-generierte config.toml bytes-sync-refreshbar.
+- **γ.1 codex `model_catalog_json`:** Operator-`contextWindow`-Metadaten aus openclaw.json → `/config/.codex/model-catalog.json` (binary-verifiziertes Entry-Template); fixt die codex-Warnung "Model metadata for `X` not found" (65× belegt) für direkte CLI-Nutzer. ACP-Sessions bleiben bundled-Katalog (Key nicht acpx-vererbt — upstream-Watchlist).
+- Nota für Bestands-Setups mit `harness_base_url`: der Helper generiert ab γ einen claude-Entry by Default (Ausschluss via `harness_excluded_agents`).
+
+### Changed
+- Rollback-Lage: die γ-Commits lagen seit dem .28-Rollback nur auf `feature/harness-writer-multimodel`; Re-Land = gezielte Cherry-Picks (Merge wäre No-op, `revert db81147` wäre fatal = .27-Paket-Re-Landung).
+- Ops: das First-Enable-Backup-Manifest (11.10. 16:31) wurde archiviert (`manifest.json.archived-pre-gamma-20261011`) — der Helper nimmt beim nächsten Enabled-Boot einen FRISCHEN Snapshot des γ-Stands (der alte Stand hätte OFF-Restore die 7 env-Files löschen + 24→1 Modelle einkürzen lassen).
+- Ops-Wissen: die Crash-Kaskade begann 13.10. 14:03 lok. mit dem .26-Deploy (erster 120-s-Timeout schon auf .26); der Writer ist exkulpiert (Plugin-Load ~150 s > Watchdog-Fenster); exit 137 = Watchdog-Stop-Kill, kein OOM; supervisor-Log-Stamps nach jedem Supervisor-Boot +2 h zweideutig (`docker logs -t` ist verlässlich).
+
+### Verification
+- vitest 76/76 (inkl. neuer M1 iii/iv/v, M2-Entry, M3-Mode-Tests), tsc strict 0, Python-Helper 46/46, `bash -n run.sh` OK.
+
 ## [0.7.13.29] - 2026-10-14
 
 ### Fixed
