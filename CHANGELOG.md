@@ -1,3 +1,12 @@
+## 0.7.13.29 (2026-10-14) — fix: acp-dashboard-binding ohne Auto-Archivierung (cloneAutoArchive, Default off)
+
+- **GaRoN-Direktive (2026-10-14):** die γ Auto-Archivierung trennte Antworten von den Klonen — archivierte Klon-Sessions waren in keinem lesbaren Surface (Fake-Session ohne Text, ACP-Session archiviert). Das Plugin läuft jetzt OHNE Auto-Archivierung.
+- **Neue Config-Option `cloneAutoArchive`** (`plugins.entries["acp-dashboard-binding"].config`, boolean): Default **false** — es werden nie Archive-Stamps geschrieben (Turn-Settle-Leg UND Boot-Sweep-Leg). `true` = exaktes γ-Verhalten (.25), Rollback = Option, kein Code-Rollback.
+- **Unarchive-vor-Dispatch bleibt gate-unabhängig:** Legacy-γ-Stamps heilen beim nächsten Dispatch der Konversation selbst (nur OUR archivedBy-id-Marken, nie user-/host-Archive).
+- **Nebeneffekt (gewollt):** der γ-v2 Re-Archive-Race („Terminal write owner changed before commit", PUSHBUG-Ursache 3) ist im Default strukturell tot. Der .27-Ansatz (deferred γ) ist im Default-Zustand superseded.
+- Basis = exakter 0.7.13.28-Codebestand (db81147 = 0.7.13.25) — binding-only, kein sonstiger Scope (harness-writer/run.sh/helper unverändert). Live-Beweis der 5 vergrabenen Sessions: heilen per Dispatch oder bleiben archive (GaRoN: Script nicht nötig).
+- Verifikation: Suite 218/218, tsc strict 0, esbuild-Bundle mit exakten Deploy-Helper-Flags geprüft. 2-fach-Audit: siehe agents/coding-review/findings/2026-10-14-clone-autoarchive-off-*.md
+
 ## 0.7.13.28 (2026-10-14) — Rollback auf den v0.7.13.25-Codebestand (Stabilitäts-Entschärfung)
 
 - **Rollback (GaRoN 2026-10-14, GO „rollback"):** der Add-on-Codebestand ist exakt auf `v0.7.13.25` zurückgesetzt — den letzten Stand VOR dem .26/.27-Änderungsfenster. Begründung: seit 0.7.13.26 beobachtete Login-/Ingress- und Add-on-Stabilitätsregressionen.

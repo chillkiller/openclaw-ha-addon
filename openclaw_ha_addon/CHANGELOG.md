@@ -1,3 +1,12 @@
+## [0.7.13.29] - 2026-10-14
+
+### Fixed
+- **acp-dashboard-binding ohne Auto-Archivierung (GaRoN-Direktive 2026-10-14).** Neue Config-Option `cloneAutoArchive` (Default **false**): das Plugin schreibt nie Archive-Stamps (Turn-Settle UND Boot-Sweep); die γ-v2 Re-Archive-Race ist im Default strukturell tot. `true` = Legacy-γ-Verhalten (Rollback-Schalter).
+- **Unarchive-vor-Dispatch unverändert:** Legacy-γ-Stamps heilen beim nächsten Dispatch selbst (nur OUR-Marked).
+
+### Changed
+- Basis = exakter 0.7.13.28-Bestand (0.7.13.25-Code); binding-only, kein sonstiger Scope.
+
 ## [0.7.13.28] - 2026-10-14
 
 ### Changed
