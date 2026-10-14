@@ -6,8 +6,12 @@
  * module projects: update callback runs against the CURRENT entry, returning
  * null = no write).
  */
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import {
+  resetDashboardBindingCloneAutoArchiveForTest,
+  setDashboardBindingCloneAutoArchive,
+} from "./agent-map.js";
 import {
   buildClaimSettlePatch,
   buildCloneHiddenPatch,
@@ -259,7 +263,10 @@ describe("BRIDGE §19 / V39: stampSubagentProvenance", () => {
   });
 });
 
-describe("BRIDGE γ: buildCloneHiddenPatch / stampCloneHidden / unarchiveHiddenClone", () => {
+describe("BRIDGE γ (legacy mode, cloneAutoArchive:true): buildCloneHiddenPatch / stampCloneHidden / unarchiveHiddenClone", () => {
+  beforeEach(() => setDashboardBindingCloneAutoArchive(true));
+  afterEach(() => resetDashboardBindingCloneAutoArchiveForTest());
+
   it("buildCloneHiddenPatch archives uncategorized, unarchived entries only (archivedBy marker)", () => {
     expect(buildCloneHiddenPatch({ status: "done" })).toEqual({
       archivedAt: expect.any(Number),
@@ -340,7 +347,46 @@ describe("BRIDGE γ: buildCloneHiddenPatch / stampCloneHidden / unarchiveHiddenC
   });
 });
 
+describe("BRIDGE γ OFF (default, GaRoN directive 2026-10-14): no auto-archiving", () => {
+  it("buildCloneHiddenPatch is a no-op even for the ideal archival candidate", () => {
+    expect(buildCloneHiddenPatch({ status: "done", endedAt: 5 })).toBeNull();
+    expect(buildCloneHiddenPatch({ status: "running" })).toBeNull();
+  });
+
+  it("stampCloneHidden writes nothing", async () => {
+    const store = createFakeStore({ entries: { [TARGET]: { status: "done", endedAt: 5 } } });
+    expect(await stampCloneHidden({ sessionStore: store, targetSessionKey: TARGET })).toBe(false);
+    expect(store.patches).toEqual([]);
+    expect((store.entries[TARGET] as SettleSessionEntryLike).archivedAt).toBeUndefined();
+  });
+
+  it("sweep: settles interrupted orphans but archives NOTHING (γ leg no-op)", async () => {
+    const doneClone = "agent:claude:acp:binding:telegram:default:0123abcdeadbeef0";
+    const store = createFakeStore({
+      entries: {
+        [doneClone]: { status: "done", endedAt: 5 },
+        [TARGET]: { status: "running", updatedAt: 1, lifecycleRunId: RUN_ID },
+      },
+    });
+    const result = await sweepOwnedStuckSessions({
+      sessionStore: store,
+      agentIds: ["claude"],
+      cutoffMs: Date.now() - 1_000,
+    });
+    // Settle bookkeeping still runs (boot interrupted the orphan run)...
+    expect(result.settled).toEqual([TARGET]);
+    expect((store.entries[TARGET] as SettleSessionEntryLike).status).toBe("interrupted");
+    // ...but no archive stamps: the transcript stays readable everywhere.
+    expect(result.archived).toEqual([]);
+    expect((store.entries[TARGET] as SettleSessionEntryLike).archivedAt).toBeUndefined();
+    expect((store.entries[doneClone] as SettleSessionEntryLike).archivedAt).toBeUndefined();
+    expect(store.patches.every((p) => !Object.hasOwn(p.patch, "archivedAt"))).toBe(true);
+  });
+});
+
 describe("BRIDGE §19c: sweepOwnedStuckSessions", () => {
+  afterEach(() => resetDashboardBindingCloneAutoArchiveForTest());
+
   it("settles stuck owned entries (clone + dashboard grammar) and nothing else", async () => {
     const foreigner = "agent:claude:subagent:abc:123";
     const foreign = "agent:other:dashboard:123";
@@ -370,7 +416,8 @@ describe("BRIDGE §19c: sweepOwnedStuckSessions", () => {
     expect((store.entries["agent:claude:dashboard:ff"] as SettleSessionEntryLike).status).toBe("running");
   });
 
-  it("γ archival leg: stamps archivedAt on settled/running pre-cutoff clones, never on live entries, categorized rows, or foreign keys", async () => {
+  it("γ archival leg (legacy mode): stamps archivedAt on settled/running pre-cutoff clones, never on live entries, categorized rows, or foreign keys", async () => {
+    setDashboardBindingCloneAutoArchive(true);
     const foreigner = "agent:claude:subagent:abc:123";
     const categorizedClone = "agent:claude:acp:binding:webchat:default:cafebabedeadbeef";
     const liveClone = "agent:claude:acp:binding:webchat:default:feedface0011aa11";

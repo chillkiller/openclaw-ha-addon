@@ -59,6 +59,10 @@
           "native"
         ],
         "description": "Default claim (Weg A): records carry plugin-owned markers and turns claim through the plugin's inbound_claim hook. native (Weg B): records answer WITHOUT ownership markers so the host's native dispatch runs turns directly in the target ACP session (conversation == ACP session; no clone/mirror; /reset rides the harness). Applied at plugin registration; flip requires a restart. Rollback = set back to claim."
+      },
+      "cloneAutoArchive": {
+        "type": "boolean",
+        "description": "Default false (GaRoN directive 2026-10-14): NO γ auto-archiving of idle clone sessions — archived clones hid the reply transcript from every readable surface (origin conversation and target session alike, while archived). With false the plugin never writes archive stamps; pre-dispatch un-archive still heals OUR legacy stamps. Set true to restore the legacy γ hide-via-archive behavior. Applied at plugin registration (restart re-reads)."
       }
     }
   },

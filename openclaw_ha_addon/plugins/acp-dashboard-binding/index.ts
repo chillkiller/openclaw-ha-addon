@@ -26,7 +26,9 @@ import {
   BINDING_CHANNEL,
   CHANNEL_ID,
   clearDashboardHarnessProvisions,
+  resolvePluginCloneAutoArchive,
   resolvePluginDispatchMode,
+  setDashboardBindingCloneAutoArchive,
   setDashboardBindingDispatchMode,
   setDashboardBindingPluginRoot,
   setDashboardBindingProvisioner,
@@ -451,6 +453,19 @@ export default defineBundledChannelCompatibleEntry({
       if (mode === "native") {
         api.logger?.info?.(
           `[${CHANNEL_ID}] dispatch mode = native (Weg B): records answer generic, host dispatch runs turns in the target ACP session`,
+        );
+      }
+    }
+    // γ auto-archive gate (GaRoN directive 2026-10-14): default OFF — clone
+    // archives hid the reply transcript from every readable surface. Setting
+    // `cloneAutoArchive: true` in the plugin config restores the legacy γ
+    // archival; a restart re-reads config (same contract as dispatchMode).
+    {
+      const autoArchive = resolvePluginCloneAutoArchive(api.config);
+      setDashboardBindingCloneAutoArchive(autoArchive);
+      if (!autoArchive) {
+        api.logger?.info?.(
+          `[${CHANNEL_ID}] clone auto-archive = off (default): no γ archive stamps, clone transcripts stay readable; pre-dispatch un-archive still heals legacy stamps`,
         );
       }
     }

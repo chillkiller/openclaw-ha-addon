@@ -1379,3 +1379,34 @@ erforderlich.
   Backup `claude-agent-acp-wrapper.mjs.bak-subagent-mapping-20261013`) —
   falls der Writer den Wrapper je regeneriert, Mapping nachziehen.
 - Migration alter Klon-Artefakte: γ-Stamps bleiben als Legacy-Räumung im Sweep.
+
+## 22. γ Auto-Archivierung AUS (config-gate `cloneAutoArchive`, GaRoN-Direktive 2026-10-14)
+
+GaRoN: die Auto-Archivierung trennt die Sessions von ihren Klonen — Antworten
+landeten in einem Ziel, das weder in der Fake-Session lesbar noch sichtbar war,
+weil es archiviert war. Direktive: Plugin OHNE Auto-Archivierung.
+
+- **`plugins.entries["acp-dashboard-binding"].config.cloneAutoArchive`**
+  (boolean, Default **false**, applied at registration wie `dispatchMode`):
+  - `false` (neu Default): `buildCloneHiddenPatch` antwortet `null` → KEINE
+    archive-when-idle-Stamps mehr (Turn-Settle-Leg UND Boot-Sweep-Leg).
+    Klon-Transkripte bleiben lesbar; die Listings zeigen sie (spawnedBy-Leg
+    unberührt — die versteckt ohne Archiv-Filter, niemals archiviert sie).
+  - `true`: exaktes .25 γ-Verhalten (Rollback = Option, kein Code-Rollback).
+- **Unarchive-vor-Dispatch bleibt IMMER aktiv** (gate-unabhängig): Legacy-γ-Stamps
+  aus .25-Aufläufen heilen beim nächsten Dispatch der jeweiligen Konversation
+  selbst (unarchiveHiddenClone — nur OUR archivedBy-id-Marken, nie fremde).
+- **Nebeneffekt (gewollt):** der γ-v2 Re-Archive-Race („Terminal write owner
+  changed before commit", Pushbug-Ursache 3) ist im Default-Zustand strukturell
+  tot — es gibt keinen Stamp, der mit dem Host-Commit wettrennen kann.
+  Damit erledigt sich der .27-Ansatz (Deferred-Archive) für den Default-Modus:
+  keine Archivierung schlägt spätere/differente Archivierung.
+- **Supersession:** die .27-Fix-Zusammenfassung (513d074/2dd81d9: deferred γ
+  + V39-Guard + native-gated Sweep) bleibt im Branch-Verlauf als
+  Fallback-Dokumentation; live relevant ist ab .29 der Gate-Ansatz. Der V39-
+  REAL-Session-Guard ist im .28-Baseline NICHT enthalten — wenn wieder REAL-
+  Stamps auftauchen: `/config/pushbug-tools/scan_hidden.mjs` + restore.
+- Sowohl `registerFull` loggt den Zustand („clone auto-archive = off (default)")
+  als auch die Tests fixieren beide Modi (`cloneAutoArchive:true` = Legacy-Suite,
+  Default-Suite ohne Archivierung). Suite 218/218, tsc strict 0, esbuild-Bundle
+  mit Deploy-Flags geprüft.

@@ -30,10 +30,12 @@ import {
   buildAcpBindingSessionKey,
   getDashboardBindingPluginRoot,
   isNativeDispatchModeEnabled,
+  resetDashboardBindingCloneAutoArchiveForTest,
   resetDashboardBindingDispatchModeForTest,
   resetDashboardBindingPluginRootForTest,
   resetDashboardBindingProvisionerForTest,
   resetOriginWorkspaceReaderForTest,
+  setDashboardBindingCloneAutoArchive,
   setDashboardBindingDispatchMode,
   setDashboardBindingPluginRoot,
   setDashboardBindingProvisioner,
@@ -450,10 +452,10 @@ describe("F4 reply-delivery fix — inbound_claim dispatch (Weg A: subagent surf
     expect(targetPatches.some((p) => p.patch.status === "done")).toBe(false);
   });
 
-  it("γ archive-when-idle: clears OUR archive marker before dispatch and re-archives after a terminal settle", async () => {
+  it("γ OFF (default): clears OUR legacy archive marker before dispatch and NEVER re-archives after a terminal settle", async () => {
     const store = fakeClaimStore();
-    // The clone went idle during a previous turn and was γ-archived — seed it
-    // via the store's own patch path before the claim runs.
+    // The clone carries a legacy γ stamp from a pre-gate run — seed it via the
+    // store's own patch path before the claim runs.
     await store.store.patchSessionEntry({
       sessionKey: CODEX_TEST_TARGET_KEY,
       update: () => ({
@@ -483,15 +485,43 @@ describe("F4 reply-delivery fix — inbound_claim dispatch (Weg A: subagent surf
     // The run was started AFTER the un-archive (dispatch is not refused).
     expect(runCalls).toHaveLength(1);
     // Patch 2 (pre-dispatch provenance): no-op — spawnedBy already correct.
-    // Final patch (post-terminal): re-archived with our marker.
-    const rearchive = targetPatches[targetPatches.length - 1]!;
-    expect(typeof rearchive.patch.archivedAt).toBe("number");
-    expect(rearchive.patch.archivedBy).toEqual({ type: "system", id: "acp-dashboard-binding" });
-    // The target was settled (terminal wait) → terminal patch precedes.
+    // GaRoN directive 2026-10-14: auto-archive OFF — the terminal settle
+    // leaves NO archive stamp; the reply stays readable in the transcript.
     expect(targetPatches.some((p) => p.patch.status === "done")).toBe(true);
-    const rearchiveIndex = targetPatches.length - 1;
-    const settleIndex = targetPatches.findIndex((p) => p.patch.status === "done");
-    expect(settleIndex).toBeLessThan(rearchiveIndex);
+    expect(
+      targetPatches.some((p) => typeof p.patch.archivedAt === "number"),
+    ).toBe(false);
+  });
+
+  it("γ archived legacy mode (cloneAutoArchive:true): re-archives after a terminal settle", async () => {
+    const store = fakeClaimStore();
+    setDashboardBindingCloneAutoArchive(true);
+    try {
+      const baseline = store.patches.length;
+      const { subagent } = stubSubagent(
+        async () => ({ runId: "run-legacy" }),
+        async () => ({ status: "ok", terminalReply: { disposition: "visible", text: "answer" } }),
+      );
+      const handler = createHarnessReplyClaimHandler({
+        getConfig: () => codexConfig(),
+        subagent,
+        isGatewayAvailable: async () => true,
+        sessionStore: store.store,
+      });
+      const result = await handler(event, claimContextCodex(PLUGIN_ROOT));
+      expect(result.handled).toBe(true);
+      const targetPatches = store.patches.slice(baseline).filter((p) => p.sessionKey === CODEX_TEST_TARGET_KEY);
+      // The terminal settle re-archives the idle clone with our marker.
+      const rearchive = targetPatches[targetPatches.length - 1]!;
+      expect(typeof rearchive.patch.archivedAt).toBe("number");
+      expect(rearchive.patch.archivedBy).toEqual({ type: "system", id: "acp-dashboard-binding" });
+      // Terminal patch precedes the archival patch.
+      const settleIndex = targetPatches.findIndex((p) => p.patch.status === "done");
+      expect(settleIndex).toBeGreaterThanOrEqual(0);
+      expect(settleIndex).toBeLessThan(targetPatches.length - 1);
+    } finally {
+      resetDashboardBindingCloneAutoArchiveForTest();
+    }
   });
 
   it("γ never un-archives a FOREIGN archive and never re-archives over it", async () => {

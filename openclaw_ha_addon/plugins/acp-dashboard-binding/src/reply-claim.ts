@@ -590,6 +590,12 @@ export function createHarnessReplyClaimHandler(options: HarnessReplyClaimOptions
           // disproven live 2026-10-13). The clone stays dispatchable: the next
           // turn un-archives it right before its run (above). stampCloneHidden
           // never touches user-curated or foreign-archived entries.
+          // GaRoN directive 2026-10-14: auto-archive is OFF by default
+          // (cloneAutoArchive, getDashboardBindingCloneAutoArchive) —
+          // stampCloneHidden no-ops unless the option is re-enabled, because
+          // archived clones hid the reply transcript from every readable
+          // surface. The pre-dispatch un-archive (above) still heals OUR
+          // legacy stamps from pre-gate runs.
           if (wait != null && status !== "timeout" && status !== "pending") {
             await stampCloneHidden({
               sessionStore: options.sessionStore,

@@ -78,6 +78,18 @@
  * work-start gate passes again and a foreign (host/user) archive is never
  * undone. The clone is therefore visible only while one of its turns is
  * actually running (useful feedback), and hidden whenever it is idle.
+ *
+ * γ AUTO-ARCHIVE GATE OFF BY DEFAULT (GaRoN directive 2026-10-14): clone
+ * archives hid the REPLY transcript while the origin conversation carried no
+ * mirrored text yet — the user could read neither. `cloneAutoArchive` now
+ * defaults to `false` (getDashboardBindingCloneAutoArchive): every
+ * buildCloneHiddenPatch is a no-op, no new archive stamps are written, and
+ * clones stay readable (listings show them unless the stampedBy leg applies
+ * — that leg is spawnedBy-only and never archives). Legacy archival returns
+ * by setting the option `cloneAutoArchive: true`; OUR existing stamps keep
+ * healing via the pre-dispatch un-archive. This also removes the γ-v2
+ * re-archive race surface ("Terminal write owner changed before commit") in
+ * the default configuration because no stamp can race the host commit.
  * Deliberately NOT the `subagent:`-key-prefix leg (would break
  * `isAcpSessionKey` dispatch routing) and NO category stamp (would defeat the
  * spawnedBy leg).
@@ -94,7 +106,7 @@
  *    id marker, no archiveReason).
  */
 
-import { parseAgentIdFromConversationId } from "./agent-map.js";
+import { getDashboardBindingCloneAutoArchive, parseAgentIdFromConversationId } from "./agent-map.js";
 import type { HarnessReplyClaimLogger } from "./reply-claim.js";
 
 /**
@@ -376,8 +388,15 @@ export function isOursCloneArchive(entry: SettleSessionEntryLike | undefined): b
  * touches user-curated entries (category set) and never overwrites a FOREIGN
  * archive (someone else owns that lifecycle — user archived it in the UI).
  * Idempotent: already-ours-archived entries are left untouched.
+ *
+ * γ auto-archive gate (GaRoN directive 2026-10-14): default OFF — clone
+ * archives split the reply transcript off the visible conversation (readable
+ * nowhere while archived). Returns null unless `cloneAutoArchive: true` is
+ * configured; the pre-dispatch un-archive (unarchiveHiddenClone) still heals
+ * OUR legacy stamps next time such a conversation dispatches.
  */
 export function buildCloneHiddenPatch(entry: SettleSessionEntryLike | undefined): SessionEntryPatch | null {
+  if (!getDashboardBindingCloneAutoArchive()) return null;
   if (!entry || entry.category != null) return null;
   if (entry.archivedAt !== void 0) return null; // any archive — ours or foreign — stays
   return { archivedAt: Date.now(), archivedBy: CLONE_ARCHIVE_ACTOR };

@@ -186,6 +186,38 @@ export function resetDashboardBindingDispatchModeForTest(): void {
   dispatchModeValue = "claim";
 }
 
+// --- γ clone auto-archive gate (GaRoN directive 2026-10-14: OFF by default) ---
+
+/**
+ * γ auto-archive toggle (`plugins.entries[<id>].config.cloneAutoArchive`,
+ * default `false`). The γ legs stamp archivedAt+archivedBy on idle clone
+ * sessions to hide them from standard listings — but archived clones split
+ * their transcript from the visible conversation (replies persist in a target
+ * the panel cannot show). Default OFF keeps every clone readable; legacy
+ * archival behavior returns by setting the option to `true` (rollback switch,
+ * no code rollback needed). Applies at plugin registration like dispatchMode.
+ */
+export function resolvePluginCloneAutoArchive(cfg: unknown): boolean {
+  return resolvePluginEntryConfig(cfg)?.cloneAutoArchive === true;
+}
+
+let cloneAutoArchiveValue = false;
+
+/** Overwritable on purpose: a restart re-registers and re-reads live config. */
+export function setDashboardBindingCloneAutoArchive(value: unknown): void {
+  cloneAutoArchiveValue = value === true;
+}
+
+/** The live γ archive toggle (default OFF until registerFull resolves config). */
+export function getDashboardBindingCloneAutoArchive(): boolean {
+  return cloneAutoArchiveValue;
+}
+
+/** Test reset (vitest module isolation): back to the OFF default. */
+export function resetDashboardBindingCloneAutoArchiveForTest(): void {
+  cloneAutoArchiveValue = false;
+}
+
 /**
  * The metadata fields that make a record plugin-owned for
  * `isPluginOwnedSessionBindingRecord`. Stripping them from a persisted record
