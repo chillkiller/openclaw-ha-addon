@@ -106,7 +106,11 @@
  *    id marker, no archiveReason).
  */
 
-import { getDashboardBindingCloneAutoArchive, parseAgentIdFromConversationId } from "./agent-map.js";
+import {
+  getDashboardBindingCloneAutoArchive,
+  isNativeDispatchModeEnabled,
+  parseAgentIdFromConversationId,
+} from "./agent-map.js";
 import type { HarnessReplyClaimLogger } from "./reply-claim.js";
 
 /**
@@ -392,10 +396,17 @@ export function isOursCloneArchive(entry: SettleSessionEntryLike | undefined): b
  * γ auto-archive gate (GaRoN directive 2026-10-14): default OFF — clone
  * archives split the reply transcript off the visible conversation (readable
  * nowhere while archived). Returns null unless `cloneAutoArchive: true` is
- * configured; the pre-dispatch un-archive (unarchiveHiddenClone) still heals
- * OUR legacy stamps next time such a conversation dispatches.
+ * configured. In NATIVE dispatch mode this stays null UNCONDITIONALLY: the
+ * claim path's pre-dispatch un-archive (unarchiveHiddenClone) never fires
+ * there (LIVE evidence 2026-10-14: `inbound_claim: 0 lines` with
+ * dispatchMode=native), so an archived clone target would permanently refuse
+ * dispatch — /reset surfaced exactly this with "Session … is archived.
+ * Restore it before starting new work." (commands.runtime-GrTblwEH.mjs:102).
+ * Native stamps are therefore never created, and legacy stamps are healed at
+ * boot (unarchiveOwnedLegacyStamps).
  */
 export function buildCloneHiddenPatch(entry: SettleSessionEntryLike | undefined): SessionEntryPatch | null {
+  if (isNativeDispatchModeEnabled()) return null;
   if (!getDashboardBindingCloneAutoArchive()) return null;
   if (!entry || entry.category != null) return null;
   if (entry.archivedAt !== void 0) return null; // any archive — ours or foreign — stays
@@ -632,4 +643,76 @@ export async function sweepOwnedStuckSessions(params: {
     }
   }
   return { settled, archived };
+}
+
+/**
+ * Native-mode boot heal (§23 reset-bug, GaRoN directive 2026-10-14): clears
+ * OUR γ archive stamps from OUR owned key shapes at gateway_start so the host
+ * never refuses dispatch on an archived binding target again. The claim path
+ * heals per dispatch (unarchiveHiddenClone), but in native dispatch mode
+ * `inbound_claim` never fires (LIVE evidence 2026-10-14: zero claim lines all
+ * day) and the host's /reset + first dispatch both hit the archived entry —
+ * "Session … is archived. Restore it before starting new work." failed 2/2 on
+ * the main binding until an out-of-band reset cleared the stamp. Native mode
+ * creates NO new stamps (buildCloneHiddenPatch refuses), so boot is the one
+ * moment where the heal can run without racing a live turn: gateway_start has
+ * no in-process dispatch either.
+ *
+ * Ownership is proven twice over: the key must be OUR grammar (clone or
+ * dashboard rest, same regexes as the boot sweep) AND the stamp must be OURS
+ * (isOursCloneArchive — our archivedBy id, no archiveReason). Foreign archives
+ * (host maintenance, user archives in the UI) carry archiveReason or a
+ * different archivedBy and are never touched.
+ */
+export async function unarchiveOwnedLegacyStamps(params: {
+  sessionStore: SweepSessionStoreApi;
+  agentIds: readonly string[];
+  logger?: HarnessReplyClaimLogger;
+}): Promise<{ restored: string[] }> {
+  // Native-mode-only heal (self-gated, defense in depth vs call-site drift).
+  // Claim mode must keep γ hiding semantics: there, archived clones come back
+  // per dispatch via unarchiveHiddenClone — a boot-wide reveal would change
+  // claim behavior.
+  if (!isNativeDispatchModeEnabled()) return { restored: [] };
+  const restored: string[] = [];
+  for (const agentId of params.agentIds) {
+    let rows: Array<{ sessionKey: string; entry: SettleSessionEntryLike }>;
+    try {
+      rows = params.sessionStore.listSessionEntries({ agentId, readOnly: true });
+    } catch (error) {
+      params.logger?.warn?.(
+        `[acp-dashboard-binding] un-archive sweep listing agent ${agentId} failed — ${error instanceof Error ? error.message : String(error)}`,
+      );
+      continue;
+    }
+    for (const { sessionKey, entry } of rows) {
+      const rest = sessionKey
+        .trim()
+        .split(":")
+        .slice(2)
+        .join(":");
+      if (!(CLONE_KEY_REST_RE.test(rest) || DASHBOARD_KEY_REST_RE.test(rest))) continue;
+      if (!isOursCloneArchive(entry)) continue;
+      try {
+        await params.sessionStore.patchSessionEntry({
+          sessionKey,
+          agentId,
+          update: (current) =>
+            isOursCloneArchive(current)
+              ? ({ archivedAt: undefined, archivedBy: undefined } as SessionEntryPatch)
+              : null,
+          ...(params.sessionStore.requireWriteSuccess ? { requireWriteSuccess: true } : {}),
+        });
+        restored.push(sessionKey);
+        params.logger?.debug?.(
+          `[acp-dashboard-binding] un-archived legacy γ stamp on ${sessionKey} (native dispatch: archived targets refuse work)`,
+        );
+      } catch (error) {
+        params.logger?.warn?.(
+          `[acp-dashboard-binding] un-archive of ${sessionKey} failed — ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  }
+  return { restored };
 }

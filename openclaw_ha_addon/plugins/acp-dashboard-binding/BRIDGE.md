@@ -1410,3 +1410,64 @@ weil es archiviert war. Direktive: Plugin OHNE Auto-Archivierung.
   als auch die Tests fixieren beide Modi (`cloneAutoArchive:true` = Legacy-Suite,
   Default-Suite ohne Archivierung). Suite 218/218, tsc strict 0, esbuild-Bundle
   mit Deploy-Flags geprüft.
+
+## 23. (Main) Session Reset-Bug — Native-Mode Un-Archivierung (0.7.13.30-Zug, 2026-10-14/15)
+
+GaRoN: „die Main Session resettet sich nicht im Main Session-Chat." Live-Beleg
+(Main-Binding `60bac3d6…`): `/reset` scheiterte 2/2 mit `acp reset failed for
+…: Session "…" is archived. Restore it before starting new work.` (commands.
+runtime-GrTblwEH.mjs:102/:126), erst ein Out-of-Band-Reset auf `agent:claude:main`
+stellte den Betrieb wieder her (fresh `--session-id`, 5,7 s).
+
+### §23.1 Befund
+
+- Der γ-Stamm auf dem Main-Binding-Clone war ein Legacy-Stamp (.25-Ära,
+  `archivedBy: {system, acp-dashboard-binding}`, kein archiveReason).
+- Der Claim-Pfad heilt solche Stamps vor jedem Dispatch
+  (`unarchiveHiddenClone`, src/session-settle.ts) — ABER: in
+  `dispatchMode: "native"` feuert der Claim-Handler NIE
+  (`inbound_claim: 0 lines am ganzenTag`, LIVE 2026-10-14). Der Host
+  dispatcht nativ in das archivierte Ziel → Refusal.
+- Der .29-Bootline-Text („pre-dispatch un-archive still heals legacy stamps")
+  galt für Native faktisch NICHT — korrigiert.
+- Auch der Boot-Sweep archiviert zwar nur nach Gate (default off), heilt aber
+  nichts → ein einmal existierender Legacy-Stamp blieb in Native für immer
+  blockierend (Jeder-/reset-/First-Dispatch-Treffer).
+
+### §23.2 Fix (drei Beine, alle im Native-Modus wirksam)
+
+1. **`unarchiveOwnedLegacyStamps`** (src/session-settle.ts, NEU): Boot-Heal bei
+   `gateway_start`, selbst-gegate auf Native (Claim-Modus bewahrt γ-Semantik —
+   dort heilt der Claim-Dispatch weiterhin pro Turn). Enumeriert per
+   `listSessionEntries` alle Einträge, greift NUR bei OUR-Stamps
+   (`isOursCloneArchive`) auf OUR-Key-Grammatik (Clone-/Dashboard-Rest-Regexe)
+   und löscht `archivedAt`/`archivedBy` per explicit-undefined-Patch. Fremde
+   Archive (host maintenance archiveReason, UI-manual human archivedBy) werden
+   nie berührt.
+2. **`buildCloneHiddenPatch` lehnt Native ab** (unabhängig von
+   `cloneAutoArchive`): in Native erzeugt das Plugin KEINE neuen Archive-Stamps
+   — sonst wäre jeder idle Clone der nächste Reset-Fehler (kein Pre-Dispatch-
+   Heal existiert dort). γ mit `cloneAutoArchive: true` bleibt daher
+   bewusst NUR Claim-Modus-kombinierbar.
+3. **Bootline-Korrektur** (index.ts): der „off"-Log trennt jetzt die Modi —
+   Native nennt den Boot-Sweep-Heal, Claim den bekannten Pre-Dispatch-Heal.
+
+### §23.3 Race-Freiheit
+
+`gateway_start` hat keinen in-process Turn (Boot-Parität wie §19c), gegen
+Live-Turns kann der Heal nicht rennen. Idempotent: schon geheilte/gefremde
+Einträge produzieren leere Patches.
+
+### §23.4 Tests
+
+Suite 223/223 (8 Dateien): Native-Block deckt ab — kein Stamp in Native auch
+bei `cloneAutoArchive:true` (Patch UND Sweep-Leg), Heal räumt OUR-Stamps auf
+Clone-UNDA-Key-Formen, Fremd-/Manual-/nicht-OUR-Keys unberührt, Claim-Modus
+No-op. Das Live-Korridor-Beispiel der Fehlversuche
+(60bac3d65e697154) steht als Fixtur-Key.
+
+### §23.5 Bewusst NICHT hier (Backlog)
+
+- Init-Race Readiness-Wait (~10 s bounded) — eigenes Bein desselben
+  .30-Batches, separater Commit/Review.
+- Host-seitige /reset-Verhärtung (commands.runtime) — Host-Code, nicht Plugin.
