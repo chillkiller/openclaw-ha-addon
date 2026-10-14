@@ -211,6 +211,14 @@ describe("codex writer", () => {
 // ---------------------------------------------------------------------------
 
 describe("opencode writer", () => {
+  it("M3: opencode.jsonc carries the apiKey in cleartext → written 0600 in BOTH dirs", () => {
+    const p = paths();
+    DEPLOY({ harnesses: { opencode: { ...OLLAMA, apiKey: "secret-token" } } }, p);
+    for (const dir of [join(p.acpxDir, "opencode-home"), p.opencodeGlobalDir]) {
+      const mode = statSync(join(dir, "opencode.jsonc")).mode & 0o777;
+      expect(mode).toBe(0o600);
+    }
+  });
   it("depplies opencode.jsonc to BOTH dirs + neutralizes legacy config.toml", () => {
     const p = paths();
     const report = DEPLOY({ harnesses: { opencode: OLLAMA } }, p);
@@ -500,12 +508,12 @@ describe("resolveEntryModels", () => {
     expect(r.models).toEqual(["glm-5.3-flash:cloud", "m2", "m3"]);
   });
 
-  it("models: [] is an explicit OPT-OUT — even with a catalog match", () => {
+  it("models: [] is an explicit OPT-OUT — source 'optout' (N2: getrennt von 'none'), even with a catalog match", () => {
     const r = resolveEntryModels(
       { model: "d", baseUrl: "http://localhost:11434", models: [] },
       CATALOG,
     );
-    expect(r.source).toBe("none");
+    expect(r.source).toBe("optout");
     expect(r.models).toEqual([]);
   });
 
@@ -650,10 +658,9 @@ describe("codex model metadata catalog (γ.1)", () => {
     [],
   );
 
-  it("buildModelCatalog collects operator metadata (first-occurrence, positive numbers only)", () => {
+  it("buildModelCatalog collects operator metadata (first-occurrence, positive numbers only, M4: maxTokens has no surface and is NOT collected)", () => {
     expect(META_CATALOG.metaById.get("kimi-k2.7-code:cloud")).toEqual({
       contextWindow: 262144,
-      maxTokens: 8192,
     });
     expect(META_CATALOG.metaById.get("gemma4")).toEqual({ contextWindow: 128000 });
     expect(META_CATALOG.metaById.has("no-meta")).toBe(false);
@@ -676,7 +683,7 @@ describe("codex model metadata catalog (γ.1)", () => {
     expect(kimi).toEqual({
       slug: "kimi-k2.7-code:cloud",
       display_name: "kimi-k2.7-code:cloud",
-      description: "Ollama model (metadata from openclaw.json models.providers)",
+      description: "custom model (metadata from openclaw.json models.providers)",
       base_instructions: "",
       supported_reasoning_levels: [],
       shell_type: "shell_command",
@@ -764,6 +771,72 @@ describe("codex model metadata catalog (γ.1)", () => {
       report.results[0].files.find((f) => f.path.endsWith("config.toml"))?.action,
     ).toBe("note (customized, left intact)");
     expect(existsSync(join(p.codexSourceHome, "model-catalog.json"))).toBe(false);
+  });
+
+  it("M1 (iii): models resolved to NONE (absent + no baseUrl match) → NO model_catalog_json key, NO catalog file", () => {
+    const p = paths();
+    // baseUrl matcht META_CATALOG NICHT → resolveEntryModels = "none", die
+    // models-Surface bleibt ABWESEND — ein Ein-Modell-Default-Katalog wird
+    // bewusst NICHT gebaut (kein Dangling-Key-/Orphan-Risiko).
+    const report = deployHarnessConfigs(
+      { harnesses: { codex: { ...OLLAMA, baseUrl: "http://elsewhere:9" } } },
+      p,
+      SILENT,
+      META_CATALOG,
+    );
+    expect(report.results[0].files.map((f) => f.action)).toEqual([
+      "created",
+      "created",
+    ]);
+    expect(readText(join(p.codexSourceHome, "config.toml"))).not.toMatch(
+      /^model_catalog_json =/m,
+    );
+    expect(existsSync(join(p.codexSourceHome, "model-catalog.json"))).toBe(false);
+  });
+
+  it("M1 (iv): explicit list whose ids + default ALL lack contextWindow → toml written WITHOUT the key (no dangling reference)", () => {
+    const p = paths();
+    const report = deployHarnessConfigs(
+      {
+        harnesses: {
+          codex: {
+            model: "glm-5.3-flash:cloud",
+            baseUrl: "http://localhost:11434",
+            models: ["metaless-1", "metaless-2"],
+          },
+        },
+      },
+      p,
+      SILENT,
+      META_CATALOG,
+    );
+    expect(readText(join(p.codexSourceHome, "config.toml"))).not.toMatch(
+      /^model_catalog_json =/m,
+    );
+    expect(existsSync(join(p.codexSourceHome, "model-catalog.json"))).toBe(false);
+    // toml selbst ist trotzdem normal geschrieben (created) — nur ohne Key.
+    expect(
+      report.results[0].files.find((f) => f.path.endsWith("config.toml"))?.action,
+    ).toBe("created");
+  });
+
+  it("M1 (v): opt-out (models: []) → toml WITHOUT key; existing stale catalog file is deliberately NOT deleted (never guess)", () => {
+    const p = paths();
+    const staleCatalog = join(p.codexSourceHome, "model-catalog.json");
+    mkdirSync(join(root, "config", ".codex"), { recursive: true });
+    writeFileSync(staleCatalog, '{"models":[]}\n', "utf-8");
+    const report = deployHarnessConfigs(
+      { harnesses: { codex: { ...OLLAMA, models: [] } } },
+      p,
+      SILENT,
+      META_CATALOG,
+    );
+    const toml = readText(join(p.codexSourceHome, "config.toml"));
+    expect(toml).not.toMatch(/^model_catalog_json =/m);
+    expect(readText(staleCatalog)).toBe('{"models":[]}\n');
+    expect(report.results.map((r) => r.files.find((f) => f.path === staleCatalog))).toEqual([
+      undefined,
+    ]);
   });
 });
 

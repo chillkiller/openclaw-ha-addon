@@ -117,8 +117,24 @@ export function registerHarnessConfigDeployment(api: OpenClawPluginApi): void {
     const harnesses = pluginConfig?.harnesses;
     if (harnesses === null || typeof harnesses !== "object" ||
         Object.keys(harnesses as Record<string, unknown>).length === 0) {
-      // Absence = no-op (kein Log-Noise im Default-Fall, ADDITIV-GARANTIE:
-      // bundled acpx-Default mit Vendor-Auth läuft unverändert weiter).
+      // M2-Fix (2026-10-14): Absence bleibt logfrei (ADDITIV-GARANTIE), ABER
+      // der Legacy-Key (A2-Vorläufer unter acp-dashboard-binding) ohne
+      // gelaufene Helper-Migration wäre sonst ein LAUTLOSER No-op — der
+      // Drill macht ihn sichtbar statt still zu sein.
+      const legacy = (
+        api.config as
+          | { plugins?: { entries?: Record<string, { config?: { harnesses?: unknown } }> } }
+          | undefined
+      )?.plugins?.entries?.["acp-dashboard-binding"]?.config?.harnesses;
+      if (
+        typeof legacy === "object" && legacy !== null && !Array.isArray(legacy) &&
+        Object.keys(legacy as Record<string, unknown>).length > 0
+      ) {
+        api.logger?.warn?.(
+          `[${PLUGIN_ID}] legacy harnesses key found under plugins.entries['acp-dashboard-binding'].config — ` +
+            `helper migration did not run (writer-enabled boot expected); config is NOT deployed (no-op)`,
+        );
+      }
       return;
     }
     const paths = resolveHarnessWriterPaths();

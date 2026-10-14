@@ -156,6 +156,12 @@ codex/opencode ohne baseUrl → skip mit Warning, kein Write.
    built-in gpt-Einträge verschwinden aus dem Picker (Ollama-only-Setups:
    gewollt), ACP-Sessions bleiben bundled-Katalog (key nicht acpx-vererbt) —
    die Fallback-Warnung ist NUR für direkte codex-CLI-Nutzer weg.
+   M5-Ergänzung (2026-10-14): REPLACE-ALL × Skip = **doppelter Picker-
+   Verlust** — Ids OHNE `contextWindow` werden nicht nur ohne Metadaten
+   gerendert (bisher: sichtbar + Fallback-Warnung), sondern komplett AUS
+   dem Picker entfernt. Ein Skip ist also kein "degradiert", sondern ein
+   "weg". Wer sie behalten will, trägt die contextWindow ein oder optet
+   mit `models: []` aus.
 
 ### 15.8 Backup-Rewrite (GaRoN 2026-10-11, Helper-seitig)
 
@@ -320,10 +326,17 @@ siehe Caveats):
   context_window/max_context_window/effective_context_window_percent(95)).
   Bytes-sync idempotent (writer-owned filename).
 - **Config-key**: nur wenn die config.toml writer-kontrolliert ist
-  (created/updated/unchanged) erhält sie top-level `model_catalog_json =
-  "/…/.codex/model-catalog.json"`; bei NOTE (customized) wird KEIN
-  catalog-File geschrieben (kein Orphan um eine Datei, die den Key bewusst
-  nie trägt) → Adoption durch manuelles Einfügen der Zeile.
+  (created/updated/unchanged) UND der Katalog-`built` non-null ist, erhält
+  sie top-level `model_catalog_json = "/…/.codex/model-catalog.json"`.
+  M1-Fix (2026-10-14, Review-Befund): der Key steht NIE dangling — der
+  Katalog wird VOR der TOML-Emission berechnet; models → none / kein
+  einziges contextWindow ⇒ KEIN Key UND KEINE Datei (codex-Verhalten bei
+  missing file ist unbelegt — das Risiko wird gar nicht erst eingegangen).
+  Bei NOTE (customized) wird KEIN catalog-File geschrieben (kein Orphan um
+  eine Datei, die den Key bewusst nie trägt) → Adoption durch manuelles
+  Einfügen der Zeile. Ein schon vorhandener alter Katalog bleibt beim
+  Opt-out bewusst liegen (von einer customized toml mit weiterbestehendem
+  Key-Verweis nicht unterscheidbar — never guess, kein destruktiver Write).
 - **Backup**: `.codex/model-catalog.json` ist im Helper-Backup-Manifest
   (§15.8) — disable/restore räumt ihn wieder weg.
 
@@ -342,6 +355,16 @@ siehe Caveats):
 4. `model_context_window`/`model_auto_compact_token_limit` (top-level,
    global) sind KEIN Ersatz: sie overriden nur Werte, heben die
    Fallback-Warnung aber nicht auf (fallback-metadata-Lookup bleibt).
+5. M5-Befund (2026-10-14): REPLACE-ALL × Skip — eine geskippte Id (kein
+   `contextWindow` in openclaw.json) ist vom codex-Picker KOMPLETT weg
+   (vorher: sichtbar mit Fallback-Metadaten + Warnung). Info-Log nennt die
+   Zahl; siehe auch §15.7 R9.
+6. `description` der Katalog-Entries ist neutral ("custom model …",
+   M3/N3-Fix 2026-10-14) — nicht mehr "Ollama model", damit vLLM/LocalAI-
+   Nutzer nicht ein falsches Backend-Label sehen.
+7. opencode.jsonc trägt den apiKey in Klartext → seit dem M3-Fix 0600
+   (vorher umask-default; Bestands-Dateien mit 0644 werden beim nächsten
+   Writer-Write nachgezogen).
 
 Flaggschiff-Defaults (Add-on-level, `ollama_acp_*_model`): codex/opencode
 existierten bereits; γ ergänzt `ollama_acp_claude_model` → run.sh export
@@ -351,3 +374,29 @@ helper `_writer_model_for` claude-Ladder (dieselbe Reihenfolge). Netto-Ver-
 änderung für Bestands-Setups: base_url-aktivierte Deployments generieren ab
 γ einen claude-Entry by Default (CHANGELOG-Nota; Ausschluss via
 harness_excluded_agents bzw. Operator-Ownership).
+
+### 15.12 Review-Fix-Batch (2026-10-14, vor Re-Land-GO · M1–M5 + N1–N3)
+
+Die adversariale 4er-Agenten-Session (2 Analysen + 2 Reviews, 2026-10-14)
+vor dem GO produzierte Findings, ALLE in diesem Batch gefixt:
+
+- **M1 (MAJOR)**: `model_catalog_json`-Key nur noch bei `built !== null` —
+  kein dangling Key mehr auf eine nie geschriebene Katalog-Datei (Details §15.11).
+- **M2 (MINOR)**: Legacy-Key (`acp-dashboard-binding`) ohne gelaufene
+  Helper-Migration war ein LAUTLOSER No-op — jetzt ein WARN-Drill am Entry
+  ("legacy harnesses key found … NOT deployed"), echte Absence bleibt logfrei.
+- **M3 (MINOR)**: opencode.jsonc (Klartext-apiKey) ⇒ 0600; env-Files und
+  codex auth.json schreiben den Mode jetzt am TMP VOR dem rename (kein
+  0644→0600 Exposé-Fenster); Updates behalten den Mode der bestehenden Datei.
+- **M4 (MINOR)**: `maxTokens`-Sammlung entfernt (es gab keine konsumierende
+  Surface — gesammelt-und-verworfen ist der falsche Ehrlichkeits-Zustand;
+  `contextWindow` bleibt das einzige codex-surfacige Feld).
+- **M5 (DOKU)**: SKIP = Picker-Verlust (REPLACE-ALL) in §15.7 R9 + Caveat 5
+  ausgesprochen.
+- **N1**: Fallback-Warning bei invalid `models` nur noch bei echtem
+  non-empty Array (kein Doppel-Satz neben "models ignored").
+- **N2**: `modelsSource: "optout"` trennt Operator-`models: []` explizit von
+  `"none"` (kein Katalogmatch) — Reports/Logs unterscheiden "bewusst nichts"
+  von "nicht gefunden".
+- **N3**: Katalog-`description` neutral ("custom model …") statt
+  "Ollama model" (vLLM/LocalAI-Falschlabel).

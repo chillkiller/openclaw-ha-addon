@@ -70,6 +70,7 @@ import {
   readFileSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join } from "node:path";
@@ -200,11 +201,27 @@ export function resolveHarnessWriterPaths(
 // hinterlassen).
 // ---------------------------------------------------------------------------
 
-function atomicWrite(path: string, content: string): void {
+/**
+ * Atomarer Write (temp+rename). Optionales `mode` ODER beibehaltener Mode der
+ * bestehenden Datei wird am TMP gesetzt VOR dem rename — kein 0644→0600
+ * Exposé-Fenster (Helper-Standard `_write_managed_defaults`, M3-Fix).
+ */
+function atomicWrite(path: string, content: string, mode?: number): void {
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.tmp`;
   try {
     writeFileSync(tmp, content, "utf-8");
+    const targetMode =
+      mode ?? (existsSync(path) ? statSync(path).mode & 0o777 : undefined);
+    if (targetMode !== undefined) {
+      try {
+        chmodSync(tmp, targetMode);
+      } catch (error) {
+        // Fail-soft: fehlgeschlagener Mode ist kein Deploy-Bruch (wie der
+        // Helper except-branch; die Datei selbst ist angekommen).
+        void error;
+      }
+    }
     renameSync(tmp, path);
   } finally {
     if (existsSync(tmp)) {
@@ -221,13 +238,17 @@ function atomicWrite(path: string, content: string): void {
 type FileAction = HarnessDeployFile["action"];
 
 /** install-if-missing + bytes-sync (helper prepare_opencode_home-Semantik). */
-function writeFileIfMissingOrDiffers(path: string, content: string): FileAction {
+function writeFileIfMissingOrDiffers(
+  path: string,
+  content: string,
+  mode?: number,
+): FileAction {
   const exists = existsSync(path);
   const current = exists ? tryOr(() => readFileSync(path, "utf-8"), null) : null;
   if (current === content) {
     return "unchanged";
   }
-  atomicWrite(path, content);
+  atomicWrite(path, content, mode);
   return exists ? "updated" : "created";
 }
 
@@ -255,15 +276,6 @@ function upgradeOrNoteIfMissingOrDiffers(path: string, desired: string): FileAct
   }
   atomicWrite(path, desired);
   return "updated";
-}
-
-/** codex auth.json chmod 0600 (Helper try/except WARN-Pattern). */
-function chmod0600(path: string, warnings: string[]): void {
-  try {
-    chmodSync(path, 0o600);
-  } catch (error) {
-    warnings.push(`could not chmod ${path} 0600: ${briefError(error)}`);
-  }
 }
 
 function briefError(error: unknown): string {
@@ -336,8 +348,9 @@ export type ModelCatalog = {
   byBaseUrl: Map<string, string[]>;
   /**
    * γ.1 codex-Metadaten: model-id → vom Operator in openclaw.json gepflegte
-   * Werte (contextWindow/maxTokens). NUR belegte Werte landen hier — der
-   * Writer rät niemals ein Kontextfenster (Ownership-Regel).
+   * Werte (contextWindow — das einzige codex-surfacige Pflichtfeld). NUR
+   * belegte Werte landen hier — der Writer rät niemals ein Kontextfenster
+   * (Ownership-Regel).
    */
   metaById: Map<string, ModelMeta>;
 };
@@ -345,10 +358,10 @@ export type ModelCatalog = {
 /** Operator-gepflegte Modell-Metadaten aus `models.providers[*].models[*]`. */
 export type ModelMeta = {
   contextWindow?: number;
-  maxTokens?: number;
 };
 
-export type ResolvedModelsSource = "explicit" | "matched" | "none";
+/** N2 (Fix 2026-10-14): "optout" trennt Operator-`models: []` bewusst von "none" (kein Katalogmatch). */
+export type ResolvedModelsSource = "explicit" | "matched" | "none" | "optout";
 
 export type ResolvedModels = {
   models: string[];
@@ -427,7 +440,7 @@ function normalizeModelListInternal(
 
 /**
  * Modellkatalog aus der vollen Gateway-Config (`api.config.models.providers`):
- * je Provider `baseUrl` + `models[].id` (+ `contextWindow`/`maxTokens` für
+ * je Provider `baseUrl` + `models[].id` (+ `contextWindow` für
  * γ.1 codex-Metadaten). Fail-soft — garbage Config ergibt einen leeren
  * Katalog + Sammel-Warning, nie einen Crash. Provider-Keys sortiert
  * (deterministische Merge-Order), ids first-occurrence-deduped; metaById
@@ -471,21 +484,16 @@ export function buildModelCatalog(fullConfig: unknown, warnings: string[]): Mode
         malformed += 1;
         continue;
       }
-      // γ.1 Metadaten: nur positive Zahlen zählen (contextWindow/maxTokens).
+      // γ.1 Metadaten: nur positive Zahlen zählen (contextWindow — das
+      // einzige Feld mit codex-Katalog-Surface; M4-Fix: maxTokens wird
+      // bewusst NICHT gesammelt, es gibt keine konsumierende Surface).
       for (const m of rawModels) {
         if (typeof m !== "object" || m === null) continue;
         const rec = m as Record<string, unknown>;
         const id = typeof rec.id === "string" ? rec.id.trim() : "";
         if (!id || metaById.has(id)) continue;
-        const meta: ModelMeta = {};
         if (typeof rec.contextWindow === "number" && rec.contextWindow > 0) {
-          meta.contextWindow = rec.contextWindow;
-        }
-        if (typeof rec.maxTokens === "number" && rec.maxTokens > 0) {
-          meta.maxTokens = rec.maxTokens;
-        }
-        if (meta.contextWindow !== undefined || meta.maxTokens !== undefined) {
-          metaById.set(id, meta);
+          metaById.set(id, { contextWindow: rec.contextWindow });
         }
       }
       const ids = dedupeModelIds(
@@ -540,7 +548,7 @@ export function resolveEntryModels(
   const rawEntry = entry as { models?: unknown };
   const explicit = normalizeModelListInternal(rawEntry.models, warnings, "entry");
   if (explicit?.explicitEmpty) {
-    return { models: [], source: "none", warnings };
+    return { models: [], source: "optout", warnings };
   }
   if (explicit !== null && explicit.ids.length > 0) {
     const withDefault = prependDefaultModel(entry, explicit.ids);
@@ -551,9 +559,12 @@ export function resolveEntryModels(
     return { models: capped.ids, source: "explicit", warnings };
   }
   if (explicit !== null && explicit.ids.length === 0) {
-    // non-empty gewollt, aber alle Items invalid → Fallback auf matched/none
-    // (Warning trägt den Befund; der Default-Deploy bleibt unberührt).
-    warnings.push("entry models resolved to nothing — falling back to catalog match");
+    // non-empty gewollt, aber alle Items invalid → Fallback auf matched/none.
+    // N1-Fix: die Fallback-Warning NUR bei einem echten Array (ein schon von
+    // "models ignored" bewertetes Nicht-Array bekommt keinen Doppel-Satz).
+    if (Array.isArray(rawEntry.models) && rawEntry.models.length > 0) {
+      warnings.push("entry models resolved to nothing — falling back to catalog match");
+    }
   }
   let matched: string[] = [];
   if (catalog !== null) {
@@ -705,8 +716,9 @@ export function deployCodexAuth(
       null,
       2,
     )}\n`,
+    // 0600 am TMP VOR dem rename (Helper-Standard) — kein Exposé-Fenster.
+    0o600,
   );
-  chmod0600(path, warnings);
   logger?.info?.(`[${harnessId}] Created ${path} (placeholder API key)`);
   return { path, action: "created" };
 }
@@ -742,7 +754,7 @@ export function buildCodexModelCatalogJson(
     entries.push({
       slug: id,
       display_name: id,
-      description: "Ollama model (metadata from openclaw.json models.providers)",
+      description: "custom model (metadata from openclaw.json models.providers)",
       base_instructions: "",
       supported_reasoning_levels: [],
       shell_type: "shell_command",
@@ -876,11 +888,20 @@ export function deployCodexHarnessFiles(
 
   // 2) /config/.codex/config.toml — Inheritance-Quelle, install-if-missing /
   //    upgrade-only-no-providers / customized NEVER overwritten (NOTE).
+  //    M1-Fix (2026-10-14): der `model_catalog_json`-Key wird NUR emittiert,
+  //    wenn der Katalog auch tatsächlich geschrieben werden kann — sonst
+  //    entstünde ein dangling Key auf eine nie existierende Datei (codex
+  //    Startup-Verhalten bei missing file ist unbelegt). "built" wird daher
+  //    VOR der TOML-Emission berechnet.
   const tomlPath = join(paths.codexSourceHome, "config.toml");
-  const catalogPath = modelCatalog ? join(paths.codexSourceHome, "model-catalog.json") : undefined;
+  const catalogPath = join(paths.codexSourceHome, "model-catalog.json");
+  const built =
+    modelCatalog && entry.models !== undefined && entry.models.length > 0
+      ? buildCodexModelCatalogJson(entry.models, modelCatalog.metaById)
+      : null;
   const action = upgradeOrNoteIfMissingOrDiffers(
     tomlPath,
-    buildCodexConfigToml(entry, catalogPath),
+    buildCodexConfigToml(entry, built ? catalogPath : undefined),
   );
   if (action === "note (customized, left intact)") {
     logger?.info?.(
@@ -890,25 +911,29 @@ export function deployCodexHarnessFiles(
   files.push({ path: tomlPath, action });
 
   // 3) γ.1 Metadaten-Katalog — NUR wenn die TOML writer-kontrolliert ist
-  //    (NOTE = customized → KEIN models.json-Orphan um eine Datei streuen,
-  //    die den Key bewusst nie trägt). Ids ohne Operator-Kontextfenster
-  //    bleiben draußen (never guess); Info-Log macht die Lücke sichtbar.
-  if (modelCatalog && entry.models && entry.models.length > 0 && action !== "note (customized, left intact)") {
-    const built = buildCodexModelCatalogJson(entry.models, modelCatalog.metaById);
-    if (built) {
-      const catalogFile = writeFileIfMissingOrDiffers(catalogPath!, built.content);
-      files.push({ path: catalogPath!, action: catalogFile });
-      logger?.info?.(
-        `[${harnessId}] model catalog ${catalogPath}: ${built.included} model(s) with operator metadata` +
-          (built.skipped.length > 0
-            ? `; ${built.skipped.length} skipped (no contextWindow in openclaw.json)`
-            : ""),
-      );
-    } else {
-      logger?.info?.(
-        `[${harnessId}] model catalog skipped: no model of the list has contextWindow in openclaw.json (codex falls back to its bundled-metadata warning)`,
-      );
-    }
+  //    (NOTE = customized → KEIN catalog-File — keine Datei streuen, die der
+  //    benutzte Key bewusst nie referenziert) und `built` non-null ist
+  //    (M1-Fix: models → none / kein contextWindow ⇒ auch KEIN Key). Ein
+  //    evtl. verbleibender alter Katalog wird bewusst NICHT gelöscht — von
+  //    einer customized toml mit weiterbestehendem Key-Verweis lässt er
+  //    sich nicht unterscheiden (never guess, kein destruktiver Write).
+  if (built && modelCatalog && action !== "note (customized, left intact)") {
+    const catalogFile = writeFileIfMissingOrDiffers(catalogPath, built.content);
+    files.push({ path: catalogPath, action: catalogFile });
+    logger?.info?.(
+      `[${harnessId}] model catalog ${catalogPath}: ${built.included} model(s) with operator metadata` +
+        (built.skipped.length > 0
+          ? `; ${built.skipped.length} skipped (no contextWindow in openclaw.json — REPLACE-ALL nimmt sie aus dem codex-Picker, BRIDGE §15.11)`
+          : ""),
+    );
+  } else if (built && action === "note (customized, left intact)") {
+    logger?.info?.(
+      `[${harnessId}] model catalog not written: config.toml is customized (adopt the key manually if wanted)`,
+    );
+  } else if (!built && modelCatalog) {
+    logger?.info?.(
+      `[${harnessId}] model catalog skipped: no model of the list has contextWindow in openclaw.json (codex falls back to its bundled-metadata warning)`,
+    );
   }
   return { warnings, files };
 }
@@ -981,7 +1006,9 @@ export function deployOpencodeHarnessFiles(
   const desired = buildOpencodeConfigJsonc(entry);
   for (const targetDir of [join(paths.acpxDir, "opencode-home"), paths.opencodeGlobalDir]) {
     const path = join(targetDir, "opencode.jsonc");
-    const action = writeFileIfMissingOrDiffers(path, desired);
+    // M3-Fix (2026-10-14): die Datei trägt den apiKey in Klartext → 0600
+    // (Helper-Standard; Mode geht in atomicWrite — kein Exposé-Fenster).
+    const action = writeFileIfMissingOrDiffers(path, desired, 0o600);
     if (action !== "unchanged") {
       logger?.info?.(`[${harnessId}] Updated ${path} (provider config)`);
     }
@@ -1048,12 +1075,15 @@ export function deployHarnessEnvFile(
     }
     content += `${lines.join("\n")}\n`;
   }
-  const action = writeFileIfMissingOrDiffers(path, content);
+  const envVarKeys = Object.keys(mapping.vars).sort();
+  const secret = /API_KEY|AUTH_TOKEN|TOKEN/.test(envVarKeys.join("|"));
+  // Enthält Tokens/Keys → 0600 wie codex auth.json (M3-Verfahren: Mode am
+  // TMP VOR dem rename — kein Exposé-Fenster).
+  const action = writeFileIfMissingOrDiffers(path, content, secret ? 0o600 : undefined);
   if (action !== "unchanged") {
-    logger?.info?.(`[${harnessId}] ${action} ${path} (${Object.keys(mapping.vars).join(", ")})`);
+    logger?.info?.(`[${harnessId}] ${action} ${path} (${envVarKeys.join(", ")})`);
   }
-  // Enthält Tokens/Keys → 0600 wie codex auth.json.
-  if (/API_KEY|AUTH_TOKEN|TOKEN/.test(Object.keys(mapping.vars).sort().join("|"))) {
+  if (secret) {
     try {
       chmodSync(path, 0o600);
     } catch (error) {

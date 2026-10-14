@@ -38,6 +38,8 @@ type ApiOptions = {
   viaFullConfig?: boolean;
   /** γ: volle Gateway-Config (models.providers-Katalog etc.). */
   fullConfig?: Record<string, unknown>;
+  /** M2: Legacy-Key (A2-Vorläufer) unterm acp-dashboard-binding Entry. */
+  legacyHarnesses?: Record<string, unknown>;
 };
 
 function makeApi(options: ApiOptions = {}): {
@@ -61,6 +63,15 @@ function makeApi(options: ApiOptions = {}): {
     } else {
       pluginConfig.harnesses = options.harnesses;
     }
+  }
+  if (options.legacyHarnesses !== undefined) {
+    config.plugins = {
+      ...(config.plugins as Record<string, unknown> | undefined),
+      entries: {
+        ...((config.plugins as { entries?: Record<string, unknown> } | undefined)?.entries ?? {}),
+        "acp-dashboard-binding": { config: { harnesses: options.legacyHarnesses } },
+      },
+    } as Record<string, unknown>;
   }
   return { api: { config, pluginConfig, logger }, logs };
 }
@@ -219,6 +230,27 @@ describe("registerHarnessConfigDeployment — PluginConfig-Zufuhr (γ-Fix)", () 
     });
     registerHarnessConfigDeployment({ ...api, pluginConfig: {} } as never);
     expect(existsSync(codexTomlPath(root))).toBe(true);
+  });
+
+  it("M2: Legacy-Key-only (Migration lief nicht) → WARN sichtbar + NO write (kein stiller No-op)", () => {
+    bootOn();
+    const { api, logs } = makeApi({
+      legacyHarnesses: { codex: CODEX_ENTRY },
+    });
+    registerHarnessConfigDeployment({ ...api, pluginConfig: {} } as never);
+    expect(existsSync(codexTomlPath(root))).toBe(false);
+    expect(logs.join("\n")).toContain(
+      "legacy harnesses key found under plugins.entries['acp-dashboard-binding'].config",
+    );
+    expect(logs.join("\n")).toContain("NOT deployed (no-op)");
+  });
+
+  it("M2: gar keine harnesses (echte Absence) → logfrei (ADDITIV-GARANTIE unverändert)", () => {
+    bootOn();
+    const { api, logs } = makeApi();
+    registerHarnessConfigDeployment({ ...api, pluginConfig: {} } as never);
+    expect(existsSync(codexTomlPath(root))).toBe(false);
+    expect(logs.join("\n")).not.toContain("legacy harnesses key");
   });
 });
 
