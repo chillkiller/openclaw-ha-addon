@@ -1,24 +1,9 @@
-## [0.7.13.27] - 2026-10-13
+## [0.7.13.28] - 2026-10-14
 
-### Fixed
-- **harness-config-writer silent no-op (writer γ):** the writer read `api.config.harnesses` but `api.config` is the full OpenClawConfig — config now resolves from `api.pluginConfig` with fallback drill into `plugins.entries` (non-empty `harnesses` gates each source). First real writer deploy on the host is expected with this release.
-- **γ re-archive race (PUSHBUG, acp-dashboard-binding):** the terminal γ re-archive is deferred (5 min, fire-time re-checks) out of the claim turn's commit window — no more lost replies via "Terminal write owner changed before commit" (live evidence 15:07:37 + 16:00:35).
-- **V39 over-hiding:** triggered session-provenance stamps now refuse REAL `agent:<id>:acp:<uuid>` keys (clone-grammar guard) — the audited 18 hidden real sessions are restored (20/20) and cannot be re-stamped by this plugin.
-- **Boot sweep native gate + idle grace:** the γ archival leg is gated OFF in native dispatch (`archiveIdleClones: false` — prevents "archive-forever" after a flip, audit C7) and uses a 15-min idle grace so recently-active clones are no longer archived at boot (live 14:12 miss).
-
-### Added
-- **harness-writer multi-model γ + γ.1 (merged from `feature/harness-writer-multimodel`):** model enrichment from OpenClaw's model providers into codex profiles / opencode map / claude `CLAUDE_MODEL_CONFIG`, addon model as default; new option `ollama_acp_claude_model` + ambient `ANTHROPIC_MODEL` ladder; codex `model_catalog_json` (operator-maintained contextWindow metadata, live-verified via `codex debug models`).
-- Tests: vitest binding 220/220, vitest harness-writer 70/70, python helper 46/46, strict tsc both plugins. Codex audit GO (binding fix scope).
-- Note: flip to `dispatchMode:"native"` is NOT part of this release — it stays a separate GO with its own smoke plan.
-
-## [0.7.13.26] - 2026-10-13
-
-### Fixed
-- **Benign wait-cancellation (acp-dashboard-binding):** "agent.wait observation cancelled" during a UI reload/reconnect is now handled as a benign client-disconnect edge — info-level log (`benign client-conn edge`), still-running notice without "failed" framing instead of the error soap. The harness run itself is never cancelled by the wait (host contract, dist + live verified); §19a settle + §20 mirror self-heal chain unchanged and Codex-verified as route-identical for benign and generic failures. Codex audit GO mit Nachträgen (both applied: scope note + stable semantic dist anchors in BRIDGE §22).
-- Tests: vitest binding 215/215 (new benign-observation-cancel case), strict tsc 0.
-
-### Docs
-- BRIDGE.md §22: full root-cause record for the observation-cancel edge (live timeline incl. the 60s+2s red herring, dist evidence with build-stable function anchors, fix description, verification status).
+### Changed
+- **Rollback auf den v0.7.13.25-Codebestand (GaRoN-GO 2026-10-14).** Der Code ist exakt `v0.7.13.25`; einzige Abweichung ist dieser Versions-Bump. Grund: Login-/Ingress- und Stabilitätsregressionen ab 0.7.13.26.
+- **Entfernt:** `harness-config-writer` Multi-Model-γ, `acp-dashboard-binding` PUSHBUG-C7-Fixes (V39-Clone-Guard, deferred γ re-archive) + reply-claim/session-settle-Deltas, `run.sh` Claude-Ladder, `oc_acpx_helper.py` claude-Ladder.
+- **Nicht adressiert:** der Slow-Boot/`watchdog_start_seconds`-Komplex (>120 s Kaltstart vs. Supervisor-Start-Timeout) — eigene Folgearbeit.
 
 ## [0.7.13.25] - 2026-10-13
 

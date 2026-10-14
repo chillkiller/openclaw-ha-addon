@@ -12,14 +12,11 @@ import {
   buildClaimSettlePatch,
   buildCloneHiddenPatch,
   isOursCloneArchive,
-  scheduleCloneHiddenStamp,
   settleClaimedTurnSessions,
   stampCloneHidden,
   stampSubagentProvenance,
   sweepOwnedStuckSessions,
   unarchiveHiddenClone,
-  CLONE_ARCHIVE_IDLE_GRACE_MS,
-  CLONE_HIDE_DEFER_MS,
   type SessionStoreApi,
   type SettleSessionEntryLike,
   type SweepSessionStoreApi,
@@ -259,126 +256,6 @@ describe("BRIDGE §19 / V39: stampSubagentProvenance", () => {
         originSessionKey: ORIGIN,
       }),
     ).toBe(false);
-  });
-
-  it("V39 guard: refuses a REAL-grammar target — no patch, spawnedBy untouched", async () => {
-    // A config that dispatches into the harnessSessions REAL key (the audited
-    // 18-session over-hide shape): the host's isSubagent predicate would hide
-    // a REAL session from every excludeSubagents listing → stamp MUST refuse.
-    const realKey = "agent:codex:acp:1ba4a7ea-6cf1-4341-9d2d-5ab3ff8a322d";
-    const store = createFakeStore({ entries: { [realKey]: { status: "running" } } });
-    expect(
-      await stampSubagentProvenance({
-        sessionStore: store,
-        targetSessionKey: realKey,
-        originSessionKey: ORIGIN,
-      }),
-    ).toBe(false);
-    expect(store.patches).toEqual([]);
-    expect((store.entries[realKey] as SettleSessionEntryLike).spawnedBy).toBeUndefined();
-  });
-});
-
-describe("BRIDGE γ (mechanism A / PUSHBUG): scheduleCloneHiddenStamp", () => {
-  it("defers the archival out of the turn window and stamps at fire time", async () => {
-    const store = createFakeStore({ entries: { [TARGET]: { status: "done", endedAt: 5 } } });
-    const timers: Array<{ fn: () => void; ms: number }> = [];
-    scheduleCloneHiddenStamp({
-      sessionStore: store,
-      targetSessionKey: TARGET,
-      setTimer: (fn, ms) => {
-        timers.push({ fn, ms });
-        return { unref: () => {} };
-      },
-    });
-    expect(timers).toHaveLength(1);
-    expect(timers[0]!.ms).toBe(CLONE_HIDE_DEFER_MS);
-    expect(store.patches).toEqual([]); // nothing in the turn's commit window
-    timers[0]!.fn();
-    await new Promise((resolve) => setImmediate(resolve));
-    const entry = store.entries[TARGET] as SettleSessionEntryLike;
-    expect(typeof entry.archivedAt).toBe("number");
-    expect(entry.archivedBy).toEqual({ type: "system", id: "acp-dashboard-binding" });
-  });
-
-  it("guards at fire time: native mode, already archived, running-again, missing entry", async () => {
-    const fire = async (entries: Record<string, SettleSessionEntryLike>, opts: { native?: boolean } = {}) => {
-      const store = createFakeStore({ entries });
-      const timers: Array<{ fn: () => void; ms: number }> = [];
-      scheduleCloneHiddenStamp({
-        sessionStore: store,
-        targetSessionKey: TARGET,
-        ...(opts.native ? { isNativeDispatchMode: () => true } : {}),
-        setTimer: (fn, ms) => {
-          timers.push({ fn, ms });
-          return { unref: () => {} };
-        },
-      });
-      timers[0]!.fn();
-      await new Promise((resolve) => setImmediate(resolve));
-      return store;
-    };
-    // Native mid-flight → no archive (the un-archive leg it would pair with is
-    // stood down; a stamped native target is unreachable).
-    expect((await fire({ [TARGET]: { status: "done" } }, { native: true })).patches).toEqual([]);
-    // Already archived (ours) → idempotent skip.
-    expect(
-      (
-        await fire({
-          [TARGET]: { status: "done", archivedAt: 9, archivedBy: { type: "system", id: "acp-dashboard-binding" } },
-        })
-      ).patches,
-    ).toEqual([]);
-    // Running again when the timer fires → skip (new turn owns the clone).
-    expect((await fire({ [TARGET]: { status: "running" } })).patches).toEqual([]);
-    // Missing entry → skip.
-    expect((await fire({})).patches).toEqual([]);
-  });
-});
-
-describe("BRIDGE §19c γ-gating: sweep archival leg", () => {
-  const staleClone = "agent:claude:acp:binding:webchat:default:0123abcd0456ef78";
-  const freshClone = "agent:claude:acp:binding:telegram:default:9abcdeff00112233";
-
-  it("archiveIdleClones:false (Weg B) archives nothing — settle leg still runs", async () => {
-    const store = createFakeStore({
-      entries: {
-        [staleClone]: { status: "running", updatedAt: 1, lifecycleRunId: RUN_ID },
-        [freshClone]: { status: "done", endedAt: 5 },
-      },
-    });
-    const result = await sweepOwnedStuckSessions({
-      sessionStore: store,
-      agentIds: ["claude"],
-      cutoffMs: Date.now() - 1_000,
-      archiveIdleClones: false, // index.ts: `!isNativeDispatchModeEnabled()`
-    });
-    expect(result.archived).toEqual([]);
-    expect(store.patches.every((p) => p.patch.archivedAt === undefined)).toBe(true);
-    // The stuck orphan is still settled honestly (interrupted) — only the
-    // hide stamp is gated off.
-    expect(result.settled).toEqual([staleClone]);
-    expect((store.entries[staleClone] as SettleSessionEntryLike).status).toBe("interrupted");
-  });
-
-  it("archiveIdleAfterMs: idle grace protects recently-touched clones, stale ones archive", async () => {
-    const store = createFakeStore({
-      entries: {
-        // Live 14:12-miss shape: touched 5 min before boot — INSIDE the grace.
-        [freshClone]: { status: "done", endedAt: Date.now() - 5 * 60_000, updatedAt: Date.now() - 5 * 60_000 },
-        // Untouched for 20 min — a real "idle" clone → archived.
-        [staleClone]: { status: "done", endedAt: 5, updatedAt: Date.now() - 20 * 60_000 },
-      },
-    });
-    const result = await sweepOwnedStuckSessions({
-      sessionStore: store,
-      agentIds: ["claude"],
-      cutoffMs: Date.now() - 1_000,
-      archiveIdleAfterMs: CLONE_ARCHIVE_IDLE_GRACE_MS,
-    });
-    expect(result.archived).toEqual([staleClone]);
-    expect(typeof (store.entries[staleClone] as SettleSessionEntryLike).archivedAt).toBe("number");
-    expect((store.entries[freshClone] as SettleSessionEntryLike).archivedAt).toBeUndefined();
   });
 });
 

@@ -26,7 +26,6 @@
  */
 import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import {
-  buildModelCatalog,
   deployHarnessConfigs,
   resolveHarnessWriterPaths,
   type HarnessWriterLogger,
@@ -60,42 +59,6 @@ function errorBrief(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-/**
- * Plugin-Config-Zufuhr (γ-Fix, dist-belegt): `api.config` ist die VOLLE
- * OpenClawConfig — `harnesses` lebt unter
- * `plugins.entries['harness-config-writer'].config` (der bisherige
- * `api.config.harnesses`-Read war daher ein stiller No-op). Primär gilt
- * `api.pluginConfig` (dist: validatedConfig.value = plugins.entries[id].config);
- * Fallback-Drill über die volle Config (Pattern: acp-dashboard-binding
- * agent-map.ts resolvePluginEntryConfig). Eine Quelle zählt nur, wenn sie
- * eine non-empty `harnesses`-Object trägt — die Decision ist allein am
- * Harnesses-Inhalt ablesbar (Absence = no-op, ADDITIV-GARANTIE).
- */
-export function resolvePluginConfig(api: OpenClawPluginApi): Record<string, unknown> | null {
-  const hasHarnesses = (candidate: unknown): candidate is Record<string, unknown> => {
-    if (typeof candidate !== "object" || candidate === null || Array.isArray(candidate)) {
-      return false;
-    }
-    const harnesses = (candidate as Record<string, unknown>).harnesses;
-    return (
-      typeof harnesses === "object" && harnesses !== null && !Array.isArray(harnesses) &&
-      Object.keys(harnesses as Record<string, unknown>).length > 0
-    );
-  };
-  if (hasHarnesses((api as { pluginConfig?: unknown }).pluginConfig)) {
-    return (api as { pluginConfig: Record<string, unknown> }).pluginConfig;
-  }
-  const drill = (
-    api.config as {
-      plugins?: { entries?: Record<string, { config?: unknown }> } | null;
-    } | undefined
-  )?.plugins?.entries?.[PLUGIN_ID]?.config;
-  if (hasHarnesses(drill)) {
-    return drill;
-  }
-  return null;
-}
-
 /** Idempotent Harness-Config-Deployment aus der eigenen Plugin-Entry-Config. */
 export function registerHarnessConfigDeployment(api: OpenClawPluginApi): void {
   try {
@@ -113,8 +76,7 @@ export function registerHarnessConfigDeployment(api: OpenClawPluginApi): void {
       );
       return;
     }
-    const pluginConfig = resolvePluginConfig(api);
-    const harnesses = pluginConfig?.harnesses;
+    const harnesses = (api.config as { harnesses?: unknown } | undefined)?.harnesses;
     if (harnesses === null || typeof harnesses !== "object" ||
         Object.keys(harnesses as Record<string, unknown>).length === 0) {
       // Absence = no-op (kein Log-Noise im Default-Fall, ADDITIV-GARANTIE:
@@ -133,14 +95,7 @@ export function registerHarnessConfigDeployment(api: OpenClawPluginApi): void {
       info: (message) => api.logger.info(message),
       warn: (message) => api.logger.warn(message),
     };
-    // Multi-Model γ: Modellkatalog aus der vollen Gateway-Config
-    // (models.providers — baseUrl ↔ harnesses.<id>.baseUrl-Matching).
-    const catalogWarnings: string[] = [];
-    const catalog = buildModelCatalog(api.config, catalogWarnings);
-    for (const warning of catalogWarnings) {
-      api.logger?.warn?.(`[${PLUGIN_ID}] ${warning}`);
-    }
-    const report = deployHarnessConfigs(pluginConfig, paths, logger, catalog);
+    const report = deployHarnessConfigs(api.config, paths, logger);
     for (const result of report.results) {
       for (const warning of result.warnings) {
         api.logger?.warn?.(`[${PLUGIN_ID}] harness ${result.harnessId}: ${warning}`);
@@ -148,7 +103,7 @@ export function registerHarnessConfigDeployment(api: OpenClawPluginApi): void {
     }
     api.logger?.info?.(
       `[${PLUGIN_ID}] harness config deployment: ${report.results
-        .map((r) => (r.modelsSource ? `${r.harnessId}=${r.mechanism} (models:${r.modelsSource})` : `${r.harnessId}=${r.mechanism}`))
+        .map((r) => `${r.harnessId}=${r.mechanism}`)
         .join(", ")} (harnesses config surface, BRIDGE.md §15)`,
     );
   } catch (error) {

@@ -1,7 +1,7 @@
 {
   "id": "harness-config-writer",
   "name": "Harness Config Writer",
-  "description": "Deploys harness-native file/env config for configured local-provider harnesses (codex+opencode config files; claude/gemini/droid/qwen/kimi/kiro/iflow harness-env) on plugin load, writing ALL available models (auto-matched from the gateway's models.providers by baseUrl; required 'model' stays the default). Additive to bundled acpx: absence of a harness id writes NOTHING — vendor auth runs unchanged.",
+  "description": "Deploys harness-native file/env config for configured local-provider harnesses (codex+opencode config files; claude/gemini/droid/qwen/kimi/kiro/iflow harness-env) on plugin load. Additive to bundled acpx: absence of a harness id writes NOTHING — vendor auth runs unchanged.",
   "activation": {
     "onStartup": true
   },
@@ -21,8 +21,7 @@
             "apiKey": { "type": "string", "description": "API key/token the harness backend expects (auth.json OPENAI_API_KEY for codex, apiKey option for opencode, ANTHROPIC_AUTH_TOKEN/KIRO_API_KEY/... for env harnesses). Placeholder 'ollama' when omitted." },
             "thinking": { "type": "string", "description": "Codex only: model_reasoning_effort written when non-empty." },
             "smallModel": { "type": "string", "description": "opencode small_model / claude ANTHROPIC_SMALL_FAST_MODEL." },
-            "trustProjects": { "type": "array", "items": { "type": "string" }, "description": "Codex only: [projects.\"<path>\"] trust_level=trusted entries (deduped, sorted)." },
-            "models": { "type": "array", "items": { "type": "string" }, "description": "Optional: available model ids for this harness (beyond the required 'model', which stays the default). Precedence: an explicit non-empty list WINS over auto-matching the gateway's models.providers by baseUrl; an explicit EMPTY list opts out entirely; when absent the writer auto-matches ALL model ids of the provider whose baseUrl matches this entry (deduped, capped at 200, fail-soft). Surfaces: opencode provider.models map; codex [profiles.\"<id>\"] (not inherited by acpx sessions — direct codex-CLI users only); claude CLAUDE_MODEL_CONFIG JSON; other env harnesses get an informational comment." }
+            "trustProjects": { "type": "array", "items": { "type": "string" }, "description": "Codex only: [projects.\"<path>\"] trust_level=trusted entries (deduped, sorted)." }
           },
           "required": ["model"]
         }

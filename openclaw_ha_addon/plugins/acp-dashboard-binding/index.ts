@@ -26,7 +26,6 @@ import {
   BINDING_CHANNEL,
   CHANNEL_ID,
   clearDashboardHarnessProvisions,
-  isNativeDispatchModeEnabled,
   resolvePluginDispatchMode,
   setDashboardBindingDispatchMode,
   setDashboardBindingPluginRoot,
@@ -54,7 +53,6 @@ import {
   type InboundClaimResultLike,
 } from "./src/reply-claim.js";
 import {
-  CLONE_ARCHIVE_IDLE_GRACE_MS,
   sweepOwnedStuckSessions,
   type SessionStoreApi,
   type SweepSessionStoreApi,
@@ -311,16 +309,9 @@ function registerStuckSessionSweep(api: OpenClawPluginApi, sessionStore: Session
         createConfigHarnessRoster(api.config).isHarnessAgent(agentId),
       );
       if (agentIds.length === 0) return;
-      // γ archival leg (PUSHBUG fixes, 2026-10-13): OFF in native dispatch —
-      // native has no un-archive leg, so a boot-archived native target is
-      // unreachable forever (audit GO-blocker C7). OFF for anything touched
-      // within the idle grace — the live "Sekunden-Fenster" miss archived the
-      // ACTIVE chat binding seconds after the .26 boot (14:12).
       const sweep = sweepOwnedStuckSessions({
         sessionStore: sessionStore as SweepSessionStoreApi,
         agentIds,
-        archiveIdleClones: !isNativeDispatchModeEnabled(),
-        archiveIdleAfterMs: CLONE_ARCHIVE_IDLE_GRACE_MS,
         logger: {
           debug: (message) => api.logger.debug?.(message),
           warn: (message) => api.logger.warn(message),
@@ -334,7 +325,7 @@ function registerStuckSessionSweep(api: OpenClawPluginApi, sessionStore: Session
       }
       if (result.archived.length > 0) {
         api.logger.info(
-          `[${CHANNEL_ID}] boot sweep archived ${result.archived.length} harness clone(s) (γ hidden from standard listings, idle ≥ ${CLONE_ARCHIVE_IDLE_GRACE_MS} ms): ${result.archived.join(", ")}`,
+          `[${CHANNEL_ID}] boot sweep archived ${result.archived.length} harness clone(s) (γ hidden from standard listings): ${result.archived.join(", ")}`,
         );
       }
     } catch (error) {

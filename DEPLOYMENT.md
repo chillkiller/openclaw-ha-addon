@@ -4,6 +4,11 @@
 
 | App Version | OpenClaw Version | Release Date |
 |--------------|------------------|---------------|
+| 0.7.13.28 | 2026.10.2 | 2026-10-14 |
+> **Hinweis (0.7.13.28):** isolierter Rollback auf den `v0.7.13.25`-Codebestand (GaRoN-GO). Image-Rebuild nötig.
+| 0.7.13.27 | 2026.10.2 | 2026-10-13 |
+| 0.7.13.26 | 2026.10.2 | 2026-10-13 |
+| 0.7.13.25 | 2026.10.2 | 2026-10-13 |
 | 0.7.13.24 | 2026.10.2 | 2026-10-13 |
 > **Note (0.7.13.24):** live-boot follow-up on 0.7.13.23 — the boot sweep must ride `api.on("gateway_start", …)` (typed hook runner); a registry-named `registerHook` for that event is legal but never dispatched. Image rebuild required as usual.
 | 0.7.13.23 | 2026.10.2 | 2026-10-13 |

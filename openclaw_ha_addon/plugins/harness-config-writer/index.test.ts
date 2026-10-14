@@ -3,12 +3,6 @@
  * register-Surface — beide Option-ENVs je Kombination, Write/No-Write hart
  * gegen das Dateisystem bewiesen (Gateway-Boot-Ebene: Helper-Restore muss
  * Writer-Boots überleben können, wenn die Option OFF ist).
- *
- * Multi-Model γ (2026-10-13): Config-Zufuhr ist `api.pluginConfig` (dist:
- * validated plugins.entries[id].config) mit Fallback-Drill über die volle
- * `api.config` — der vormalige `api.config.harnesses`-Read war ein stiller
- * No-op (BUG-Fix, hier fs-bewiesen). Plus Modellkatalog-Matching End-to-End
- * (api.config.models.providers → claude.env CLAUDE_MODEL_CONFIG).
  */
 
 import { existsSync, mkdtempSync, readFileSync, mkdirSync, rmSync } from "node:fs";
@@ -31,17 +25,8 @@ type Logger = {
   error: (m: string) => void;
 };
 
-type ApiOptions = {
-  /** Entry-Config (dist: api.pluginConfig = validated plugins.entries[id].config). */
-  harnesses?: Record<string, unknown>;
-  /** γ: harnesses NUR über den Fallback-Drill der vollen Config anboten. */
-  viaFullConfig?: boolean;
-  /** γ: volle Gateway-Config (models.providers-Katalog etc.). */
-  fullConfig?: Record<string, unknown>;
-};
-
-function makeApi(options: ApiOptions = {}): {
-  api: { config: Record<string, unknown>; pluginConfig: Record<string, unknown>; logger: Logger };
+function makeApi(harnesses?: Record<string, unknown>): {
+  api: { config: Record<string, unknown>; logger: Logger };
   logs: string[];
 } {
   const logs: string[] = [];
@@ -51,28 +36,17 @@ function makeApi(options: ApiOptions = {}): {
     warn: (m) => logs.push(`warn: ${m}`),
     error: (m) => logs.push(`error: ${m}`),
   };
-  const pluginConfig: Record<string, unknown> = {};
-  const config: Record<string, unknown> = { ...(options.fullConfig ?? {}) };
-  if (options.harnesses !== undefined) {
-    if (options.viaFullConfig) {
-      config.plugins = {
-        entries: { "harness-config-writer": { config: { harnesses: options.harnesses } } },
-      };
-    } else {
-      pluginConfig.harnesses = options.harnesses;
-    }
+  const config: Record<string, unknown> = {};
+  if (harnesses !== undefined) {
+    config.harnesses = harnesses;
   }
-  return { api: { config, pluginConfig, logger }, logs };
+  return { api: { config, logger }, logs };
 }
 
 const CODEX_ENTRY = { model: "audit-m", baseUrl: "http://b:1234" };
 
 function codexTomlPath(root: string): string {
   return join(root, ".codex", "config.toml");
-}
-
-function claudeEnvPath(root: string): string {
-  return join(root, "state", "acpx", "harness-env", "claude.env");
 }
 
 describe("resolveWriterGate (ENV-Gate, Audit B2)", () => {
@@ -142,7 +116,7 @@ describe("registerHarnessConfigDeployment — ENV-Gate-Verdrahtung am Entry", ()
 
   it("gate ON (writer=true, binding=false) → config.toml written", () => {
     boot({ HARNESS_CONFIG_WRITER_ENABLED: "true", ACP_DASHBOARD_BINDING_ENABLED: "false" });
-    const { api } = makeApi({ harnesses: { codex: CODEX_ENTRY } });
+    const { api } = makeApi({ codex: CODEX_ENTRY });
     registerHarnessConfigDeployment(api as never);
     const toml = codexTomlPath(root);
     expect(existsSync(toml)).toBe(true);
@@ -151,7 +125,7 @@ describe("registerHarnessConfigDeployment — ENV-Gate-Verdrahtung am Entry", ()
 
   it("gate OFF (writer=false, binding=true) → operator veto wins, NO write", () => {
     boot({ HARNESS_CONFIG_WRITER_ENABLED: "false", ACP_DASHBOARD_BINDING_ENABLED: "true" });
-    const { api, logs } = makeApi({ harnesses: { codex: CODEX_ENTRY } });
+    const { api, logs } = makeApi({ codex: CODEX_ENTRY });
     registerHarnessConfigDeployment(api as never);
     expect(existsSync(codexTomlPath(root))).toBe(false);
     expect(logs.join("\n")).toContain("inactive by env gate");
@@ -159,14 +133,14 @@ describe("registerHarnessConfigDeployment — ENV-Gate-Verdrahtung am Entry", ()
 
   it("writer empty (run.sh unset) + binding=on → follows binding, write", () => {
     boot({ HARNESS_CONFIG_WRITER_ENABLED: "", ACP_DASHBOARD_BINDING_ENABLED: "true" });
-    const { api } = makeApi({ harnesses: { codex: CODEX_ENTRY } });
+    const { api } = makeApi({ codex: CODEX_ENTRY });
     registerHarnessConfigDeployment(api as never);
     expect(existsSync(codexTomlPath(root))).toBe(true);
   });
 
   it("writer empty + binding empty/unset → off, NO write despite harnesses config", () => {
     boot({ HARNESS_CONFIG_WRITER_ENABLED: "" });
-    const { api, logs } = makeApi({ harnesses: { codex: CODEX_ENTRY } });
+    const { api, logs } = makeApi({ codex: CODEX_ENTRY });
     registerHarnessConfigDeployment(api as never);
     expect(existsSync(codexTomlPath(root))).toBe(false);
     expect(logs.join("\n")).toContain("inactive by env gate");
@@ -177,122 +151,5 @@ describe("registerHarnessConfigDeployment — ENV-Gate-Verdrahtung am Entry", ()
     const { api } = makeApi();
     registerHarnessConfigDeployment(api as never);
     expect(existsSync(codexTomlPath(root))).toBe(false);
-  });
-});
-
-describe("registerHarnessConfigDeployment — PluginConfig-Zufuhr (γ-Fix)", () => {
-  let root: string;
-
-  beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), "writer-entry-plugincfg-"));
-  });
-
-  afterEach(() => {
-    rmSync(root, { recursive: true, force: true });
-    delete process.env.OPENCLAW_STATE_DIR;
-    delete process.env.HARNESS_CONFIG_WRITER_ENABLED;
-    delete process.env.ACP_DASHBOARD_BINDING_ENABLED;
-  });
-
-  function bootOn() {
-    process.env.OPENCLAW_STATE_DIR = join(root, "state");
-    process.env.HARNESS_CONFIG_WRITER_ENABLED = "true";
-  }
-
-  it("legacy Top-Level-Shape (api.config.harnesses) wird NICHT mehr gelesen (BUG-Fix)", () => {
-    // Beweis des γ-Fixes: harnesses oben auf api.config ist die VOLLE Config —
-    // dort ist der Key nie gültig (dist: pluginConfig = plugins.entries[id].config).
-    bootOn();
-    const { api, logs } = makeApi({
-      harnesses: { codex: CODEX_ENTRY },
-      fullConfig: { harnesses: { codex: CODEX_ENTRY } },
-    });
-    registerHarnessConfigDeployment({ ...api, pluginConfig: {} } as never);
-    expect(existsSync(codexTomlPath(root))).toBe(false);
-  });
-
-  it("Fallback-Drill: harnesses unter api.config.plugins.entries → write", () => {
-    bootOn();
-    const { api, logs } = makeApi({
-      harnesses: { codex: CODEX_ENTRY },
-      viaFullConfig: true,
-    });
-    registerHarnessConfigDeployment({ ...api, pluginConfig: {} } as never);
-    expect(existsSync(codexTomlPath(root))).toBe(true);
-  });
-});
-
-describe("registerHarnessConfigDeployment — Modellkatalog-Matching (γ)", () => {
-  let root: string;
-
-  beforeEach(() => {
-    root = mkdtempSync(join(tmpdir(), "writer-entry-catalog-"));
-  });
-
-  afterEach(() => {
-    rmSync(root, { recursive: true, force: true });
-    delete process.env.OPENCLAW_STATE_DIR;
-    delete process.env.HARNESS_CONFIG_WRITER_ENABLED;
-    delete process.env.ACP_DASHBOARD_BINDING_ENABLED;
-  });
-
-  function bootOn() {
-    process.env.OPENCLAW_STATE_DIR = join(root, "state");
-    process.env.HARNESS_CONFIG_WRITER_ENABLED = "true";
-  }
-
-  const OLLAMA_PROVIDER = {
-    baseUrl: "http://b:1234/v1",
-    models: [{ id: "a" }, { id: "b" }],
-  };
-
-  it("Auto-Match End-to-End: catalog baseUrl+models → claude.env CLAUDE_MODEL_CONFIG", () => {
-    bootOn();
-    const { api, logs } = makeApi({
-      harnesses: { claude: { model: "a", baseUrl: "http://b:1234", apiKey: "k" } },
-      fullConfig: { models: { providers: { ollama: OLLAMA_PROVIDER } } },
-    });
-    registerHarnessConfigDeployment(api as never);
-    const env = readFileSync(claudeEnvPath(root), "utf-8");
-    expect(env).toContain(`CLAUDE_MODEL_CONFIG='{"availableModels":["a","b"]}'`);
-    expect(env).toContain(`ANTHROPIC_MODEL='a'`);
-    expect(logs.join("\n")).toContain("claude=env (models:matched)");
-  });
-
-  it("explicit entry.models wins over the catalog", () => {
-    bootOn();
-    const { api, logs } = makeApi({
-      harnesses: {
-        claude: { model: "b", baseUrl: "http://b:1234", apiKey: "k", models: ["x", "y"] },
-      },
-      fullConfig: { models: { providers: { ollama: OLLAMA_PROVIDER } } },
-    });
-    registerHarnessConfigDeployment(api as never);
-    const env = readFileSync(claudeEnvPath(root), "utf-8");
-    expect(env).toContain(`CLAUDE_MODEL_CONFIG='{"availableModels":["b","x","y"]}'`);
-    expect(logs.join("\n")).toContain("claude=env (models:explicit)");
-  });
-
-  it("garbage models.providers → catalog warning, deploy continues", () => {
-    bootOn();
-    const { api, logs } = makeApi({
-      harnesses: { codex: CODEX_ENTRY },
-      fullConfig: { models: { providers: "junk" } },
-    });
-    registerHarnessConfigDeployment(api as never);
-    expect(existsSync(codexTomlPath(root))).toBe(true);
-    expect(logs.join("\n")).toContain("models.providers: unexpected shape");
-  });
-
-  it("no catalog providers → no models surface, plain deploy", () => {
-    bootOn();
-    const { api, logs } = makeApi({
-      harnesses: { codex: CODEX_ENTRY },
-      fullConfig: { models: { providers: {} } },
-    });
-    registerHarnessConfigDeployment(api as never);
-    const toml = readFileSync(codexTomlPath(root), "utf-8");
-    expect(toml).not.toMatch(/^\[profiles\./m);
-    expect(logs.join("\n")).toContain("codex=file-codex (models:none)");
   });
 });
