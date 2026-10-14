@@ -219,6 +219,33 @@ describe("opencode writer", () => {
       expect(mode).toBe(0o600);
     }
   });
+
+  it("M3 (r2): UPDATE of a pre-existing 0644 opencode.jsonc → 0600 (exposé window closed on update path)", () => {
+    const p = paths();
+    const file = join(p.acpxDir, "opencode-home", "opencode.jsonc");
+    mkdirSync(join(p.acpxDir, "opencode-home"), { recursive: true });
+    writeFileSync(file, '{"stale":true}\n', { mode: 0o644 });
+    expect(statSync(file).mode & 0o777).toBe(0o644); // Precondition
+    DEPLOY({ harnesses: { opencode: { ...OLLAMA, apiKey: "secret-token" } } }, p);
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+  });
+
+  it("M3 (r2): BYTE-IDENTICAL 0644 opencode.jsonc → unchanged action BUT mode healed to 0600", () => {
+    const p = paths();
+    const dir = join(p.acpxDir, "opencode-home");
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, "opencode.jsonc");
+    const desired = buildOpencodeConfigJsonc({ ...OLLAMA, apiKey: "secret-token" });
+    writeFileSync(file, desired, { mode: 0o644 });
+    const report = DEPLOY(
+      { harnesses: { opencode: { ...OLLAMA, apiKey: "secret-token" } } },
+      p,
+    );
+    expect(
+      report.results[0].files.find((f) => f.path === file)?.action,
+    ).toBe("unchanged");
+    expect(statSync(file).mode & 0o777).toBe(0o600);
+  });
   it("depplies opencode.jsonc to BOTH dirs + neutralizes legacy config.toml", () => {
     const p = paths();
     const report = DEPLOY({ harnesses: { opencode: OLLAMA } }, p);
@@ -535,7 +562,7 @@ describe("resolveEntryModels", () => {
     expect(r.models).toEqual([]);
   });
 
-  it("invalid models field → warning + fallback (entry stays alive, fail-soft)", () => {
+  it("invalid models field → warning + fallback (entry stays alive, fail-soft); N1: NO duplicate fallback warning on non-array", () => {
     const r = resolveEntryModels(
       { model: "gemma4", baseUrl: "http://localhost:11434", models: "junk" as unknown as string[] },
       CATALOG,
@@ -543,6 +570,19 @@ describe("resolveEntryModels", () => {
     expect(r.warnings.join(" ")).toContain("must be array of non-empty strings");
     expect(r.source).toBe("matched");
     expect(r.models[0]).toBe("gemma4");
+    // N1 (r2-Audit, negativ): die "resolved to nothing"-Fallback-Warning darf
+    // bei einem NICHT-Array NICHT zusätzlich kommen (kein Doppel-Satz).
+    expect(r.warnings.join(" ")).not.toContain("resolved to nothing");
+  });
+
+  it("N1 (r2): non-empty array of ALL-invalid ids → BOTH warnings (fallback message justified here)", () => {
+    const r = resolveEntryModels(
+      { model: "gemma4", baseUrl: "http://localhost:11434", models: ["", "   "] },
+      CATALOG,
+    );
+    expect(r.warnings.join(" ")).toContain("invalid ids dropped");
+    expect(r.warnings.join(" ")).toContain("resolved to nothing");
+    expect(r.source).toBe("matched");
   });
 
   it("invalid ids are dropped with a warning, rest survives", () => {

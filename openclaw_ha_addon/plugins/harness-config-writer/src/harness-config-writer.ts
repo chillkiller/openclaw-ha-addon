@@ -205,8 +205,10 @@ export function resolveHarnessWriterPaths(
  * Atomarer Write (temp+rename). Optionales `mode` ODER beibehaltener Mode der
  * bestehenden Datei wird am TMP gesetzt VOR dem rename — kein 0644→0600
  * Exposé-Fenster (Helper-Standard `_write_managed_defaults`, M3-Fix).
+ * Audit-Batch r2: chmod-Fail wird in `warnings` gemeldet (kein silent 0644
+ * an 0600-Erwartungsort mehr) und bleibt fail-soft (rename läuft weiter).
  */
-function atomicWrite(path: string, content: string, mode?: number): void {
+function atomicWrite(path: string, content: string, mode?: number, warnings?: string[]): void {
   mkdirSync(dirname(path), { recursive: true });
   const tmp = `${path}.tmp`;
   try {
@@ -217,9 +219,9 @@ function atomicWrite(path: string, content: string, mode?: number): void {
       try {
         chmodSync(tmp, targetMode);
       } catch (error) {
-        // Fail-soft: fehlgeschlagener Mode ist kein Deploy-Bruch (wie der
-        // Helper except-branch; die Datei selbst ist angekommen).
-        void error;
+        // Fail-soft wie der Helper except-branch — aber sichtbar (r2-Audit):
+        // fehlgeschlagener Mode ist kein Deploy-Bruch, nur ein Hinweis.
+        warnings?.push(`could not chmod ${path} ${targetMode.toString(8)}: ${briefError(error)}`);
       }
     }
     renameSync(tmp, path);
@@ -242,13 +244,27 @@ function writeFileIfMissingOrDiffers(
   path: string,
   content: string,
   mode?: number,
+  warnings?: string[],
 ): FileAction {
   const exists = existsSync(path);
   const current = exists ? tryOr(() => readFileSync(path, "utf-8"), null) : null;
   if (current === content) {
+    // r2-Audit (M3-Residuum): auch beim BYTE-IDENTISCHEN Bestand einen
+    // falschen Mode heilen (0644 Bestands-Datei mit 0600-Anforderung —
+    // sonst bliebe sie bis zum ersten Content-Diff loose). Fail-soft.
+    if (mode !== undefined && exists) {
+      try {
+        const currentMode = statSync(path).mode & 0o777;
+        if (currentMode !== mode) {
+          chmodSync(path, mode);
+        }
+      } catch (error) {
+        warnings?.push(`could not chmod ${path}: ${briefError(error)}`);
+      }
+    }
     return "unchanged";
   }
-  atomicWrite(path, content, mode);
+  atomicWrite(path, content, mode, warnings);
   return exists ? "updated" : "created";
 }
 
@@ -716,8 +732,10 @@ export function deployCodexAuth(
       null,
       2,
     )}\n`,
-    // 0600 am TMP VOR dem rename (Helper-Standard) — kein Exposé-Fenster.
+    // 0600 am TMP VOR dem rename (Helper-Standard) — kein Exposé-Fenster;
+    // r2-Audit: chmod-Fail wandert in `warnings` statt still zu bleiben.
     0o600,
+    warnings,
   );
   logger?.info?.(`[${harnessId}] Created ${path} (placeholder API key)`);
   return { path, action: "created" };
@@ -932,7 +950,7 @@ export function deployCodexHarnessFiles(
     );
   } else if (!built && modelCatalog) {
     logger?.info?.(
-      `[${harnessId}] model catalog skipped: no model of the list has contextWindow in openclaw.json (codex falls back to its bundled-metadata warning)`,
+      `[${harnessId}] model catalog skipped: ${entry.models?.length ? "no model of the list has contextWindow in openclaw.json" : "no model list on the entry (models resolved to none/opt-out)"} (codex falls back to its bundled metadata)`,
     );
   }
   return { warnings, files };
@@ -1008,7 +1026,7 @@ export function deployOpencodeHarnessFiles(
     const path = join(targetDir, "opencode.jsonc");
     // M3-Fix (2026-10-14): die Datei trägt den apiKey in Klartext → 0600
     // (Helper-Standard; Mode geht in atomicWrite — kein Exposé-Fenster).
-    const action = writeFileIfMissingOrDiffers(path, desired, 0o600);
+    const action = writeFileIfMissingOrDiffers(path, desired, 0o600, warnings);
     if (action !== "unchanged") {
       logger?.info?.(`[${harnessId}] Updated ${path} (provider config)`);
     }
@@ -1079,7 +1097,7 @@ export function deployHarnessEnvFile(
   const secret = /API_KEY|AUTH_TOKEN|TOKEN/.test(envVarKeys.join("|"));
   // Enthält Tokens/Keys → 0600 wie codex auth.json (M3-Verfahren: Mode am
   // TMP VOR dem rename — kein Exposé-Fenster).
-  const action = writeFileIfMissingOrDiffers(path, content, secret ? 0o600 : undefined);
+  const action = writeFileIfMissingOrDiffers(path, content, secret ? 0o600 : undefined, mapping.warnings);
   if (action !== "unchanged") {
     logger?.info?.(`[${harnessId}] ${action} ${path} (${envVarKeys.join(", ")})`);
   }

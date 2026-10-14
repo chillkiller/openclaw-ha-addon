@@ -363,8 +363,9 @@ siehe Caveats):
    M3/N3-Fix 2026-10-14) — nicht mehr "Ollama model", damit vLLM/LocalAI-
    Nutzer nicht ein falsches Backend-Label sehen.
 7. opencode.jsonc trägt den apiKey in Klartext → seit dem M3-Fix 0600
-   (vorher umask-default; Bestands-Dateien mit 0644 werden beim nächsten
-   Writer-Write nachgezogen).
+   (vorher umask-default). r2-Audit-Präzision: der Mode wird bei JEDEM
+   Boot nachgezogen — auch bei byte-identischem Content (unchanged-Heal,
+   Fix 2026-10-14); chmod-Fail ist fail-soft, aber in `warnings` sichtbar.
 
 Flaggschiff-Defaults (Add-on-level, `ollama_acp_*_model`): codex/opencode
 existierten bereits; γ ergänzt `ollama_acp_claude_model` → run.sh export

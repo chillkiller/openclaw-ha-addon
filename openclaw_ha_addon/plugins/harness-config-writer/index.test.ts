@@ -252,6 +252,19 @@ describe("registerHarnessConfigDeployment — PluginConfig-Zufuhr (γ-Fix)", () 
     expect(existsSync(codexTomlPath(root))).toBe(false);
     expect(logs.join("\n")).not.toContain("legacy harnesses key");
   });
+
+  it("M2 (r2): legacy key + valid pluginConfig → deploy LÄUFT, kein legacy-WARN (kein False-Positive)", () => {
+    bootOn();
+    const { api, logs } = makeApi({
+      harnesses: { codex: CODEX_ENTRY },
+      legacyHarnesses: { codex: { model: "legacy-m", baseUrl: "http://b:9999" } },
+    });
+    registerHarnessConfigDeployment(api as never);
+    expect(existsSync(codexTomlPath(root))).toBe(true);
+    // Deploy konsumiert die eigene Entry-Config, nicht den Legacy-Key:
+    expect(logs.join("\n")).not.toContain("legacy harnesses key");
+    expect(readFileSync(codexTomlPath(root), "utf-8")).toContain("[model_providers.");
+  });
 });
 
 describe("registerHarnessConfigDeployment — Modellkatalog-Matching (γ)", () => {
@@ -303,6 +316,19 @@ describe("registerHarnessConfigDeployment — Modellkatalog-Matching (γ)", () =
     const env = readFileSync(claudeEnvPath(root), "utf-8");
     expect(env).toContain(`CLAUDE_MODEL_CONFIG='{"availableModels":["b","x","y"]}'`);
     expect(logs.join("\n")).toContain("claude=env (models:explicit)");
+  });
+
+  it("e2e (r2): entry models:[] (Opt-out) → kein CLAUDE_MODEL_CONFIG, Log meldet (models:optout)", () => {
+    bootOn();
+    const { api, logs } = makeApi({
+      harnesses: { claude: { model: "a", baseUrl: "http://b:1234", apiKey: "k", models: [] } },
+      fullConfig: { models: { providers: { ollama: OLLAMA_PROVIDER } } },
+    });
+    registerHarnessConfigDeployment(api as never);
+    const env = readFileSync(claudeEnvPath(root), "utf-8");
+    expect(env).toContain("ANTHROPIC_MODEL='a'");
+    expect(env).not.toContain("CLAUDE_MODEL_CONFIG");
+    expect(logs.join("\n")).toContain("claude=env (models:optout)");
   });
 
   it("garbage models.providers → catalog warning, deploy continues", () => {
