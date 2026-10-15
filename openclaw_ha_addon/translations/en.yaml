@@ -170,7 +170,7 @@ configuration:
       mdns_mode:
         name: mDNS Mode
         description: mDNS/Bonjour configuration for LAN discovery via OpenClaw's bundled bonjour plugin. 'off' disables mDNS,
-          'minimal' advertises the gateway service (default), 'full' advertises with all metadata.
+          'minimal' advertises the gateway service (default), 'full' advertises with all metadata. The addon force-enables the native OpenClaw advertiser (host-networked here; in a plain Docker container it is silently disabled) — the LAN WebUI stays reachable at https://openclaw.local:18789.
         options:
           false: Off (no mDNS)
           minimal: Minimal (advertise gateway service, default)

@@ -224,6 +224,11 @@ options:
     # off: no mDNS advertisement
     # minimal: OpenClaw bundled bonjour plugin, core TXT keys only (default)
     # full: OpenClaw bundled bonjour plugin, verbose TXT metadata
+    # The addon force-enables OpenClaw's native advertiser (OPENCLAW_DISABLE_BONJOUR)
+    # because the addon runs host-networked — in a plain Docker container OpenClaw
+    # silently disables it, which previously left openclaw.local unresolvable.
+    # Note: the advertisement reports the gateway WS port (18790, loopback-only);
+    # the WebUI over the LAN stays at https://openclaw.local:18789 (nginx TLS).
     mdns_mode: minimal
     # Hostname to advertise (without .local; default: openclaw)
     mdns_host_name: "openclaw"

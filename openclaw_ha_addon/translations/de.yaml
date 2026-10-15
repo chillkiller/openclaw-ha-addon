@@ -176,7 +176,7 @@ configuration:
       mdns_mode:
         name: mDNS-Modus
         description: mDNS/Bonjour-Konfiguration für LAN-Erkennung via OpenClaws eingebautem bonjour-Plugin. 'off' deaktiviert
-          mDNS, 'minimal' bewirbt den Gateway-Dienst (Standard), 'full' bewirbt mit allen Metadaten.
+          mDNS, 'minimal' bewirbt den Gateway-Dienst (Standard), 'full' bewirbt mit allen Metadaten. Das Add-on erzwingt den nativen OpenClaw-Advertiser (das Add-on laeuft im Host-Netz; in einem reinen Docker-Container waere er still deaktiviert) — die LAN-Weboberflaeche bleibt unter https://openclaw.local:18789 erreichbar.
         options:
           false: Aus (kein mDNS)
           minimal: Minimal (Gateway-Dienst bewerben, Standard)

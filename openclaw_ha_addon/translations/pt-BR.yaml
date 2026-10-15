@@ -177,7 +177,7 @@ configuration:
       mdns_mode:
         name: Modo mDNS
         description: Configuração mDNS/Bonjour para descoberta na LAN. 'off' desativa mDNS, 'minimal' anuncia o serviço gateway
-          (padrão), 'full' anuncia com todos os metadados.
+          (padrão), 'full' anuncia com todos os metadados. O addon força o ativador nativo do OpenClaw (aqui em rede do host; num container Docker puro fica desativado silenciosamente) — a interface web na LAN continua em https://openclaw.local:18789.
         options:
           false: Desativado (sem mDNS)
           minimal: Mínimo (anunciar serviço gateway, padrão)

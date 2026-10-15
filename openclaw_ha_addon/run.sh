@@ -350,6 +350,22 @@ if [ -n "$MDNS_HOSTNAME_CLEAN" ] && command -v hostname >/dev/null 2>&1; then
   hostname "$MDNS_HOSTNAME_CLEAN" 2>/dev/null || echo "WARN: Could not set container hostname to $MDNS_HOSTNAME_CLEAN (non-critical)"
 fi
 
+# Force the native OpenClaw bonjour advertiser to match the mDNS option.
+# OpenClaw auto-disables LAN mDNS advertising when it detects a container
+# (isDisabledByEnv: OPENCLAW_DISABLE_BONJOUR unset -> isContainerEnvironment()).
+# This addon runs host-networked (host_network: true), so multicast reaches the
+# LAN directly; without this export the native responder silently never runs
+# even though discovery.mdns.mode is set — that was the openclaw.local outage.
+# OPENCLAW_DISABLE_BONJOUR is also protected from gateway_env_vars overrides
+# (reserved OPENCLAW_* pattern), so run.sh's decision here is authoritative.
+if [ "$MDNS_MODE" = "off" ]; then
+  export OPENCLAW_DISABLE_BONJOUR="true"
+  echo "INFO: mDNS mode 'off' — native bonjour advertising explicitly disabled"
+else
+  export OPENCLAW_DISABLE_BONJOUR="false"
+  echo "INFO: mDNS mode '$MDNS_MODE' — native bonjour advertising enabled (host networking: multicast reaches the LAN)"
+fi
+
 # Reduce risk of secrets ending up in logs
 set +x
 
