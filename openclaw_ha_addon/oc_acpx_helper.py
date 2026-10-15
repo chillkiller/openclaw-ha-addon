@@ -90,9 +90,10 @@ OPENCODE_PACKAGE = os.environ.get("OPENCODE_PACKAGE", "opencode-ai")
 OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 # Harness model defaults. Generic app rule (GaRoN 2026-10-10): the add-on must
 # work user-independent — these are only DEFAULTS; real overrides come from
-# add-on options (run.sh forwards them as env: ollama_acp_*_model).
-#   acp codex models  : OLLAMA_CODEX_MODEL  (add-on option: ollama_acp_codex_model)
-#   acp opencode models: OLLAMA_OPENCODE_MODEL (add-on option: ollama_acp_opencode_model)
+# add-on options (run.sh forwards them as env; renamed to harness_* in the
+# 0.7.13.30 sectioned layout, old flat names still coalesce).
+#   acp codex models  : OLLAMA_CODEX_MODEL  (add-on option: harness_codex_model)
+#   acp opencode models: OLLAMA_OPENCODE_MODEL (add-on option: harness_opencode_model)
 # gemma4 was only ever a budget-emergency placeholder; never ship it as default.
 OLLAMA_CODEX_MODEL = os.environ.get("OLLAMA_CODEX_MODEL") or "kimi-k2.7-code:cloud"
 OLLAMA_OPENCODE_MODEL = os.environ.get("OLLAMA_OPENCODE_MODEL") or "glm-5.3-flash:cloud"
@@ -832,8 +833,10 @@ def _writer_harness_excluded() -> set[str]:
 
 def _writer_model_for(harness_id: str) -> str:
     """Shared model line wins; codex/opencode keep their existing dedicated
-    add-on options (ollama_acp_*_model) as per-harness default; claude γ: own
-    option (OLLAMA_CLAUDE_MODEL) → legacy ambient OLLAMA_ACP_MODEL → default;
+    add-on options (harness_{codex,opencode}_model, formerly ollama_acp_*)
+    as per-harness default; claude γ: own
+    option (harness_claude_model → OLLAMA_CLAUDE_MODEL) → legacy ambient
+    OLLAMA_ACP_MODEL → default;
     remaining env-IDs ohne Modellvorgabe → "" (TS-Entry valide: model Pflicht —
     wir erzeugen sie dann NICHT statt einen unbrauchbaren Eintrag zu
     schreiben)."""
@@ -1351,7 +1354,8 @@ def patch_openclaw_config() -> bool:
     allowed = set(acp.get("allowedAgents", []) or [])
     # Generic app rule (GaRoN 2026-10-10): never overwrite a user-owned
     # allowedAgents list. We only union in the built-in harness names plus
-    # user extras (add-on option acp_additional_allowed_agents, forwarded
+    # user extras (add-on option additional_agents — 0.7.13.30 rename of
+    # acp_additional_allowed_agents, forwarded
     # by run.sh as ACP_ADDITIONAL_ALLOWED_AGENTS env; CSV).
     base_allowed = {"claude", "codex", "opencode", "openclaw"}
     extra_raw = os.environ.get("ACP_ADDITIONAL_ALLOWED_AGENTS", "")

@@ -9,7 +9,8 @@ configuration:
       Tailscale; reverse_proxy - външен ревърс прокси.
   gateway_port:
     name: Порт на Gateway
-    description: Номер на порт, на който OpenClaw gateway да слуша (по подразбиране - 18789)
+    description: Номер на порт, на който OpenClaw gateway да слуша (по подразбиране - 18789). В LAN и Tailscale режим това
+      е външно достъпният порт.
   gateway_env_vars:
     name: Променливи на средата за Gateway
     description: Променливи на средата, предавани на OpenClaw gateway процеса при стартиране (списък от записи name/value
@@ -21,23 +22,93 @@ configuration:
     options:
       local: Локален (препоръчително)
       remote: Отдалечен
-  terminal_ui:
-    name: Terminal & UI
-    description: Web terminal, app web UI and the docs page
+  terminal_port:
+    name: Порт на терминал
+    description: Външен порт на уеб терминала (по подразбиране - 7681). Самият терминал е винаги активен — показва се чрез
+      Ingress и е повърхността за поддръжка/поправка (спасителният изход на операторската CLI); конфигурируем е само портът
+      му. Променете, ако този порт влиза в конфликт с друга услуга.
+  enable_webui:
+    name: Активиране на WebUI
+    description: Показване на раздела WebUI в Ingress интерфейса (Контролен панел на OpenClaw).
+  enable_docs:
+    name: Активиране на Docs
+    description: Показване на раздела Docs в Ingress интерфейса (статична документация и статус на живо).
+  ha_integration:
+    name: Home Assistant integration
+    description: HA token, MCP, OpenAI API endpoint and proxy
     fields:
-      enable_terminal:
-        name: Активиране на уеб терминал
-        description: Активиране на уеб терминал бутона в Home Assistant (Ingress) чрез ttyd
-      terminal_port:
-        name: Порт на терминал
-        description: Номер на порт за уеб терминала (по подразбиране - 7681). Променете, ако този порт е в конфликт с друга
-          услуга.
-      enable_webui:
-        name: Активиране на WebUI
-        description: Показване на раздела WebUI в Ingress интерфейса (Контролен панел на OpenClaw).
-      enable_docs:
-        name: Активиране на Docs
-        description: Показване на раздела Docs в Ingress интерфейса (статична документация и статус на живо).
+      homeassistant_token:
+        name: Home Assistant токен
+        description: Опционално - дълготраен токен на Home Assistant за локални API скриптове/инструменти
+      http_proxy:
+        name: Изходящ HTTP прокси
+        description: Опционално - URL на прокси за изходящи HTTP/HTTPS заявки (пример - http://192.168.2.1:3128)
+      enable_openai_api:
+        name: Активиране на OpenAI API
+        description: Активиране на OpenAI-съвместим Chat Completions ендпойнт. Позволява използването на OpenClaw като разговорен
+          агент в HA Assist pipeline чрез Extended OpenAI Conversation (HACS) или всеки OpenAI-съвместим клиент.
+      auto_configure_mcp:
+        name: Автоматично конфигуриране на MCP за Home Assistant
+        description: Когато е ВКЛ. и Home Assistant Token е зададен, автоматично регистрира Home Assistant като MCP сървър
+          при всяко стартиране. Това позволява на OpenClaw да контролира HA устройства, услуги и автоматизации чрез Model
+          Context Protocol. Изключете само ако управлявате mcporter конфигурацията ръчно.
+  acpx_enabled:
+    name: ACPX инфраструктура
+    description: Инсталиране на ACPX wrapper стартери (Claude Code, Codex, OpenCode), за да може OpenClaw да изпълнява кодинг
+      агенти през локалния ACPX бекенд. Съществуващо потребителски конфигурирани кодинг агенти се запазват без промяна.
+  harness_config_writer_enabled:
+    name: Harness Config Writer
+    description: Опционално (Repo-Split A2) - Разгръщане + регистриране на вградения harness-config-writer плъгин (генерира
+      harness-нативната файл/env конфигурация от config.harnesses). БЕЗ СТОЙНОСТ следва ключа на ACP Dashboard Binding; ВКЛ.
+      го принуждава дори с изключено binding; ИЗКЛ. го държи трайно изключен. Първата активирана сесия прави снапшот на
+      управляваните harness файлове — повторното изключване автоматично възстановява оригиналите.
+  harness:
+    name: Harness (кодинг бекендове)
+    description: Споделени provider/модел стойности по подразбиране за вградените acpx harnesses (Claude Code, Codex, OpenCode)
+      и harness-config-writer. Ендпойнтът е всеки OpenAI-съвместим API — не само Ollama.
+    fields:
+      harness_base_url:
+        name: Базов URL на Harness
+        description: Бекенд ендпойнт за ВСИЧКИ локални harnesses (всеки OpenAI-съвместим API — не само Ollama), напр. http://192.168.178.34:11434.
+          Обслужва и като АКТИВАТОР на harness-config-writer - празно не генерира нищо (записите на оператора остават недокоснати).
+          Без стойност важи вграденият fallback http://localhost:11434.
+      harness_api_key:
+        name: Harness API ключ
+        description: API ключ, използван от генерираните harness записи (споделен writer default). Празно = без ключ (напр.
+          локална Ollama).
+      harness_model:
+        name: Модел по подразбиране (всички harnesses)
+        description: Споделен harness модел по подразбиране. Прилага се към всички НЕизключени harnesses (codex/opencode/claude
+          запазват своите отделни модели по-долу), ако е зададен. Празно = печелят отделните defaults.
+      utility_model:
+        name: Utility модел
+        description: Опционално - Override за agents.defaults.utilityModel в openclaw.json (моделът зад вътрешните gateway
+          utility извиквания, преди всичко наблюдателят на сесии). БЕЗ СТОЙНОСТ = без запис (operator owns the value); задавайте
+          само модел с чист strict-JSON изход.
+      harness_opencode_model:
+        name: Модел OpenCode (forge)
+        description: Опционално - Модел на OpenCode harness (forge). По подразбиране - glm-5.3-flash:cloud
+      harness_claude_model:
+        name: Модел Claude Code
+        description: Опционално - Модел на Claude Code harness (храни и ambient ANTHROPIC_MODEL fallback). По подразбиране
+          - glm-5.3-flash:cloud
+      harness_codex_model:
+        name: Модел Codex (audit)
+        description: Опционално - Модел на Codex harness (audit). По подразбиране - kimi-k2.7-code:cloud
+      harness_excluded_agents:
+        name: Изключени harnesses
+        description: Опционално - Списък с harness ID (разделени със запетаи), ИЗКЛЮЧЕНИ от споделените defaults по-горе (напр.
+          "codex,opencode").
+      additional_agents:
+        name: Допълнителни агенти
+        description: Опционално - Списък с ДОПЪЛНИТЕЛНИ имена на агенти/harnesses (разделени със запетаи) за acp.allowedAgents
+          освен вградените claude/codex/opencode/openclaw (напр. "pi,colibri,gemini"). Потребителските агенти трябва също да
+          съществуват в OpenClaw roster с runtime.type=acp; списъкът се допълва, никога не се презаписва.
+      acp_dashboard_binding_enabled:
+        name: ACP Dashboard Binding
+        description: Опционално (Фаза 2.15) - Разгръщане + регистриране на вградения acp-dashboard-binding плъгин (съпоставя
+          dashboard/webchat разговори с ACP harness сесии). ВКЛ. по подразбиране — binding-ът е основната повърхност на добавката;
+          ИЗКЛ. за реален операторски opt-out.
   gateway_ext:
     name: Gateway (external)
     description: URLs, trusted proxies and allowed origins for gateway access
@@ -77,6 +148,11 @@ configuration:
         name: Показвай Boot Trace в HA лог
         description: Когато е ВКЛ., детайлната проследена последователност на зареждане (set -x) се огледалва в лог прозореца
           на Home Assistant добавката. Много подробен — активирайте само за отстраняване на грешки.
+      gateway_startup_trace:
+        name: Startup trace в лога на добавката
+        description: Опционално (диагностика, ИЗКЛ. по подразбиране) - Когато е ВКЛ., boot логът получава разчленение по фази/плъгини
+          ("startup trace - plugin ... ms"). Инструмент за анализ на забавени рестарти след възникването им. Включете, рестартирайте,
+          прочетете лога, изключете отново.
       nginx_log_level:
         name: Nginx ниво на логове
         description: Подробност на логовете на nginx проксито. 'minimal' (по подразбиране) потиска повтарящи се HA health-check
@@ -96,7 +172,6 @@ configuration:
           false: Изключено (без mDNS)
           minimal: Минимално (рекламиране на gateway услуга, по подразбиране)
           full: Пълно (рекламиране с всички метаданни)
-          avahi: Avahi (OS-level mDNS, режим gateway изключен)
       mdns_host_name:
         name: mDNS име на хост
         description: Опционално име на хост за mDNS реклама (напр. homeassistant.local). По подразбиране е "openclaw". Ако
@@ -117,37 +192,6 @@ configuration:
         name: Doctor-ремонти на старт
         description: Максимален брой автоматични `openclaw doctor --fix` старта на приложение след 2 последователни неуспешни
           старта на gateway. 0 изключва автоматичния ремонт.
-  acpx_harness:
-    name: ACPX & coding harnesses
-    description: ACPX backend, harness plugins and local model defaults
-    fields:
-      acpx_enabled:
-        name: ACPX инфраструктура
-        description: Инсталиране на ACPX wrapper стартери (Claude Code, Codex, OpenCode), за да може OpenClaw да изпълнява
-          кодинг агенти през локалния ACPX бекенд.
-      ollama_base_url:
-        name: Базов URL на Ollama
-        description: Базов URL на отдалечената Ollama инстанция, използван от ACPX обвивките, когато няма конфигурирани API
-          ключове. Пример - http://192.168.178.34:11434
-  ha_integration:
-    name: Home Assistant integration
-    description: HA token, MCP, OpenAI API endpoint and proxy
-    fields:
-      homeassistant_token:
-        name: Home Assistant токен
-        description: Опционално - дълготраен токен на Home Assistant за локални API скриптове/инструменти
-      http_proxy:
-        name: Изходящ HTTP прокси
-        description: Опционално - URL на прокси за изходящи HTTP/HTTPS заявки (пример - http://192.168.2.1:3128)
-      enable_openai_api:
-        name: Активиране на OpenAI API
-        description: Активиране на OpenAI-съвместим Chat Completions ендпойнт. Позволява използването на OpenClaw като разговорен
-          агент в HA Assist pipeline чрез Extended OpenAI Conversation (HACS) или всеки OpenAI-съвместим клиент.
-      auto_configure_mcp:
-        name: Автоматично конфигуриране на MCP за Home Assistant
-        description: Когато е ВКЛ. и Home Assistant Token е зададен, автоматично регистрира Home Assistant като MCP сървър
-          при всяко стартиране. Това позволява на OpenClaw да контролира HA устройства, услуги и автоматизации чрез Model
-          Context Protocol. Изключете само ако управлявате mcporter конфигурацията ръчно.
   runtime:
     name: Runtime
     description: Apt packages, custom init script and SSRP hostname blocklist

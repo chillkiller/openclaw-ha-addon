@@ -27,7 +27,12 @@ fi
 
 OPTIONS_FLAT="/tmp/options.flat.json"
 
-if jq -e 'has("terminal_ui") or has("acpx_harness")' "$OPTIONS_FILE" >/dev/null 2>&1; then
+# v0.7.13.30 restructure: surfaces + plugin switches top-level, groups
+# ha_integration / harness / gateway_ext / logging_diag / safety_nets / legacy.
+# Legacy flat stores (pre-migration, ollama_* / acp_additional_allowed_agents
+# naming) keep their keys at top level — the individual reads below coalesce
+# the renamed keys. enable_terminal is retired: the terminal is always on.
+if jq -e 'has("harness") or has("ha_integration")' "$OPTIONS_FILE" >/dev/null 2>&1; then
   echo "DEBUG: options layout: sectioned -> flattening for reads"
   jq '
     {
@@ -36,10 +41,25 @@ if jq -e 'has("terminal_ui") or has("acpx_harness")' "$OPTIONS_FILE" >/dev/null 
       gateway_port: .gateway_port,
       gateway_mode: .gateway_mode,
       gateway_env_vars: .gateway_env_vars,
-      enable_terminal: .terminal_ui.enable_terminal,
-      terminal_port: .terminal_ui.terminal_port,
-      enable_webui: .terminal_ui.enable_webui,
-      enable_docs: .terminal_ui.enable_docs,
+      terminal_port: .terminal_port,
+      enable_webui: .enable_webui,
+      enable_docs: .enable_docs,
+      acpx_enabled: .acpx_enabled,
+      harness_config_writer_enabled: .harness_config_writer_enabled,
+      homeassistant_token: .ha_integration.homeassistant_token,
+      http_proxy: .ha_integration.http_proxy,
+      enable_openai_api: .ha_integration.enable_openai_api,
+      auto_configure_mcp: .ha_integration.auto_configure_mcp,
+      harness_base_url: .harness.harness_base_url,
+      harness_api_key: .harness.harness_api_key,
+      harness_model: .harness.harness_model,
+      utility_model: .harness.utility_model,
+      harness_opencode_model: .harness.harness_opencode_model,
+      harness_claude_model: .harness.harness_claude_model,
+      harness_codex_model: .harness.harness_codex_model,
+      harness_excluded_agents: .harness.harness_excluded_agents,
+      additional_agents: .harness.additional_agents,
+      acp_dashboard_binding_enabled: .harness.acp_dashboard_binding_enabled,
       gateway_public_url: .gateway_ext.gateway_public_url,
       gateway_remote_url: .gateway_ext.gateway_remote_url,
       gateway_trusted_proxies: .gateway_ext.gateway_trusted_proxies,
@@ -55,23 +75,6 @@ if jq -e 'has("terminal_ui") or has("acpx_harness")' "$OPTIONS_FILE" >/dev/null 
       abort_on_upgrade_backup_failure: .safety_nets.abort_on_upgrade_backup_failure,
       upgrade_backup_keep: .safety_nets.upgrade_backup_keep,
       gateway_doctor_repair_max: .safety_nets.gateway_doctor_repair_max,
-      acpx_enabled: .acpx_harness.acpx_enabled,
-      ollama_base_url: .acpx_harness.ollama_base_url,
-      ollama_acp_codex_model: .acpx_harness.ollama_acp_codex_model,
-      ollama_acp_opencode_model: .acpx_harness.ollama_acp_opencode_model,
-      ollama_acp_claude_model: .acpx_harness.ollama_acp_claude_model,
-      acp_additional_allowed_agents: .acpx_harness.acp_additional_allowed_agents,
-      acp_dashboard_binding_enabled: .acpx_harness.acp_dashboard_binding_enabled,
-      harness_config_writer_enabled: .acpx_harness.harness_config_writer_enabled,
-      harness_base_url: .acpx_harness.harness_base_url,
-      harness_model: .acpx_harness.harness_model,
-      harness_api_key: .acpx_harness.harness_api_key,
-      harness_excluded_agents: .acpx_harness.harness_excluded_agents,
-      utility_model: .acpx_harness.utility_model,
-      homeassistant_token: .ha_integration.homeassistant_token,
-      http_proxy: .ha_integration.http_proxy,
-      enable_openai_api: .ha_integration.enable_openai_api,
-      auto_configure_mcp: .ha_integration.auto_configure_mcp,
       runtime_apt_packages: .runtime.runtime_apt_packages,
       custom_init_script: .runtime.custom_init_script,
       blocked_hostnames: .runtime.blocked_hostnames,
@@ -91,7 +94,8 @@ TZNAME=$(jq -r '.timezone // "Europe/Berlin"' "$OPTIONS_FILE")
 GW_PUBLIC_URL=$(jq -r '.gateway_public_url // empty' "$OPTIONS_FILE")
 HA_TOKEN=$(jq -r '.homeassistant_token // empty' "$OPTIONS_FILE")
 ADDON_HTTP_PROXY=$(jq -r '.http_proxy // empty' "$OPTIONS_FILE")
-ENABLE_TERMINAL=$(jq -r 'if has("enable_terminal") then (.enable_terminal|tostring) else "true" end' "$OPTIONS_FILE")
+# enable_terminal is retired: the web terminal is always on (Ingress
+# maintenance/repair surface); only terminal_port is configurable.
 TERMINAL_PORT_RAW=$(jq -r '.terminal_port // 7681' "$OPTIONS_FILE")
 ENABLE_WEBUI=$(jq -r 'if has("enable_webui") then (.enable_webui|tostring) else "true" end' "$OPTIONS_FILE")
 ENABLE_DOCS=$(jq -r 'if has("enable_docs") then (.enable_docs|tostring) else "true" end' "$OPTIONS_FILE")
@@ -105,7 +109,6 @@ else
   TERMINAL_PORT="7681"
 fi
 
-echo "DEBUG: enable_terminal config value: '$ENABLE_TERMINAL'"
 echo "DEBUG: terminal_port config value: '$TERMINAL_PORT' (validated)"
 
 # Generic router SSH settings
@@ -146,20 +149,30 @@ GATEWAY_LOG_TO_CONSOLE=$(jq -r '.gateway_log_to_console // false' "$OPTIONS_FILE
 GATEWAY_LOG_LEVEL=$(jq -r '.gateway_log_level // "info"' "$OPTIONS_FILE")
 TRACE_LOG_TO_CONSOLE=$(jq -r '.trace_log_to_console // false' "$OPTIONS_FILE")
 
-# Ollama base URL forwarded to ACPX harness wrappers. Used when no real
-# ANTHROPIC_API_KEY / OPENAI_API_KEY is present in the environment, so the
-# claude / codex / opencode harnesses can talk to a remote Ollama instance.
-OLLAMA_BASE_URL=$(jq -r '.ollama_base_url // "http://localhost:11434"' "$OPTIONS_FILE")
-export OLLAMA_BASE_URL
+# Harness backend endpoint (any OpenAI-compatible API, not just Ollama —
+# v0.7.13.30 renamed/restructured: harness_base_url replaces ollama_base_url).
+# Feeds the acpx wrapper templates AND the ambient Anthropic/OpenAI-compatible
+# routing below. Empty/unset falls back to the built-in localhost default (the
+# value the old option default provided), so the wrappers never see an empty
+# endpoint.
+# NOTE on the coalesces below: jq's `//` does NOT fall through on an empty
+# string ("" is truthy), so a plain `new // old` read would shadow a legacy
+# value with the new key's empty default. Every coalesce therefore drops
+# empty-string new values via `select(length > 0)` before falling back to the
+# legacy key.
+HARNESS_BASE_URL=$(jq -r '(.harness_base_url // "" | select(length > 0)) // .ollama_base_url // empty' "$OPTIONS_FILE")
+export OLLAMA_BASE_URL="${HARNESS_BASE_URL:-http://localhost:11434}"
 # Harness model overrides + user-owned allowed agent extras (generic app rule,
 # GaRoN 2026-10-10): forwarded as env for oc_acpx_helper.py + acpx templates.
-export OLLAMA_CODEX_MODEL=$(jq -r '.ollama_acp_codex_model // empty' "$OPTIONS_FILE")
-export OLLAMA_OPENCODE_MODEL=$(jq -r '.ollama_acp_opencode_model // empty' "$OPTIONS_FILE")
+# v0.7.13.30 renames (harness_* / additional_agents) coalesced with the legacy
+# ollama_acp_* / acp_additional_allowed_agents keys for pre-migration stores.
+export OLLAMA_CODEX_MODEL=$(jq -r '(.harness_codex_model // "" | select(length > 0)) // .ollama_acp_codex_model // empty' "$OPTIONS_FILE")
+export OLLAMA_OPENCODE_MODEL=$(jq -r '(.harness_opencode_model // "" | select(length > 0)) // .ollama_acp_opencode_model // empty' "$OPTIONS_FILE")
 # γ (2026-10-13): third flagship harness default (claude) — mirrors the
 # helper's _writer_model_for claude ladder (OLLAMA_CLAUDE_MODEL → legacy
 # OLLAMA_ACP_MODEL → default glm-5.3-flash:cloud).
-export OLLAMA_CLAUDE_MODEL=$(jq -r '.ollama_acp_claude_model // empty' "$OPTIONS_FILE")
-export ACP_ADDITIONAL_ALLOWED_AGENTS=$(jq -r '.acp_additional_allowed_agents // empty' "$OPTIONS_FILE")
+export OLLAMA_CLAUDE_MODEL=$(jq -r '(.harness_claude_model // "" | select(length > 0)) // .ollama_acp_claude_model // empty' "$OPTIONS_FILE")
+export ACP_ADDITIONAL_ALLOWED_AGENTS=$(jq -r '(.additional_agents // "" | select(length > 0)) // .acp_additional_allowed_agents // empty' "$OPTIONS_FILE")
 # Phase 2.15 (GaRoN): plugin deploy is opt-in — same env-forwarding pattern as
 # ACP_ADDITIONAL_ALLOWED_AGENTS. GaRoN 2026-10-12 semantics: unset = binding
 # ON out of the box (addon core surface); explicit false = REAL opt-out (the
@@ -179,8 +192,12 @@ export OPENCLAW_GATEWAY_STARTUP_TRACE=$(jq -r '.gateway_startup_trace // false' 
 
 # Add-on-Level-Harness-Defaults (GaRoN 2026-10-11): shared writer defaults.
 # base_url is the ACTIVATOR (empty = no generation); model applies to all
-# non-excluded harnesses (codex/opencode keep their ollama_acp_*_model
+# non-excluded harnesses (codex/opencode keep their dedicated harness_*_model
 # defaults unless set); excluded_agents is comma-separated harness ids.
+# STRICT read on the new key: the writer activates only when the migrated
+# sectioned options carry harness_base_url — the ollama_base_url legacy name
+# feeds the wrappers (via OLLAMA_BASE_URL above) but does NOT start generation
+# before the options migration ran.
 export HARNESS_WRITER_BASE_URL=$(jq -r '.harness_base_url // empty' "$OPTIONS_FILE" 2>/dev/null)
 export HARNESS_WRITER_MODEL=$(jq -r '.harness_model // empty' "$OPTIONS_FILE" 2>/dev/null)
 export HARNESS_WRITER_API_KEY=$(jq -r '.harness_api_key // empty' "$OPTIONS_FILE" 2>/dev/null)
@@ -1037,7 +1054,9 @@ INGRESS_PORT=49200
 export INGRESS_PORT
 export CERTS_DIR="/config/certs"
 export SHOW_WEBUI="$ENABLE_WEBUI"
-export SHOW_TERMINAL="$ENABLE_TERMINAL"
+# Terminal is NOT optional (v0.7.13.30): the Ingress terminal is the always-on
+# maintenance/repair surface. nginx always renders the /terminal route.
+export SHOW_TERMINAL="true"
 export SHOW_DOCS="$ENABLE_DOCS"
 # OPENCLAW_VERSION is used by OpenClaw's plugin API compatibility check.
 # `openclaw --version` prints a human-readable label like:
@@ -1619,44 +1638,42 @@ ttyd_listening() {
 
 stop_stale_ttyd
 
-if [ "$ENABLE_TERMINAL" = "true" ] || [ "$ENABLE_TERMINAL" = "1" ]; then
-  # Check if the terminal port is already in use before starting ttyd
-  if ttyd_listening; then
-    echo ""
-    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-    echo "!!  WARNING: terminal_port ${TERMINAL_PORT} IS ALREADY IN USE  !!"
-    echo "!!                                                             !!"
-    echo "!!  The web terminal (ttyd) may FAIL to start because port     !!"
-    echo "!!  ${TERMINAL_PORT} appears to be in use by another process.  !!"
-    echo "!!                                                             !!"
-    echo "!!  ACTION REQUIRED: If the terminal does not work, go to      !!"
-    echo "!!  App Configuration and change 'terminal_port' to a free     !!"
-    echo "!!  port, then restart the app.                                !!"
-    echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
-    echo ""
-  fi
-  echo "Starting web terminal (ttyd) on 127.0.0.1:${TERMINAL_PORT} ..."
-  start_ttyd
-  # Boot gate: the terminal is the FIRST surface and the only way into the
-  # openclaw CLI (operator commands + oc-gateway maintenance), so give it a
-  # bounded moment to bind before the slow gateway start claims the boot.
-  # NOT a hard hostage-gate: if ttyd can't bind (port conflict), holding the
-  # gateway forever leaves NO workable surface at all — warn loudly and let
-  # the gateway (and via Ingress at least the landing page) come up anyway.
-  TTYD_BOOT_WAITS=0
-  until ttyd_listening || [ "$TTYD_BOOT_WAITS" -ge 6 ]; do
-    TTYD_BOOT_WAITS=$((TTYD_BOOT_WAITS + 1))
-    sleep 5
-  done
-  if ! ttyd_listening; then
-    echo "WARN: web terminal (ttyd) did not bind 127.0.0.1:${TERMINAL_PORT} within 30 s;"
-    echo "      continuing WITHOUT terminal (operator CLI unavailable) — fix"
-    echo "      'terminal_port' in the app configuration."
-  fi
-  # The runtime supervisor subshell below keeps ttyd alive from here on.
-else
-  echo "Terminal disabled (enable_terminal=$ENABLE_TERMINAL)"
+# v0.7.13.30: the terminal is always on — no enable/off branch anymore. It is
+# the Ingress maintenance/repair surface (the operator CLI escape hatch).
+# Check if the terminal port is already in use before starting ttyd
+if ttyd_listening; then
+  echo ""
+  echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  echo "!!  WARNING: terminal_port ${TERMINAL_PORT} IS ALREADY IN USE  !!"
+  echo "!!                                                             !!"
+  echo "!!  The web terminal (ttyd) may FAIL to start because port     !!"
+  echo "!!  ${TERMINAL_PORT} appears to be in use by another process.  !!"
+  echo "!!                                                             !!"
+  echo "!!  ACTION REQUIRED: If the terminal does not work, go to      !!"
+  echo "!!  App Configuration and change 'terminal_port' to a free     !!"
+  echo "!!  port, then restart the app.                                !!"
+  echo "!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!"
+  echo ""
 fi
+echo "Starting web terminal (ttyd) on 127.0.0.1:${TERMINAL_PORT} ..."
+start_ttyd
+# Boot gate: the terminal is the FIRST surface and the only way into the
+# openclaw CLI (operator commands + oc-gateway maintenance), so give it a
+# bounded moment to bind before the slow gateway start claims the boot.
+# NOT a hard hostage-gate: if ttyd can't bind (port conflict), holding the
+# gateway forever leaves NO workable surface at all — warn loudly and let
+# the gateway (and via Ingress at least the landing page) come up anyway.
+TTYD_BOOT_WAITS=0
+until ttyd_listening || [ "$TTYD_BOOT_WAITS" -ge 6 ]; do
+  TTYD_BOOT_WAITS=$((TTYD_BOOT_WAITS + 1))
+  sleep 5
+done
+if ! ttyd_listening; then
+  echo "WARN: web terminal (ttyd) did not bind 127.0.0.1:${TERMINAL_PORT} within 30 s;"
+  echo "      continuing WITHOUT terminal (operator CLI unavailable) — fix"
+  echo "      'terminal_port' in the app configuration."
+fi
+# The runtime supervisor subshell below keeps ttyd alive from here on.
 
 # ttyd runtime supervisor: the web terminal is the operator's fallback surface
 # (and the way into `oc-gateway` maintenance), but ttyd is loopback-only and
@@ -1666,7 +1683,8 @@ fi
 # of this by design. Checks the port (not just the PID — catches a process that
 # stopped listening), 30 s cadence, independent of the gateway supervision loop.
 supervise_ttyd() {
-  while [ "$ENABLE_TERMINAL" = "true" ] || [ "$ENABLE_TERMINAL" = "1" ]; do
+  # Always-on since v0.7.13.30 (enable_terminal retired, see boot gate above).
+  while true; do
     if ttyd_listening; then
       sleep 30
       continue

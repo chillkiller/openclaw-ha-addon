@@ -9,7 +9,8 @@ configuration:
       reverse_proxy - proxy inverso externo.
   gateway_port:
     name: Puerto del Gateway
-    description: Número de puerto en el que el gateway de OpenClaw escuchará (predeterminado - 18789)
+    description: Número de puerto en el que el gateway de OpenClaw escuchará (predeterminado - 18789). En los modos LAN y
+      Tailscale este es el puerto accesible externamente.
   gateway_env_vars:
     name: Variables de entorno del Gateway
     description: Variables de entorno que se pasan al proceso del gateway OpenClaw al iniciarse (lista de entradas name/value
@@ -21,23 +22,94 @@ configuration:
     options:
       local: Local (recomendado)
       remote: Remoto
-  terminal_ui:
-    name: Terminal & UI
-    description: Web terminal, app web UI and the docs page
+  terminal_port:
+    name: Puerto del terminal
+    description: Puerto externo del terminal web (predeterminado - 7681). El terminal en sí está siempre activo — aparece
+      vía Ingress y es la superficie de mantenimiento/reparación (ruta de escape de la CLI de operador); solo su puerto es
+      configurable. Cámbielo si este puerto entra en conflicto con otro servicio.
+  enable_webui:
+    name: Activar WebUI
+    description: Mostrar la pestaña WebUI en la interfaz Ingress (Panel de Control de OpenClaw).
+  enable_docs:
+    name: Activar Docs
+    description: Mostrar la pestaña Docs en la interfaz Ingress (documentación estática y estado en vivo).
+  ha_integration:
+    name: Home Assistant integration
+    description: HA token, MCP, OpenAI API endpoint and proxy
     fields:
-      enable_terminal:
-        name: Activar terminal web
-        description: Activar botón de terminal web dentro de Home Assistant (Ingress) mediante ttyd
-      terminal_port:
-        name: Puerto del terminal
-        description: Número de puerto para el terminal web (predeterminado - 7681). Cambie si este puerto entra en conflicto
-          con otro servicio.
-      enable_webui:
-        name: Activar WebUI
-        description: Mostrar la pestaña WebUI en la interfaz Ingress (Panel de Control de OpenClaw).
-      enable_docs:
-        name: Activar Docs
-        description: Mostrar la pestaña Docs en la interfaz Ingress (documentación estática y estado en vivo).
+      homeassistant_token:
+        name: Token de Home Assistant
+        description: Opcional - Token de larga duración de Home Assistant para scripts/herramientas de API local
+      http_proxy:
+        name: Proxy HTTP de salida
+        description: Opcional - URL de proxy para solicitudes HTTP/HTTPS salientes (ejemplo - http://192.168.2.1:3128)
+      enable_openai_api:
+        name: Activar API OpenAI
+        description: Activar endpoint de Chat Completions compatible con OpenAI. Permite usar OpenClaw como agente de conversación
+          en HA Assist pipeline mediante Extended OpenAI Conversation (HACS) o cualquier cliente compatible con OpenAI.
+      auto_configure_mcp:
+        name: Configurar MCP automáticamente para Home Assistant
+        description: Cuando está ACTIVADO y el token de Home Assistant está configurado, registra automáticamente Home Assistant
+          como servidor MCP en cada inicio. Esto permite a OpenClaw controlar entidades, servicios y automatizaciones de HA
+          mediante el Model Context Protocol. Desactive solo si administra la configuración de mcporter manualmente.
+  acpx_enabled:
+    name: Infraestructura ACPX
+    description: Instalar lanzadores wrapper ACPX (Claude Code, Codex, OpenCode) para que OpenClaw ejecute agentes de programación
+      mediante el backend ACPX local. Los agentes configurados por el usuario se conservan sin cambios.
+  harness_config_writer_enabled:
+    name: Harness Config Writer
+    description: Opcional (Repo-Split A2) - Desplegar + registrar el plugin harness-config-writer incluido (genera la configuración
+      nativa de archivos/env de los harnesses a partir de config.harnesses). SIN SETEAR sigue el interruptor de ACP Dashboard
+      Binding; ACTIVADO lo fuerza aunque el binding esté apagado; DESACTIVADO lo mantiene apagado de forma permanente. La
+      primera sesión activada hace una instantánea de los archivos gestionados — apagarlo de nuevo restaura los originales
+      automáticamente.
+  harness:
+    name: Harness (backends de código)
+    description: Defaults compartidos de proveedor/modelo para los harnesses acpx incluidos (Claude Code, Codex, OpenCode)
+      y el harness-config-writer. El endpoint es cualquier API compatible con OpenAI — no solo Ollama.
+    fields:
+      harness_base_url:
+        name: URL base de Harness
+        description: Endpoint backend para TODOS los harnesses locales (cualquier API compatible con OpenAI — no solo Ollama),
+          ej. http://192.168.178.34:11434. También es el ACTIVADOR del harness-config-writer - vacío no genera nada (los
+          registros del operador quedan intactos). Sin valor se usa el fallback integrado http://localhost:11434.
+      harness_api_key:
+        name: Clave API de Harness
+        description: Clave API usada por los registros de harness generados (default compartido del writer). Vacío = sin clave
+          (ej. Ollama local).
+      harness_model:
+        name: Modelo por defecto (todos los harnesses)
+        description: Modelo por defecto compartido. Se aplica a todos los harnesses NO excluidos (codex/opencode/claude conservan
+          sus modelos individuales debajo), si está definido. Vacío = ganan los defaults individuales.
+      utility_model:
+        name: Modelo Utility
+        description: Opcional - Override para agents.defaults.utilityModel en openclaw.json (el modelo detrás de las llamadas
+          utility internas del gateway, en particular el observador de sesión). SIN SETEAR = sin escritura (operator owns
+          the value); configúrelo solo con un modelo de salida estrictamente JSON válido.
+      harness_opencode_model:
+        name: Modelo OpenCode (forge)
+        description: Opcional - Modelo del harness OpenCode (forge). Predeterminado - glm-5.3-flash:cloud
+      harness_claude_model:
+        name: Modelo Claude Code
+        description: Opcional - Modelo del harness Claude Code (también alimenta el fallback ANTHROPIC_MODEL ambient).
+          Predeterminado - glm-5.3-flash:cloud
+      harness_codex_model:
+        name: Modelo Codex (audit)
+        description: Opcional - Modelo del harness Codex (audit). Predeterminado - kimi-k2.7-code:cloud
+      harness_excluded_agents:
+        name: Harnesses excluidos
+        description: Opcional - Lista separada por comas de IDs de harness EXCLUIDOS de los defaults compartidos de arriba
+          (ej. "codex,opencode").
+      additional_agents:
+        name: Agentes adicionales
+        description: Opcional - Lista separada por comas de nombres ADICIONALES de agentes/harnesses para acp.allowedAgents
+          además de los incluidos claude/codex/opencode/openclaw (ej. "pi,colibri,gemini"). Los agentes personalizados también
+          deben existir en el roster de OpenClaw con runtime.type=acp; la lista solo se une, nunca se sobrescribe.
+      acp_dashboard_binding_enabled:
+        name: ACP Dashboard Binding
+        description: Opcional (Fase 2.15) - Desplegar + registrar el plugin acp-dashboard-binding incluido (resuelve conversaciones
+          de dashboard/webchat en sesiones de harness ACP). ACTIVADO por defecto — el binding es la superficie central del
+          complemento; DESACTIVADO para un opt-out real del operador.
   gateway_ext:
     name: Gateway (external)
     description: URLs, trusted proxies and allowed origins for gateway access
@@ -78,6 +150,11 @@ configuration:
         name: Mostrar traza de arranque en log de HA
         description: Cuando está ACTIVADO, la secuencia de arranque detallada (salida set -x) se refleja en la ventana de
           log del complemento de Home Assistant. Muy detallado — activar solo para depuración.
+      gateway_startup_trace:
+        name: Traza de startup en el log del app
+        description: Opcional (diagnóstico, DESACTIVADO por defecto) - Cuando está ACTIVADO, el log de arranque muestra el
+          reparto de tiempos por fase/plugin ("startup trace - plugin ... ms"). Herramienta para analizar arranques lentos
+          tras producirse. Activar, reiniciar, leer el log y desactivar.
       nginx_log_level:
         name: Nivel de log Nginx
         description: Nivel de detalle del log de acceso de nginx. 'minimal' (por defecto) suprime las solicitudes repetitivas
@@ -97,7 +174,6 @@ configuration:
           false: Desactivado (sin mDNS)
           minimal: Mínimo (anunciar servicio gateway, predeterminado)
           full: Completo (anunciar con todos los metadatos)
-          avahi: Avahi (OS-level mDNS, modo gateway desactivado)
       mdns_host_name:
         name: Nombre de host mDNS
         description: Nombre de host opcional para anuncio mDNS (ej. homeassistant.local). El valor predeterminado es "openclaw".
@@ -118,37 +194,6 @@ configuration:
         name: Reparaciones doctor por arranque
         description: Máximo de ejecuciones automáticas de `openclaw doctor --fix` por arranque de la app tras 2 inicios fallidos
           consecutivos del gateway. 0 desactiva la reparación automática.
-  acpx_harness:
-    name: ACPX & coding harnesses
-    description: ACPX backend, harness plugins and local model defaults
-    fields:
-      acpx_enabled:
-        name: Infraestructura ACPX
-        description: Instalar lanzadores wrapper ACPX (Claude Code, Codex, OpenCode) para que OpenClaw ejecute agentes de
-          programación mediante el backend ACPX local.
-      ollama_base_url:
-        name: URL base de Ollama
-        description: URL base de la instancia remota de Ollama usada por los wrappers ACPX cuando no hay claves API configuradas.
-          Ejemplo - http://192.168.178.34:11434
-  ha_integration:
-    name: Home Assistant integration
-    description: HA token, MCP, OpenAI API endpoint and proxy
-    fields:
-      homeassistant_token:
-        name: Token de Home Assistant
-        description: Opcional - Token de larga duración de Home Assistant para scripts/herramientas de API local
-      http_proxy:
-        name: Proxy HTTP de salida
-        description: Opcional - URL de proxy para solicitudes HTTP/HTTPS salientes (ejemplo - http://192.168.2.1:3128)
-      enable_openai_api:
-        name: Activar API OpenAI
-        description: Activar endpoint de Chat Completions compatible con OpenAI. Permite usar OpenClaw como agente de conversación
-          en HA Assist pipeline mediante Extended OpenAI Conversation (HACS) o cualquier cliente compatible con OpenAI.
-      auto_configure_mcp:
-        name: Configurar MCP automáticamente para Home Assistant
-        description: Cuando está ACTIVADO y el token de Home Assistant está configurado, registra automáticamente Home Assistant
-          como servidor MCP en cada inicio. Esto permite a OpenClaw controlar entidades, servicios y automatizaciones de HA
-          mediante el Model Context Protocol. Desactive solo si administra la configuración de mcporter manualmente.
   runtime:
     name: Runtime
     description: Apt packages, custom init script and SSRP hostname blocklist

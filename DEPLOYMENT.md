@@ -89,7 +89,9 @@ both verified against the Supervisor source of the running system:
   before the update has every group key dropped (`unknown option ...` warning)
   and the stripped result is persisted.
 - A flat stored file against the new sectioned schema **fails start**
-  (`Missing option 'terminal_ui' in root` → `AppConfigurationInvalidError`).
+  (`Missing option 'terminal_ui' in root` on pre-0.7.13.29 installs; on the
+  0.7.13.30 schema a stored v1-sectioned file fails with
+  `Missing option 'harness' in root` → `AppConfigurationInvalidError`).
   This is recoverable and harmless as long as no values were lost: the
   validation runs BEFORE the write, so the old flat `options.json` file stays
   intact and the migration helper can read it.
@@ -104,15 +106,25 @@ Verified sequence (no destructive window, one controlled stop):
    Because the app was stopped, the update installs the new schema and does
    **not** start the app (start-after-update only happens for apps that were
    running).
-4. Build the sectioned payload from the flat backup (mapping: `terminal_ui`,
-   `gateway_ext`, `logging_diag`, `safety_nets`, `acpx_harness`,
-   `ha_integration`, `runtime`, `legacy`; `timezone`, `network_mode`,
-   `gateway_port`, `gateway_mode`, `gateway_env_vars` stay top-level). Helper:
+4. Build the sectioned payload from the stored backup. Since 0.7.13.30 the
+   migration helper ALSO renames keys (v2 mapping) and accepts both input
+   shapes (flat pre-0.7.13.29 and v1-sectioned 0.7.13.29). New groups:
+   `ha_integration` (first), `harness` (renamed provider keys:
+   `harness_base_url` merged from old `harness_base_url`/`ollama_base_url`,
+   `harness_codex_model` ← `ollama_acp_codex_model`,
+   `harness_opencode_model` ← `ollama_acp_opencode_model`,
+   `harness_claude_model` ← `ollama_acp_claude_model`,
+   `additional_agents` ← `acp_additional_allowed_agents`), plus unchanged
+   `gateway_ext`, `logging_diag`, `safety_nets`, `runtime`, `legacy`. Top
+   level: `timezone`, `network_mode`, `gateway_port`, `gateway_mode`,
+   `gateway_env_vars`, `terminal_port`, `enable_webui`, `enable_docs`,
+   `acpx_enabled`, `harness_config_writer_enabled`. `enable_terminal` is
+   retired and dropped (INFO note on stderr). Helper:
    `/config/pushbug-tools/options_migrate_sections.py` (host-persistent, not
    in repo). Validation gotcha: the API expects the payload wrapped as
    `{"options": <payload>}`.
    The API validates against the now-installed sectioned schema — group keys
-   now match, values validate 1:1 (verified live: 44 keys, no nulls).
+   now match, values validate 1:1.
 5. `curl -s -X POST -H "Authorization: Bearer $SUPERVISOR_TOKEN" -H "Content-Type: application/json" -d "$(jq -nc "{options: input}" options-migrated.json)" http://supervisor/addons/45b315ab_openclaw_ha_addon/options`
 6. `POST /addons/<slug>/start` and verify the boot log line
    `DEBUG: options layout: sectioned -> flattening for reads` shows reads

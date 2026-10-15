@@ -50,14 +50,22 @@ map:
   - media:rw
 
 # -----------------------------------------------------------------------------
-# Options layout (collapsible sections, v0.7.13.30+)
+# Options layout (collapsible sections, v0.7.13.30)
 #
-# Frequently touched knobs stay top-level; everything clusterable lives in a
-# named group (rendered as a collapsible section in the HA options UI).
-# * gateway_env_vars CANNOT move into a group: nested lists-of-objects exceed
-#   the Supervisor schema depth limit (max 2).
+# Top level: core gateway knobs + surface switches + the two plugin switches
+# (acpx_enabled, harness_config_writer_enabled). Everything clusterable lives
+# in a named group (rendered as a collapsible section in the HA options UI,
+# max nesting depth 2 — which is why gateway_env_vars, a list-of-objects,
+# CANNOT move into a group).
+#
+# * The web terminal is NOT an option: it is always present and working via
+#   the Ingress as the maintenance/repair surface (the escape hatch). Only
+#   its external port is configurable (terminal_port).
+# * Model/provider defaults are harness-scoped, NOT Ollama-scoped — the
+#   backend is any OpenAI-compatible endpoint (harness_base_url).
 # * The stored options file may use the OLD flat layout (pre-migration
-#   installs). run.sh normalizes both layouts into one flat view — see the
+#   installs, incl. the ollama_* / acp_additional_allowed_agents key names).
+#   run.sh normalizes both layouts and coalesces the renamed keys — see the
 #   "Options layout normalization" block. Migration doc: DEPLOYMENT.md.
 # -----------------------------------------------------------------------------
 options:
@@ -68,12 +76,98 @@ options:
   gateway_mode: local
   gateway_env_vars: []
 
-  terminal_ui:
-    # Enable web terminal inside Home Assistant (Ingress) via ttyd
-    enable_terminal: true
-    terminal_port: 7681
-    enable_webui: true
-    enable_docs: true
+  # External port of the web terminal. The terminal itself is always on:
+  # it appears in the Ingress UI and is the maintenance/repair surface
+  # (the operator CLI escape hatch), so there is no enable/off switch.
+  terminal_port: 7681
+  enable_webui: true
+  enable_docs: true
+
+  ha_integration:
+    # Optional: Home Assistant long-lived token (for local HA API scripts/tools)
+    homeassistant_token: ""
+    # Optional: outbound HTTP/HTTPS proxy for OpenClaw network access.
+    # Example: "http://192.168.2.1:3128"
+    http_proxy: ""
+    # Enable OpenAI-compatible Chat Completions API endpoint (for HA Assist pipeline)
+    enable_openai_api: false
+    # Auto-configure MCP (Model Context Protocol) for Home Assistant — the
+    # HA tools reach the ACP harnesses through this acpx-driven route.
+    # When enabled + homeassistant_token set, registers HA as MCP server.
+    auto_configure_mcp: false
+
+  # ACPX is the BUNDLED OpenClaw plugin that provides the harness
+  # infrastructure (codes Claude / Codex / OpenCode; `openclaw` itself stays
+  # first-class). Its switch sits at top level, before the custom plugins
+  # below. Existing user-configured coding agents are preserved as-is; the
+  # app does not modify agents.list.
+  acpx_enabled: true
+  # Repo-Split A2, 2026-10-11: deploy + register the bundled
+  # harness-config-writer plugin in OpenClaw (generates the harness-native
+  # file/env config for local-provider harnesses from its config.harnesses
+  # surface). UNSET follows acp_dashboard_binding_enabled (existing setups
+  # keep the previous bundled behavior); true runs it even with the channel
+  # plugin off; false keeps it off. The legacy
+  # plugins.entries['acp-dashboard-binding'].config.harnesses key is
+  # migrated to plugins.entries['harness-config-writer'].config.harnesses
+  # once at boot (idempotent, before the gateway reads the config).
+  # Backup-Rewrite: the first enabled boot snapshots the pre-writer state of
+  # all managed harness config files; when the option goes off again the
+  # originals are restored automatically (snapshot in
+  # /config/.openclaw/harness-config-writer-backup/).
+  #
+  # NOTE: this field is deliberately left WITHOUT a value (YAML null = UNSET).
+  # Do not "fix" the empty value — the tri-state IS the documented behavior.
+  harness_config_writer_enabled:
+  # Shared custom-plugin/harness defaults (eine Ebene tiefer).
+  harness:
+    # Backend endpoint for ALL local-provider harnesses (any OpenAI-compatible
+    # API — not just Ollama): forwarded to the acpx wrapper templates and the
+    # ambient Anthropic/OpenAI-compatible routing; also the harness-config-writer
+    # ACTIVATOR (empty = nothing is generated; non-empty = writer generates
+    # harness entries pointing at this URL). Default empty; the wrappers fall
+    # back to the built-in http://localhost:11434 when unset.
+    harness_base_url: ""
+    # API key handed to generated harness entries (shared writer default).
+    harness_api_key: ""
+    # Shared harness default model. Applies to ALL non-excluded harnesses
+    # (codex/opencode/claude keep their per-harness models below unless this
+    # is set). Empty = per-harness defaults win.
+    harness_model: ""
+    # Utility-Modell-Override für agents.defaults.utilityModel in
+    # openclaw.json — das Modell hinter den internen Gateway-Utility-Callouten
+    # (u. a. der Session-Observer, der pro Turn ein strict-JSON-Digest liefert).
+    # UNSET = kein Write (operator owns the value); gesetzt → einmalig gemerged
+    # (operator wins on removal, never auto-cleared). Empfehlung bei
+    # "session observer returned invalid JSON twice"-Live-Logs: ein Modell mit
+    # sauberem strict-JSON-Output, z. B. "ollama/nemotron-3-super:cloud" oder
+    # "ollama/deepseek-v4.1-flash:cloud".
+    utility_model: ""
+    # Per-harness model overrides (the 3 harnesses come bundled with acpx;
+    # everything else is extra — see additional_agents below).
+    # OpenCode (forge) harness model. Default: glm-5.3-flash:cloud
+    harness_opencode_model: ""
+    # Claude Code harness model. Feeds the ambient ANTHROPIC_MODEL fallback
+    # AND the harness-config-writer claude default (legacy fallback:
+    # gateway_env_vars OLLAMA_ACP_MODEL). Default: glm-5.3-flash:cloud
+    harness_claude_model: ""
+    # Codex (audit) harness model. Default: kimi-k2.7-code:cloud
+    harness_codex_model: ""
+    # Optional: comma-separated harness ids EXCLUDED from the shared defaults
+    # above (e.g. "codex,opencode").
+    harness_excluded_agents: ""
+    # Optional: comma-separated ADDITIONAL agent/harness names to allow in
+    # acp.allowedAgents besides the bundled claude/codex/opencode/openclaw
+    # (e.g. "pi,colibri,gemini"). Custom agents must also exist in the
+    # OpenClaw agent roster with runtime.type=acp pointing at a harness
+    # adapter; the helper unions them in and never overwrites a user-owned
+    # list. Empty = built-ins only.
+    additional_agents: ""
+    # Optional (Phase 2.15, GaRoN): deploy + register the bundled
+    # acp-dashboard-binding plugin in OpenClaw (resolves dashboard/webchat
+    # conversations to ACP harness sessions). Default is true — the binding is
+    # the add-on core surface; set to false for a real operator opt-out.
+    acp_dashboard_binding_enabled: true
 
   gateway_ext:
     # Public base URL for opening the Gateway Web UI in a new tab (not embedded).
@@ -129,94 +223,6 @@ options:
     # failed gateway starts (openclaw.json snapshotted first). 0 disables.
     gateway_doctor_repair_max: 3
 
-  acpx_harness:
-    # ACPX harness infrastructure (Claude Code, Codex, OpenCode).
-    # When enabled, the app installs wrapper launchers and the managed
-    # npm project with @openclaw/acpx so OpenClaw can run coding agents via
-    # the local ACPX backend. Existing user-configured coding agents are
-    # preserved as-is; the app does not modify agents.list.
-    acpx_enabled: true
-    # When no ANTHROPIC_API_KEY / OPENAI_API_KEY is configured, the wrappers
-    # point the respective CLI at this URL and use 'ollama' as a placeholder
-    # token. Set this to your remote Ollama instance (e.g.
-    # http://192.168.178.34:11434) when running the harness against an
-    # external Ollama server. When real API keys are present in
-    # gateway_env_vars, this URL is ignored for the corresponding provider.
-    ollama_base_url: "http://localhost:11434"
-    # Optional: Override the model the Codex (audit) harness uses via the local
-    # Ollama backend. Default: kimi-k2.7-code:cloud
-    ollama_acp_codex_model: ""
-    # Optional: Override the model the OpenCode (forge) harness uses via the
-    # local Ollama backend. Default: glm-5.3-flash:cloud
-    ollama_acp_opencode_model: ""
-    # Optional: Override the model the Claude Code harness uses via the local
-    # Ollama backend. Feeds the ambient ANTHROPIC_MODEL fallback AND the
-    # harness-config-writer default (legacy fallback: gateway_env_vars
-    # OLLAMA_ACP_MODEL). Default: glm-5.3-flash:cloud
-    ollama_acp_claude_model: ""
-    # Optional: Comma-separated additional ACP harness names to allow besides
-    # the built-in claude/codex/opencode/openclaw (e.g. "pi,colibri,gemini").
-    # Custom agents must also exist in the OpenClaw agent roster with
-    # runtime.type=acp pointing at a harness adapter.
-    acp_additional_allowed_agents: ""
-    # Optional (Phase 2.15, GaRoN): deploy + register the bundled
-    # acp-dashboard-binding plugin in OpenClaw (resolves dashboard/webchat
-    # conversations to ACP harness sessions). Default is true — the binding is
-    # the add-on core surface; set to false for a real operator opt-out.
-    acp_dashboard_binding_enabled: true
-    # Optional (Repo-Split A2, 2026-10-11): deploy + register the bundled
-    # harness-config-writer plugin in OpenClaw (generates the harness-native
-    # file/env config for local-provider harnesses from its config.harnesses
-    # surface). UNSET follows acp_dashboard_binding_enabled (existing setups
-    # keep the previous bundled behavior); true runs it even with the channel
-    # plugin off; false keeps it off. The legacy
-    # plugins.entries['acp-dashboard-binding'].config.harnesses key is
-    # migrated to plugins.entries['harness-config-writer'].config.harnesses
-    # once at boot (idempotent, before the gateway reads the config).
-    # Backup-Rewrite: the first enabled boot snapshots the pre-writer state of
-    # all managed harness config files; when the option goes off again the
-    # originals are restored automatically (snapshot in
-    # /config/.openclaw/harness-config-writer-backup/).
-    #
-    # NOTE: this field is deliberately left WITHOUT a value (YAML null = UNSET).
-    # Do not "fix" the empty value — the tri-state IS the documented behavior.
-    harness_config_writer_enabled:
-    # Optional (Writer, GaRoN 2026-10-11): geteilte Harness-Defaults für den
-    # harness-config-writer — je eine Zeile, gilt für ALLE nicht-excluded
-    # Harnesses (codex/opencode übernehmen base_url/api_key; ihr Modell
-    # bleibt auf ollama_acp_codex_model / ollama_acp_opencode_model, außer
-    # harness_model ist gesetzt). base_url ist der AKTIVATOR: leer → nichts
-    # wird generiert (ADDITIV bleibt). Operator-Handeinträge in openclaw.json
-    # werden nie angetastet; entfernte Optionen räumen generierte Entries auf.
-    harness_base_url: ""
-    harness_model: ""
-    harness_api_key: ""
-    # Optional: Kommagetrennte Harness-Ids, die von obigen Defaults
-    # AUSGESCHLOSSEN werden (z.B. "codex,opencode").
-    harness_excluded_agents: ""
-    # Optional (V36.2, 2026-10-13): Utility-Modell-Override für
-    # agents.defaults.utilityModel in openclaw.json — das Modell hinter den
-    # internen Gateway-Utility-Callouten (u. a. der Session-Observer, der
-    # pro Turn ein strict-JSON-Digest liefert). UNSET = kein Write
-    # (operator owns the value); gesetzt → einmalig gemerged (operator wins
-    # on removal, never auto-cleared). Empfehlung bei "session observer
-    # returned invalid JSON twice"-Live-Logs: ein Modell mit sauberem
-    # strict-JSON-Output, z. B. "ollama/nemotron-3-super:cloud" oder
-    # "ollama/deepseek-v4.1-flash:cloud".
-    utility_model: ""
-
-  ha_integration:
-    # Optional: Home Assistant long-lived token (for local HA API scripts/tools)
-    homeassistant_token: ""
-    # Optional: outbound HTTP/HTTPS proxy for OpenClaw network access.
-    # Example: "http://192.168.2.1:3128"
-    http_proxy: ""
-    # Enable OpenAI-compatible Chat Completions API endpoint (for HA Assist pipeline)
-    enable_openai_api: false
-    # Auto-configure MCP (Model Context Protocol) for Home Assistant.
-    # When enabled + homeassistant_token set, registers HA as MCP server.
-    auto_configure_mcp: false
-
   runtime:
     # Optional: Space-separated list of apt packages to install at container startup.
     # Packages are reinstalled on each restart (not persistent in image).
@@ -246,11 +252,27 @@ schema:
   gateway_env_vars:
     - name: "match(^[A-Z_][A-Z0-9_]*$)"
       value: str
-  terminal_ui:
-    enable_terminal: bool?
-    terminal_port: int(1024,65535)?
-    enable_webui: bool?
-    enable_docs: bool?
+  terminal_port: int(1024,65535)?
+  enable_webui: bool?
+  enable_docs: bool?
+  ha_integration:
+    homeassistant_token: str?
+    http_proxy: str?
+    enable_openai_api: bool?
+    auto_configure_mcp: bool?
+  acpx_enabled: bool?
+  harness_config_writer_enabled: bool?
+  harness:
+    harness_base_url: str?
+    harness_api_key: str?
+    harness_model: str?
+    utility_model: str?
+    harness_opencode_model: str?
+    harness_claude_model: str?
+    harness_codex_model: str?
+    harness_excluded_agents: str?
+    additional_agents: str?
+    acp_dashboard_binding_enabled: bool?
   gateway_ext:
     gateway_public_url: str?
     gateway_remote_url: str?
@@ -269,25 +291,6 @@ schema:
     abort_on_upgrade_backup_failure: bool?
     upgrade_backup_keep: int(1,10)?
     gateway_doctor_repair_max: int(0,10)?
-  acpx_harness:
-    acpx_enabled: bool?
-    ollama_base_url: str?
-    ollama_acp_codex_model: str?
-    ollama_acp_opencode_model: str?
-    ollama_acp_claude_model: str?
-    acp_additional_allowed_agents: str?
-    acp_dashboard_binding_enabled: bool?
-    harness_config_writer_enabled: bool?
-    harness_base_url: str?
-    harness_model: str?
-    harness_api_key: str?
-    harness_excluded_agents: str?
-    utility_model: str?
-  ha_integration:
-    homeassistant_token: str?
-    http_proxy: str?
-    enable_openai_api: bool?
-    auto_configure_mcp: bool?
   runtime:
     runtime_apt_packages: str?
     custom_init_script: str?

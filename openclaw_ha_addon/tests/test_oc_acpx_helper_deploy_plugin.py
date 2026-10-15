@@ -682,7 +682,7 @@ class AddonHarnessDefaultsTest(unittest.TestCase):
 
     def test_per_harness_model_defaults_for_flagship_trio(self) -> None:
         # γ (2026-10-13): the three flagship harnesses each carry their own
-        # dedicated default (claude newly: ollama_acp_claude_model).
+        # dedicated default (claude newly: harness_claude_model).
         os.environ["OLLAMA_CODEX_MODEL"] = "codex-default"
         os.environ["OLLAMA_OPENCODE_MODEL"] = "opencode-default"
         os.environ["OLLAMA_CLAUDE_MODEL"] = "claude-default"
@@ -692,7 +692,7 @@ class AddonHarnessDefaultsTest(unittest.TestCase):
         harnesses = self.harnesses()
         self.assertEqual(harnesses["codex"]["model"], "codex-default")
         self.assertEqual(harnesses["opencode"]["model"], "opencode-default",
-                         "dedicated ollama_acp_* defaults without shared model")
+                         "dedicated harness_* defaults without shared model")
         self.assertEqual(harnesses["claude"]["model"], "claude-default")
         # env-ids without any model line → deliberately not generated:
         self.assertEqual(set(harnesses),

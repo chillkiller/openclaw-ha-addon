@@ -295,22 +295,33 @@ Additionally, the Dockerfile `HEALTHCHECK` verifies both `/api/health` and the O
 All options are set via **Settings → Apps → OpenClaw Assistant → Configuration** in Home Assistant. They are applied automatically on each app restart.
 
 Starting with v0.7.13.30 the options UI shows **collapsible sections** (click the
-section header to open it): `terminal_ui`, `gateway_ext`, `logging_diag`,
-`safety_nets`, `acpx_harness`, `ha_integration`, `runtime`, `legacy`. The hottest
-knobs (`timezone`, `network_mode`, `gateway_port`, `gateway_mode`,
-`gateway_env_vars`) stay at the top level. The option *names* are unchanged for
-everything referenced in this document — only their position in the config UI
-(along with the stored `options.json` nesting) moved into the sections.
+section header to open it). Order: `ha_integration`,
+`harness`, `gateway_ext`, `logging_diag`, `safety_nets`, `runtime`, `legacy`.
+Top-level knobs (not inside a section): `timezone`, `network_mode`,
+`gateway_port`, `gateway_mode`, `gateway_env_vars`, `terminal_port`,
+`enable_webui`, `enable_docs`, `acpx_enabled`,
+`harness_config_writer_enabled`.
+
+> **v0.7.13.30 option renames** (the app coalesces old and new names on read):
+> `ollama_base_url` → `harness_base_url`, `ollama_acp_codex_model` →
+> `harness_codex_model`, `ollama_acp_opencode_model` →
+> `harness_opencode_model`, `ollama_acp_claude_model` →
+> `harness_claude_model`, `acp_additional_allowed_agents` →
+> `additional_agents`. The old `terminal_ui` section is dissolved and
+> `enable_terminal` is **retired**: the web terminal is always on (it is the
+> Ingress maintenance/repair surface); only `terminal_port` remains
+> configurable.
 
 > **Update note (pre-0.7.13.30 configs):** installs whose stored options still
-> use the flat layout must have those options migrated once **after the
-> container update has been installed but before/at first start** — see
-> DEPLOYMENT.md "Options sections migration" for the verified sequence
-> (update → Supervisor API options POST → start; a premature options POST
-> against the old flat schema is silently destructive). The app keeps reading
-> both layouts (`run.sh` "Options layout normalization"), but the new schema
-> requires the sectioned shape in the stored options, and the Supervisor
-> rewrites options.json from its stored, schema-validated copy on every start.
+> use the flat layout (or the previous section layout) must have those options
+> migrated once **after the container update has been installed but before/at
+> first start** — see DEPLOYMENT.md "Options sections migration" for the
+> verified sequence (update → Supervisor API options POST → start; a premature
+> options POST against the old installed schema is silently destructive). The
+> app keeps reading both layouts (`run.sh` "Options layout normalization"), but
+> the new schema requires the sectioned shape in the stored options, and the
+> Supervisor rewrites options.json from its stored, schema-validated copy on
+> every start.
 
 ### General
 
@@ -338,8 +349,18 @@ everything referenced in this document — only their position in the config UI
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `enable_terminal` | bool | `true` | Show the web terminal on the app page (the terminal is the default tab and starts before the gateway, so it stays reachable during slow startup) |
-| `terminal_port` | int | `7681` | Port for the terminal (ttyd). Change if 7681 conflicts. Range: 1024-65535 |
+| `terminal_port` | int | `7681` | External port for the terminal (ttyd). Change if 7681 conflicts. Range: 1024-65535 |
+
+> **The web terminal is not optional (v0.7.13.30):** it is always present and
+> working via the Ingress — the maintenance/repair surface and the operator CLI
+> escape hatch. There is no `enable_terminal` switch anymore; only the external
+> port is configurable. (Still true: the terminal is the default tab and starts
+> before the gateway, so it stays reachable during slow startup.)
+
+### UI surfaces
+
+| Option | Type | Default | Description |
+|---|---|---|---|
 | `enable_webui` | bool | `true` | Show the WebUI tab on the app landing page |
 | `enable_docs` | bool | `true` | Show the Docs tab on the app landing page |
 
@@ -375,11 +396,27 @@ everything referenced in this document — only their position in the config UI
 |---|---|---|---|
 | `mdns_mode` | `off` / `minimal` / `full` | `minimal` | mDNS/Bonjour advertisement: off, core TXT keys (default), or verbose TXT metadata |
 | `mdns_host_name` | string | `openclaw` | Hostname to advertise (without `.local`) |
-| `acpx_enabled` | bool | `true` | Install the managed ACPX npm project and wrapper launchers so OpenClaw can run coding agents (Claude Code, Codex, OpenCode) through the local ACPX backend. Existing user-configured agents are preserved |
-| `ollama_base_url` | string | `http://localhost:11434` | Ollama endpoint used by the ACPX wrappers when no real `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` is set (ignored per provider once real keys exist in `gateway_env_vars`) |
-| `ollama_acp_codex_model` | string | *(empty)* | Override the model the Codex (audit) harness uses against the local Ollama backend (default `kimi-k2.7-code:cloud`). Empty = built-in default |
-| `ollama_acp_opencode_model` | string | *(empty)* | Override the model the OpenCode (forge) harness uses against the local Ollama backend (default `glm-5.3-flash:cloud`). Empty = built-in default |
-| `acp_additional_allowed_agents` | string | *(empty)* | Comma-separated extra ACP harness names to allow besides the built-in `claude`/`codex`/`opencode`/`openclaw` (see [Custom ACP harnesses](#6f-custom-acp-harnesses-advanced)) |
+
+### Harness group (coding backends, v0.7.13.30 — renamed & re-grouped)
+
+All of these live in the collapsible `harness` section (top-level switches
+`acpx_enabled` / `harness_config_writer_enabled` sit above it). The backend is
+any OpenAI-compatible API — not just Ollama. Old names still coalesce on read.
+
+| Option | Type | Default | Description |
+|---|---|---|---|
+| `acpx_enabled` | bool | `true` | Top level. Install the managed ACPX npm project and wrapper launchers so OpenClaw can run coding agents (Claude Code, Codex, OpenCode) through the local ACPX backend. Existing user-configured agents are preserved |
+| `harness_config_writer_enabled` | bool (tri-state) | UNSET | Top level. Deploy + register the bundled harness-config-writer plugin; UNSET follows `acp_dashboard_binding_enabled`, `true` forces it on, `false` keeps it off |
+| `harness_base_url` | string | _(empty)_ | Backend endpoint for all local-provider harnesses (any OpenAI-compatible API, e.g. `http://198.51.100.20:11434`). Used by the ACPX wrappers when no real `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` is set (ignored per provider once real keys exist in `gateway_env_vars`). Doubles as the harness-config-writer ACTIVATOR: empty = nothing generated. Built-in fallback when unset: `http://localhost:11434` |
+| `harness_api_key` | string | _(empty)_ | API key handed to generated harness entries (shared writer default) |
+| `harness_model` | string | _(empty)_ | Shared harness default model; applies to all non-excluded harnesses. Empty = per-harness defaults win |
+| `utility_model` | string | _(empty)_ | Override for `agents.defaults.utilityModel` in `openclaw.json` (internal gateway utility callouts, e.g. the session observer). UNSET = no write (operator owns the value) |
+| `harness_opencode_model` | string | *(empty)* | Override the model the OpenCode (forge) harness uses (default `glm-5.3-flash:cloud`). Empty = built-in default |
+| `harness_claude_model` | string | *(empty)* | Override the model the Claude Code harness uses (feeds the ambient `ANTHROPIC_MODEL` fallback and the writer claude default; default `glm-5.3-flash:cloud`). Empty = built-in default |
+| `harness_codex_model` | string | *(empty)* | Override the model the Codex (audit) harness uses (default `kimi-k2.7-code:cloud`). Empty = built-in default |
+| `harness_excluded_agents` | string | *(empty)* | Comma-separated harness ids excluded from the shared defaults above (e.g. `codex,opencode`) |
+| `additional_agents` | string | *(empty)* | Comma-separated extra ACP harness names to allow besides the bundled `claude`/`codex`/`opencode`/`openclaw` (see [Custom ACP harnesses](#6f-custom-acp-harnesses-advanced)) |
+| `acp_dashboard_binding_enabled` | bool | `true` | Deploy + register the bundled acp-dashboard-binding plugin (resolves dashboard/webchat conversations to ACP harness sessions) |
 
 ---
 
@@ -733,16 +770,17 @@ The ACP backend ships with four built-in harnesses: `claude`, `codex`, `opencode
 
 #### Model overrides for the built-in harnesses
 
-By default the Codex harness (audit role) talks to Ollama with `kimi-k2.7-code:cloud` and the OpenCode harness (forge role) with `glm-5.3-flash:cloud`. Two app options override these models without touching any config file:
+By default the Codex harness (audit role) talks to the configured harness backend with `kimi-k2.7-code:cloud` and the OpenCode harness (forge role) with `glm-5.3-flash:cloud`. The app options override these models without touching any config file:
 
-- **Codex model override:** `ollama_acp_codex_model`
-- **OpenCode model override:** `ollama_acp_opencode_model`
+- **Codex model override:** `harness_codex_model`
+- **OpenCode model override:** `harness_opencode_model`
+- **Claude Code model override:** `harness_claude_model`
 
-Leave them empty to keep the built-in defaults. They only take effect while the harness actually uses the local Ollama backend (see `ollama_base_url` in the [Configuration Reference](#5-configuration-reference)).
+Leave them empty to keep the built-in defaults. They only take effect while the harness actually uses the local backend (see `harness_base_url` in the [Configuration Reference](#5-configuration-reference)).
 
 #### Additional allowed agents
 
-`acp_additional_allowed_agents` accepts a comma-separated list of additional harness names (e.g. `pi,gemini`). These are unioned into the `acp.allowedAgents` list in `openclaw.json` alongside the four built-ins.
+`additional_agents` accepts a comma-separated list of additional harness names (e.g. `pi,gemini`). These are unioned into the `acp.allowedAgents` list in `openclaw.json` alongside the four built-ins.
 
 This list is **user-owned**: the app never truncates or rewrites an existing `acp.allowedAgents` value — it only unions in entries that are missing. You can freely add or remove names in `openclaw.json` yourself; the app will restore the built-in four plus your option extras on the next start, and leave everything else untouched.
 
@@ -1038,9 +1076,12 @@ Paste this token when the UI prompts for authentication, or append it to the URL
 
 ### Terminal not visible
 
-1. Check that `enable_terminal` is **true** in the app configuration
-2. Check logs for `Starting web terminal (ttyd)` — if missing, the terminal is disabled
-3. If you see a port conflict error, change `terminal_port` to a different value
+The terminal is always on since v0.7.13.30 (there is no `enable_terminal` switch anymore).
+
+1. Check logs for `Starting web terminal (ttyd)` and the ttyd supervisor warnings
+2. If you see a "port already in use" warning or the boot-log line about a missing
+   binding, change `terminal_port` to a different value
+3. Restart the app and confirm the new `terminal_port` value
 
 ### `web_fetch failed: fetch failed` / HTTP tool calls time out
 
