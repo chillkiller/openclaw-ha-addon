@@ -302,12 +302,15 @@ knobs (`timezone`, `network_mode`, `gateway_port`, `gateway_mode`,
 everything referenced in this document — only their position in the config UI
 (along with the stored `options.json` nesting) moved into the sections.
 
-> **Update note (pre-0.7.13.29 configs):** installs whose stored options still
-> use the flat layout must be migrated once when updating (settings UI save or
-> one-time Supervisor API call — see DEPLOYMENT.md
-> "Options sections migration"). The app keeps reading both layouts
-> (`run.sh` "Options layout normalization"), but the new schema requires the
-> sectioned shape in the stored options file.
+> **Update note (pre-0.7.13.30 configs):** installs whose stored options still
+> use the flat layout must have those options migrated once **after the
+> container update has been installed but before/at first start** — see
+> DEPLOYMENT.md "Options sections migration" for the verified sequence
+> (update → Supervisor API options POST → start; a premature options POST
+> against the old flat schema is silently destructive). The app keeps reading
+> both layouts (`run.sh` "Options layout normalization"), but the new schema
+> requires the sectioned shape in the stored options, and the Supervisor
+> rewrites options.json from its stored, schema-validated copy on every start.
 
 ### General
 

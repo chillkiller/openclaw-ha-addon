@@ -78,27 +78,58 @@ Main contributors: OpenClaw runtime + npm packages, Playwright Chromium, Python 
 
 ## Options sections migration (one-time, required for the collapsible config UI)
 
-Since the config schema groups options into sections (see DOCS.md §5), a stored
-`options.json` from a pre-0.7.13.30 install is still flat and **fails schema
-validation** on the first boot after the update. Migrate BEFORE deploying the
-new version:
+Since the config schema groups options into sections (see DOCS.md §5), the
+Supervisor **validates the stored options against the installed schema and
+rewrites `options.json` from its own stored copy on every app start**
+(`apps/app.py: write_options()` inside `App.start()`). Two consequences,
+both verified against the Supervisor source of the running system:
 
-1. Snapshot current options:
+- A **premature migration is destructive**: `POST /options` is validated
+  against the CURRENTLY INSTALLED (flat) schema. A sectioned payload posted
+  before the update has every group key dropped (`unknown option ...` warning)
+  and the stripped result is persisted.
+- A flat stored file against the new sectioned schema **fails start**
+  (`Missing option 'terminal_ui' in root` → `AppConfigurationInvalidError`).
+  This is recoverable and harmless as long as no values were lost: the
+  validation runs BEFORE the write, so the old flat `options.json` file stays
+  intact and the migration helper can read it.
+
+Verified sequence (no destructive window, one controlled stop):
+
+1. Snapshot current options (flat, via API):
    `curl -s -H "Authorization: Bearer $SUPERVISOR_TOKEN" http://supervisor/addons/45b315ab_openclaw_ha_addon/info | jq .data.options > options-backup.json`
-2. Build the sectioned payload from the backup (mapping: `terminal_ui`,
+2. `POST /addons/<slug>/stop` (brief downtime; this keeps the update from
+   auto-starting into the validation error).
+3. Deploy the new version (store pull + Supervisor restart + `POST /update`).
+   Because the app was stopped, the update installs the new schema and does
+   **not** start the app (start-after-update only happens for apps that were
+   running).
+4. Build the sectioned payload from the flat backup (mapping: `terminal_ui`,
    `gateway_ext`, `logging_diag`, `safety_nets`, `acpx_harness`,
    `ha_integration`, `runtime`, `legacy`; `timezone`, `network_mode`,
    `gateway_port`, `gateway_mode`, `gateway_env_vars` stay top-level). Helper:
-   `/config/pushbug-tools/options_migrate_sections.py` (host-persistent, not in repo).
-3. Push it back:
-   `curl -s -X POST -H "Authorization: Bearer $SUPERVISOR_TOKEN" -H "Content-Type: application/json" -d @options-migrated.json http://supervisor/addons/45b315ab_openclaw_ha_addon/options`
-4. Update the addon, start it, verify the boot log line
-   `DEBUG: options layout: sectioned -> flattening for reads` shows reads worked
-   and all env-derived behavior matches (spot-check `gateway_port`, `network_mode`).
+   `/config/pushbug-tools/options_migrate_sections.py` (host-persistent, not
+   in repo). Validation gotcha: the API expects the payload wrapped as
+   `{"options": <payload>}`.
+   The API validates against the now-installed sectioned schema — group keys
+   now match, values validate 1:1 (verified live: 44 keys, no nulls).
+5. `curl -s -X POST -H "Authorization: Bearer $SUPERVISOR_TOKEN" -H "Content-Type: application/json" -d "$(jq -nc "{options: input}" options-migrated.json)" http://supervisor/addons/45b315ab_openclaw_ha_addon/options`
+6. `POST /addons/<slug>/start` and verify the boot log line
+   `DEBUG: options layout: sectioned -> flattening for reads` shows reads
+   worked and all env-derived behavior matches (spot-check `gateway_port`,
+   `network_mode`).
 
-Alternatively: open Settings → Apps → OpenClaw Assistant → Configuration and
-hit Save once after the update — the UI renders the new sectioned defaults and
-saving stores the sectioned shape. Values you set are preserved by the UI.
+Fallback if the update already auto-started and failed validation: the
+flat `options.json` on disk is untouched (write aborted before write);
+migrate from step 4 using a fresh snapshot of that file, POST the sectioned
+payload (now validated against the new schema), then `POST /start`.
 
-The `run.sh` normalization keeps **reads** compatible with both layouts either
-way — the migration above exists so the Supervisor schema validation is happy.
+**Do NOT** rely on Settings → Apps → Configuration → Save as the migration
+path: the UI renders the new sectioned defaults and the stored flat key
+values do not map into the grouped fields — saving can silently reset
+operator-set values (e.g. `homeassistant_token`) to defaults. Treat it only
+as an emergency path with full manual re-entry.
+
+The `run.sh` normalization keeps **reads** compatible with both layouts —
+the migration above exists so the Supervisor schema validation accepts the
+stored options on start.
