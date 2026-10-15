@@ -1,0 +1,325 @@
+/**
+ * §25 dual-reset driver tests (GaRoN 2026-10-16, "Befehle in der
+ * Verbindungs-Session"). The driver must (a) claim ONLY plugin-owned binding
+ * keys while the builtin acp reset leg exists, (b) delegate the work-session
+ * reset verbatim to the builtin, and (c) add the origin-conversation reset
+ * through the trusted gateway surface best-effort — never degrading the work
+ * result. Registry mechanics (insertion-order precedence over the builtin's
+ * key-shape fallback) are covered by the registration ordering test.
+ */
+import { describe, expect, it, vi } from "vitest";
+
+import {
+  createDualResetDriver,
+  DUAL_RESET_DRIVER_ID,
+  registerDualResetDriver,
+  type DualResetDriverServices,
+  type DriverRegistryMap,
+  type StatefulBindingTargetDriverLike,
+} from "./dual-reset-driver.js";
+import { STATEFUL_TARGET_DRIVERS_SYMBOL } from "./dual-reset-driver.js";
+
+const WORK_KEY = "agent:claude:acp:binding:webchat:default:9c48a2456423b29b";
+const CONVERSATION_KEY = "agent:claude:dashboard:df380d1f-3109-424e-8ec7-6474c0f4e40b";
+
+function builtinDriver(overrides?: Partial<StatefulBindingTargetDriverLike>): StatefulBindingTargetDriverLike {
+  return {
+    id: "acp",
+    resolveTargetBySessionKey: async () => ({
+      kind: "stateful",
+      driverId: "acp",
+      sessionKey: WORK_KEY,
+      agentId: "claude",
+    }),
+    resetInPlace: vi.fn(async () => ({
+      ok: true,
+      sessionKey: WORK_KEY,
+      sessionId: "f45463c4-new",
+      storePath: "/tmp/store",
+    })),
+    ...overrides,
+  };
+}
+
+function adapterFor(targetKey: string, conversationId: string | null) {
+  return {
+    listBySession: (key: string) =>
+      key === targetKey && conversationId
+        ? [
+            {
+              targetSessionKey: key,
+              targetKind: "session",
+              conversation: { conversationId },
+            },
+          ]
+        : [],
+  };
+}
+
+function makeServices(overrides?: Partial<DualResetDriverServices>): DualResetDriverServices {
+  const registry: DriverRegistryMap = new Map([
+    ["acp", builtinDriver()],
+  ]);
+  return {
+    resolveDriverRegistry: () => registry,
+    getAdapter: () => adapterFor(WORK_KEY, CONVERSATION_KEY),
+    hasSessionEntry: vi.fn(async () => true),
+    gatewayRequest: vi.fn(async () => ({ ok: true, entry: { sessionId: "con-new" } })),
+    logger: {
+      debug: vi.fn(),
+      info: vi.fn(),
+      warn: vi.fn(),
+    },
+    ...overrides,
+  };
+}
+
+describe("§25 dual-reset driver — resolveTargetBySessionKey", () => {
+  it("claims a plugin-owned binding key and carries the origin conversation key", async () => {
+    const driver = createDualResetDriver(makeServices());
+    const target = await driver.resolveTargetBySessionKey!({
+      cfg: {},
+      sessionKey: WORK_KEY,
+    });
+    expect(target).not.toBeNull();
+    expect(target?.driverId).toBe(DUAL_RESET_DRIVER_ID);
+    expect(target?.sessionKey).toBe(WORK_KEY);
+    expect(target?.agentId).toBe("claude");
+    expect(target?.conversationSessionKey).toBe(CONVERSATION_KEY);
+  });
+
+  it("defers to the builtin when no adapter record matches (foreign/unknown key)", async () => {
+    const driver = createDualResetDriver(makeServices());
+    const target = await driver.resolveTargetBySessionKey!({
+      cfg: {},
+      // acp-shaped key the plugin does not own
+      sessionKey: "agent:claude:acp:binding:webchat:default:deadbeefdeadbeef",
+    });
+    expect(target).toBeNull();
+  });
+
+  it("defers when the builtin reset leg is absent (delegate-only design)", async () => {
+    const registry: DriverRegistryMap = new Map(); // no builtin yet (lazy registration)
+    const driver = createDualResetDriver(
+      makeServices({ resolveDriverRegistry: () => registry }),
+    );
+    const target = await driver.resolveTargetBySessionKey!({
+      cfg: {},
+      sessionKey: WORK_KEY,
+    });
+    expect(target).toBeNull();
+  });
+
+  it("defers for non-acp-shaped keys", async () => {
+    const driver = createDualResetDriver(makeServices());
+    expect(
+      await driver.resolveTargetBySessionKey!({
+        cfg: {},
+        sessionKey: "agent:claude:dashboard:whatever",
+      }),
+    ).toBeNull();
+    expect(
+      await driver.resolveTargetBySessionKey!({ cfg: {}, sessionKey: "" }),
+    ).toBeNull();
+  });
+
+  it("defers on a degenerate self-target (conversation key equals work key)", async () => {
+    const driver = createDualResetDriver(
+      makeServices({ getAdapter: () => adapterFor(WORK_KEY, WORK_KEY) }),
+    );
+    expect(
+      await driver.resolveTargetBySessionKey!({ cfg: {}, sessionKey: WORK_KEY }),
+    ).toBeNull();
+  });
+});
+
+describe("§25 dual-reset driver — resetInPlace", () => {
+  it("delegates the work reset verbatim and resets the conversation via gateway RPC", async () => {
+    const builtinReset = vi.fn(async () => ({
+      ok: true,
+      sessionKey: WORK_KEY,
+      sessionId: "f45463c4-new",
+    }));
+    const registry: DriverRegistryMap = new Map([
+      ["acp", builtinDriver({ resetInPlace: builtinReset })],
+    ]);
+    const gatewayRequest = vi.fn(async () => ({ ok: true, entry: { sessionId: "con-new" } }));
+    const services = makeServices({
+      resolveDriverRegistry: () => registry,
+      gatewayRequest: gatewayRequest as unknown as DualResetDriverServices["gatewayRequest"],
+    });
+    const driver = createDualResetDriver(services);
+    const result = await driver.resetInPlace!({
+      cfg: {},
+      sessionKey: WORK_KEY,
+      agentId: "claude",
+      reason: "reset",
+      commandSource: "test:surface",
+      bindingTarget: {
+        kind: "stateful",
+        driverId: DUAL_RESET_DRIVER_ID,
+        sessionKey: WORK_KEY,
+        agentId: "claude",
+        conversationSessionKey: CONVERSATION_KEY,
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(builtinReset).toHaveBeenCalledWith(
+      expect.objectContaining({ sessionKey: WORK_KEY, reason: "reset" }),
+    );
+    expect(services.hasSessionEntry).toHaveBeenCalledWith(CONVERSATION_KEY);
+    expect(gatewayRequest).toHaveBeenCalledWith(
+      "sessions.reset",
+      { key: CONVERSATION_KEY, agentId: "claude", reason: "reset" },
+      { scopes: ["operator.admin"] },
+    );
+  });
+
+  it("skips the conversation leg when the origin entry does not exist (stray-guard)", async () => {
+    const gatewayRequest = vi.fn();
+    const services = makeServices({ gatewayRequest: gatewayRequest as never });
+    services.hasSessionEntry = vi.fn(async () => false);
+    const driver = createDualResetDriver(services);
+    const result = await driver.resetInPlace!({
+      cfg: {},
+      sessionKey: WORK_KEY,
+      bindingTarget: {
+        sessionKey: WORK_KEY,
+        agentId: "claude",
+        conversationSessionKey: CONVERSATION_KEY,
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(services.hasSessionEntry).toHaveBeenCalled();
+    expect(gatewayRequest).not.toHaveBeenCalled();
+  });
+
+  it("keeps the work result when the gateway request throws", async () => {
+    const services = makeServices({
+      gatewayRequest: vi.fn(async () => {
+        throw new Error("plugin was not trusted");
+      }),
+    });
+    const driver = createDualResetDriver(services);
+    const result = await driver.resetInPlace!({
+      cfg: {},
+      sessionKey: WORK_KEY,
+      bindingTarget: {
+        sessionKey: WORK_KEY,
+        agentId: "claude",
+        conversationSessionKey: CONVERSATION_KEY,
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(services.logger.warn).toHaveBeenCalledWith(expect.stringContaining("origin conversation reset failed"));
+  });
+
+  it("keeps the work result when the gateway reply is not ok (graceful warn)", async () => {
+    const services = makeServices({
+      gatewayRequest: vi.fn(async () => ({ ok: false })),
+    });
+    const driver = createDualResetDriver(services);
+    const result = await driver.resetInPlace!({
+      cfg: {},
+      sessionKey: WORK_KEY,
+      bindingTarget: {
+        sessionKey: WORK_KEY,
+        conversationSessionKey: CONVERSATION_KEY,
+      },
+    });
+    expect(result.ok).toBe(true);
+    expect(services.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("did not commit"),
+    );
+  });
+
+  it("passes a builtin failure straight through and never runs the conversation leg", async () => {
+    const builtinReset = vi.fn(async () => ({
+      ok: false,
+      error: "store not ready",
+    }));
+    const registry: DriverRegistryMap = new Map([
+      ["acp", builtinDriver({ resetInPlace: builtinReset })],
+    ]);
+    const gatewayRequest = vi.fn();
+    const services = makeServices({
+      resolveDriverRegistry: () => registry,
+      gatewayRequest: gatewayRequest as never,
+    });
+    const driver = createDualResetDriver(services);
+    const result = await driver.resetInPlace!({
+      cfg: {},
+      sessionKey: WORK_KEY,
+      bindingTarget: { sessionKey: WORK_KEY, conversationSessionKey: CONVERSATION_KEY },
+    });
+    expect(result).toEqual({ ok: false, error: "store not ready" });
+    expect(gatewayRequest).not.toHaveBeenCalled();
+  });
+
+  it("skips the conversation leg when the binding target carries no conversation key", async () => {
+    const gatewayRequest = vi.fn();
+    const services = makeServices({ gatewayRequest: gatewayRequest as never });
+    const driver = createDualResetDriver(services);
+    const result = await driver.resetInPlace!({
+      cfg: {},
+      sessionKey: WORK_KEY,
+      bindingTarget: { sessionKey: WORK_KEY },
+    });
+    expect(result.ok).toBe(true);
+    expect(services.hasSessionEntry).not.toHaveBeenCalled();
+    expect(gatewayRequest).not.toHaveBeenCalled();
+  });
+});
+
+describe("§25 dual-reset driver — registration ordering", () => {
+  it("registers into the globalThis symbol map and re-appends a pre-existing builtin after ours", () => {
+    const registry: DriverRegistryMap = new Map([["acp", builtinDriver()]]);
+    const services = makeServices({ resolveDriverRegistry: () => registry });
+    const result = registerDualResetDriver(services);
+    expect(result.registered).toBe(true);
+    expect(registry.get(DUAL_RESET_DRIVER_ID)).toBeDefined();
+    // Insertion order: ours BEFORE the re-appended builtin — the builtin's
+    // key-shape fallback claims our keys unconditionally, so without this our
+    // driver could never win resolution for plugin-owned keys.
+    expect([...registry.keys()]).toEqual([DUAL_RESET_DRIVER_ID, "acp"]);
+    // Identity preserved for the builtin (same object, same id).
+    expect(registry.get("acp")?.id).toBe("acp");
+    expect(
+      (
+        registry.get("acp") as unknown as { resetInPlace: { mock: unknown } }
+      ).resetInPlace.mock,
+    ).toBeDefined();
+  });
+
+  it("registers into the globalThis symbol map when the host module has not loaded yet (default resolver)", () => {
+    const globalRegistry = new Map<string, StatefulBindingTargetDriverLike>();
+    const store = globalThis as unknown as Record<PropertyKey, unknown>;
+    store[STATEFUL_TARGET_DRIVERS_SYMBOL as symbol] = globalRegistry;
+    try {
+      const services = makeServices();
+      delete (services as { resolveDriverRegistry?: unknown }).resolveDriverRegistry;
+      const result = registerDualResetDriver(services);
+      // The default resolver adopts the existing globalThis map (one registry).
+      expect(globalRegistry.get(DUAL_RESET_DRIVER_ID)).toBeDefined();
+      expect(result.registered).toBe(true);
+    } finally {
+      delete store[STATEFUL_TARGET_DRIVERS_SYMBOL as symbol];
+    }
+  });
+
+  it("lifecycle dispose removes exactly our driver entry", () => {
+    const registry: DriverRegistryMap = new Map([["acp", builtinDriver()]]);
+    let disposed = false;
+    const disposables: Array<() => void> = [];
+    const services = makeServices({ resolveDriverRegistry: () => registry });
+    const result = registerDualResetDriver(services, {
+      lifecycle: { registerRuntimeLifecycle: (r) => disposables.push(r.dispose) },
+    });
+    expect(result.registered).toBe(true);
+    expect(disposables).toHaveLength(1);
+    disposables[0]();
+    expect(registry.has(DUAL_RESET_DRIVER_ID)).toBe(false);
+    expect(registry.has("acp")).toBe(true);
+    void disposed;
+  });
+});

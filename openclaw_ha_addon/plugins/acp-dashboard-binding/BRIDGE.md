@@ -1538,3 +1538,75 @@ Webchat-Adapter-Async joint ebenfalls.
 ### §24.4 Bewusst NICHT hier
 
 - Host-seitige Erweiterung des configured-Only-Gates (bot-message:1211) — Host-Code.
+
+## 25. §25 Dual-Reset-Driver: `/reset` greift auch in der Verbindungs-Session (GaRoN 2026-10-16)
+
+**Anfrage:** „wir kriegen es also noch hin, dass in zukunft Befehle auch in der
+verbindungs-Session, nicht nur in der acp-Session greifen? (/reset resettet
+auch den Inhalt der normalen Session)?"
+
+**Forensik-Grundlage (2026-10-16, DB-verifiziert):** `/reset` auf einer
+GEBUNDENEN Conversation läuft in dist `commands.runtime` über
+`resetConfiguredBindingTargetInPlace` → **nur die ACP-Work-Session** resettet
+(sessionStartedAt = Reset-Moment, 9 `type:"reset"`-Boundary-Events in der DB —
+Forges „stiller No-Op"-Hauptbefund damit WIDERLEGT) — dann kehrt der Pfad mit
+„✅ ACP session reset in place." **früh zurück**: die Conversation selbst wird
+NIE berührt, `emitResetCommandHooks` feuert auf dieser Ebene nicht einmal. Das
+spürbare „/reset zeigt keine Wirkung" = die sichtbare Verbindungs-Session
+bleibt stehen, by design des Hosts.
+
+### §25.1 Nahtpunkt und Registry-Mechanik (dist-verifiziert, 2026.10.2)
+
+- Der EINZIGE plugin-sichtbare Nahtpunkt im gebundenen Reset-Pfad ist das
+  Stateful-Binding-Target-Driver-Registry (`globalThis[Symbol.for(
+  "openclaw.statefulBindingTargetDrivers")]` — global-singleton speichert die
+  Map direkt am Symbol, lifecycle „plugin-registry" = Reload dränt/cleared).
+- Einziger Konsument: `resetConfiguredBindingTargetInPlace`; Iteration in
+  **Insertion-Order**, erster nicht-null Resolve gewinnt. Der builtin-„acp"-
+  Driver kann für unsere Binding-Keys NIEMALS null liefern (Key-Shape-Fallback
+  `isAcpSessionKey`) → unser Driver MUSS vor ihm in der Order stehen.
+  `registerDualResetDriver` re-appended den builtin (identitätserhaltend)
+  nach unserem Eintrag; auf einem Clean Boot ist unser Driver ohnehin zuerst
+  (builtin lädt lazy erst beim ersten Ensure/Resolve).
+- `performGatewaySessionReset` ist KEIN plugin-sdk-Export — Replikation
+  gestrichen; Design = **delegate, don't replicate**.
+
+### §25.2 Semantik (src/dual-reset-driver.ts, delegate + best-effort Leg 2)
+
+- **Leg 1 (Work-Session):** builtin `resetInPlace` 1:1 delegiert — Incognito-
+  Gate, `armSessionDiffBaselineCapture: true`, System-Operator. Null Divergenz
+  zum heutigen ✅-Verhalten.
+- **Leg 2 (Verbindungs-Session):** das Binding-Record-Feld
+  `conversation.conversationId` IST der Origin-Session-Key-Text
+  (`agent:<id>:dashboard:<uuid>` / `agent:<id>:main`; Claim-Path spiegelt
+  Transkripte genau auf diesen Key). Reset über die OFFIZIELLE plugin-Gateway-
+  Oberfläche: `api.runtime.gateway.request("sessions.reset",
+  {key, agentId, reason}, {scopes: ["operator.admin"]})` — RuntimeGateway-
+  RequestOptions honors scopes NUR für bundled/trusted-official Plugins
+  (unser Plugin ist seit v0.7.13.18 bundled-root deployed). Handler = Host-
+  sessionMutation „sessions.reset" → performGatewaySessionReset auf der
+  CONVERSATION. Plugin-Ownership sperrt nicht: host-erstellte Conversation-
+  Entries haben keinen `pluginOwnerId` (resolvePluginSessionOwnershipError
+  erlaubt genau das).
+- **Best-effort, existence-guarded:** Leg 2 feuert NUR wenn der Conversation-
+  Entry aktuell existiert (Reset-RPC auf fehlendem Key würde
+  authorizeGatewaySessionCreation eine STREUNE Session zeugen). Jeder Leg-2-
+  Fehler loggt und degradiert das Ergebnis NICHT — Worst Case exakt Status
+  quo. Resolve claimt NUR bei (a) builtin „acp" im Registry + (b) Adapter-
+  Record (listBySession) matcht + targetKind „session" + conversationId
+  vorhanden + ≠ Work-Key (Degenerate-Self-Guard); sonst null → builtin
+  gewinnt wie heute.
+
+### §25.3 Verifikation
+
+- Neue Suite dual-reset-driver.test.ts (+14): Claim/Defer-Matrix, Delegate-
+  Pass-through, Leg-2-Skips (kein Entry, kein conversationKey), Fehlerpfade
+  (Gateway-Throw/-ok:false → Work-Result steht), Registrierungs-Ordering
+  (re-append builtin, globalThis-Default-Resolver, Lifecycle-Dispose).
+- Suite 248/248 (+14 auf 234), tsc strict 0.
+- **Live-Verifikation (ausstehend):** Deploy + Owner-tippt `/reset` in einer
+  gebundenen Test-Conversation → Log-Linie „dual reset: origin conversation …
+  reset committed" + Conversation-Transkript tatsächlich geleert + Work-Session
+  neu. Gateway-Trust-Gate („bundled") ist der einzige nicht statisch
+  verifizierbare Punkt — Fall es scheitert, loggt Leg 2 warn, sonst-Verhalten
+  unverändert.

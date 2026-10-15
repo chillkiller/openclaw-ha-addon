@@ -64,6 +64,7 @@ import {
   type SweepSessionStoreApi,
   type SettleSessionEntryLike,
 } from "./src/session-settle.js";
+import { createDualResetDriverServicesFromApi, registerDualResetDriver } from "./src/dual-reset-driver.js";
 
 const BRIDGE_LIFECYCLE_ID = "acp-dashboard-binding.dashboard-bridge";
 
@@ -279,6 +280,35 @@ function createClaimReplyMirror(
       );
     }
   };
+}
+
+/**
+ * §25 (GaRoN 2026-10-16): `/reset` in a bound conversation resets only the
+ * acp work session — the host's bound-command path returns before the
+ * conversation is ever touched, so the visible chat survives (the "reset
+ * shows no effect" story). This registers the plugin's dual-reset stateful
+ * binding target driver into the HOST registry
+ * (globalThis[Symbol.for("openclaw.statefulBindingTargetDrivers")]): for
+ * plugin-owned binding keys it delegates the work reset to the builtin "acp"
+ * driver verbatim and additionally resets the origin conversation through the
+ * trusted plugin gateway surface ("sessions.reset", operator.admin scope).
+ * Best-effort second leg — failures log, the work reset result stands.
+ * Rationale + registry mechanics: src/dual-reset-driver.ts header + BRIDGE.md
+ * §25.
+ */
+function registerDualResetDriverSeam(api: OpenClawPluginApi): void {
+  registerDualResetDriver(
+    createDualResetDriverServicesFromApi({
+      config: api.config,
+      logger: {
+        debug: (message) => api.logger.debug?.(message),
+        info: (message: string) => api.logger.info(message),
+        warn: (message: string) => api.logger.warn(message),
+      },
+      runtime: api.runtime,
+    }),
+    { lifecycle: api.lifecycle },
+  );
 }
 
 /**
@@ -522,6 +552,9 @@ export default defineBundledChannelCompatibleEntry({
     // documented agent-default cwd ladder.
     registerOriginWorkspaceReader(api);
     registerDashboardBindingRuntime(api);
+    // §25 AFTER the binding runtime: the dual-reset driver's resolve reads the
+    // adapter (getDashboardBindingAdapter) that the line above populates.
+    registerDualResetDriverSeam(api);
     registerHarnessReplyClaimHook(api);
     // BRIDGE §19: settlement infra — sweep hooks gateway_start; the claim
     // handler receives the same store surface for per-turn settlement + the
