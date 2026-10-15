@@ -58,18 +58,25 @@ configuration:
           steuern. Nur deaktivieren, wenn die mcporter-Konfiguration manuell verwaltet wird.
   acpx_enabled:
     name: ACPX-Harness-Infrastruktur
-    description: ACPX-Wrapper-Launcher (Claude Code, Codex, OpenCode) installieren, damit OpenClaw Coding-Agenten über das
-      lokale ACPX-Backend ausführen kann. Bestehende, eigenständig konfigurierte Coding-Agenten bleiben unverändert.
+    description: ACPX-Wrapper-Launcher (Claude Code, Codex, OpenCode) installieren, damit OpenClaw Coding-Agenten über das lokale
+      ACPX-Backend ausführen kann. Bestehende, eigenständig konfigurierte Coding-Agenten bleiben unverändert.
+      Master-Schalter der gesamt acp(x)-Fläche — AUS (Standard) = keine Config-Übertragung für Writer/Binding, deren
+      Schalter bleiben wirkungslos; AN = Freigabe, dann entscheiden die Writer-/Binding-Schalter eigenständig.
   harness_config_writer_enabled:
     name: Harness Config Writer
     description: Optional (Repo-Split A2) - Das gebündelte harness-config-writer-Plugin deployt + registrieren (erzeugt aus
-      config.harnesses die harness-nativen Datei/Env-Konfigurationen). UNSET (leer) folgt dem ACP-Dashboard-Binding-Schalter;
-      AN erzwingt die Aktivierung auch bei ausgeschaltetem Binding; AUS hält ihn dauerhaft aus. Die erste aktivierte Session
-      snapshotet die verwalteten Harness-Dateien - Rückumschaltung stellt die Originale automatisch wieder her.
+      config.harnesses die harness-nativen Datei/Env-Konfigurationen). Unabhängiger Opt-in-Schalter, Standard AUS — folgt
+      dem ACP-Dashboard-Binding weder noch treibt es an; nur wirksam bei aktiviertem acpx_enabled (Master); zur
+      tatsächlichen Generierung ist eine harness_base_url nötig (leer = kompletter No-op). Kopiert, überschreibt nie — nur
+      byte-identische, zuvor GENERIERTE Einträge werden aktualisiert; Operator-Hand-edits und Einträge ohne die
+      konfigurierte Base URL bleiben unangetastet. Die erste aktivierte Session snapshotet die verwalteten Harness-Dateien
+      - Rückumschaltung stellt die Originale automatisch wieder her.
   harness:
     name: Harness (Coding-Backends)
-    description: Geteilte Provider-/Modell-Defaults für die gebündelten ACPX-Harnesses (Claude Code, Codex, OpenCode) und
-      den harness-config-writer. Der Endpunkt ist jede OpenAI-kompatible API — nicht nur Ollama.
+    description: Geteilte Provider-/Modell-Defaults für die gebündelten ACPX-Harnesses (Claude Code, Codex, OpenCode) und den
+      harness-config-writer. Der Endpunkt ist jede OpenAI-kompatible API — nicht nur Ollama. Ohne gesetzte
+      harness_base_url sind alle Werte dieser Gruppe INERT — nur die Schalter gelten (Modelle, Agents und utility_model
+      werden erst mit Base URL übernommen).
     fields:
       harness_base_url:
         name: Harness-Basis-URL
@@ -111,8 +118,10 @@ configuration:
           mit runtime.type=acp existieren; die Liste wird nur ergänzt, nie überschrieben.
       acp_dashboard_binding_enabled:
         name: ACP-Dashboard-Binding
-        description: Optional (Phase 2.15) - Das gebündelte acp-dashboard-binding-Plugin deployen + registrieren (löst Dashboard-/Webchat-Konversationen
-          auf ACP-Harness-Sessions auf). Standard AN — das Binding ist die Add-on-Kernfläche; AUS für echten Operator-Opt-out.
+        description: Optional (Phase 2.15) - Das gebündelte acp-dashboard-binding-Plugin deployen + registrieren (löst
+          Dashboard-/Webchat-Konversationen auf ACP-Harness-Sessions auf). Unabhängiger Opt-in-Schalter, Standard AUS
+          (v0.7.13.30) — folgt dem Harness-Config-Writer weder noch treibt ihn an; gilt nur, solange acpx_enabled=true ist
+          (Master-Schalter); sonst bleibt die Config-Übertragung aus.
   gateway_ext:
     name: Gateway extern
     description: URLs, Trusted Proxies und zulaessige Origins fuer den Gateway-Zugriff

@@ -55,18 +55,25 @@ configuration:
   acpx_enabled:
     name: Infraestructura ACPX
     description: Instalar lanzadores wrapper ACPX (Claude Code, Codex, OpenCode) para que OpenClaw ejecute agentes de programación
-      mediante el backend ACPX local. Los agentes configurados por el usuario se conservan sin cambios.
+      mediante el backend ACPX local. Los agentes configurados por el usuario se conservan sin cambios. Interruptor
+      maestro de toda la superficie acp(x) — DESACTIVADO (por defecto) = sin transferencia de configuración de
+      Writer/Binding, sus interruptores quedan inertes; ACTIVADO = desbloqueo, los interruptores de Writer/Binding deciden
+      entonces de forma independiente.
   harness_config_writer_enabled:
     name: Harness Config Writer
     description: Opcional (Repo-Split A2) - Desplegar + registrar el plugin harness-config-writer incluido (genera la configuración
-      nativa de archivos/env de los harnesses a partir de config.harnesses). SIN SETEAR sigue el interruptor de ACP Dashboard
-      Binding; ACTIVADO lo fuerza aunque el binding esté apagado; DESACTIVADO lo mantiene apagado de forma permanente. La
-      primera sesión activada hace una instantánea de los archivos gestionados — apagarlo de nuevo restaura los originales
-      automáticamente.
+      nativa de archivos/env de los harnesses a partir de config.harnesses). Interruptor independiente de opt-in,
+      DESACTIVADO por defecto — ni sigue ni dirige a ACP Dashboard Binding; solo efectiva con acpx_enabled activado
+      (maestro); se necesita una harness_base_url para generar algo (vacío = no-op completo). Copia pero nunca sobrescribe
+      — solo se actualizan entradas GENERADAS previamente e idénticas byte a byte; las ediciones manuales del operador y
+      las entradas sin la URL base configurada quedan intactas. La primera sesión activada hace una instantánea de los
+      archivos gestionados — apagarlo de nuevo restaura los originales automáticamente.
   harness:
     name: Harness (backends de código)
-    description: Defaults compartidos de proveedor/modelo para los harnesses acpx incluidos (Claude Code, Codex, OpenCode)
-      y el harness-config-writer. El endpoint es cualquier API compatible con OpenAI — no solo Ollama.
+    description: Defaults compartidos de proveedor/modelo para los harnesses acpx incluidos (Claude Code, Codex, OpenCode) y el
+      harness-config-writer. El endpoint es cualquier API compatible con OpenAI — no solo Ollama. Sin una harness_base_url
+      configurada, todos los valores de este grupo quedan INERTES — solo aplican los interruptores (modelos, agentes y
+      utility_model surten efecto al configurar la URL base).
     fields:
       harness_base_url:
         name: URL base de Harness
@@ -107,9 +114,10 @@ configuration:
           deben existir en el roster de OpenClaw con runtime.type=acp; la lista solo se une, nunca se sobrescribe.
       acp_dashboard_binding_enabled:
         name: ACP Dashboard Binding
-        description: Opcional (Fase 2.15) - Desplegar + registrar el plugin acp-dashboard-binding incluido (resuelve conversaciones
-          de dashboard/webchat en sesiones de harness ACP). ACTIVADO por defecto — el binding es la superficie central del
-          complemento; DESACTIVADO para un opt-out real del operador.
+        description: Opcional (Fase 2.15) - Desplegar + registrar el plugin acp-dashboard-binding incluido (resuelve conversaciones de
+          dashboard/webchat en sesiones de harness ACP). Interruptor independiente de opt-in, DESACTIVADO por defecto
+          (v0.7.13.30) — ni sigue ni dirige al Harness Config Writer; solo efectivo mientras acpx_enabled=true (interruptor
+          maestro); de lo contrario la transferencia de configuración permanece desactivada.
   gateway_ext:
     name: Gateway (external)
     description: URLs, trusted proxies and allowed origins for gateway access

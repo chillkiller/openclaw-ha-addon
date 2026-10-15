@@ -493,7 +493,7 @@ def _register_plugin_entry(plugin_name: str, force_enable: bool = False) -> bool
         return False
 
 
-def migrate_legacy_harnesses_config() -> None:
+def migrate_legacy_harnesses_config(enable_fresh_entry: bool = True) -> None:
     """Repo-Split A2 (2026-10-11) one-time config key migration.
 
     The generalized harness config surface moved from
@@ -503,7 +503,10 @@ def migrate_legacy_harnesses_config() -> None:
 
     Semantics (idempotent, fail-soft):
       - legacy key present, new key absent -> copy + remove the legacy key;
-        the writer entry gets enabled:true if it doesn't exist yet.
+        a FRESH writer entry gets enabled:true only when the caller passes
+        enable_fresh_entry (v0.7.13.30: the writer switch is an independent
+        opt-in — when it is off, the migrated entry carries the config
+        WITHOUT an enabled flag and the deploy block decides on enable).
       - both keys present -> leave BOTH untouched + WARN (operator must
         decide; we never guess which is authoritative).
       - nothing present -> no-op.
@@ -562,7 +565,7 @@ def migrate_legacy_harnesses_config() -> None:
                 f"plugins.entries['{HARNESS_CONFIG_WRITER_PLUGIN_NAME}'].config; "
                 "enabled=false (operator opt-out) respected — NOT flipped"
             )
-        elif not writer_pre_existed:
+        elif not writer_pre_existed and enable_fresh_entry:
             writer_entry["enabled"] = True
         legacy_cfg.pop("harnesses", None)
         write_json(config_path, cfg)
@@ -1147,16 +1150,15 @@ def _disable_binding_plugin() -> bool:
 def _binding_option_state() -> bool:
     """acp_dashboard_binding_enabled option, GaRoN 2026-10-12 semantics:
 
-      - explicit false  -> OFF: real opt-out (helper disables the plugin and
-        keeps the boot config valid — the operator kill switch).
-      - true / unset    -> ON: the binding is the addon's core surface and
-        activates out of the box (user vision 2026-10-12: harness agents are
-        usable in the dashboard without any setup); protection is the
-        explicit off switch, the fail-open claim path and the isolated
-        plugin-load failure mode (host marks the plugin unloaded, gateway
-        keeps booting)."""
+    Semantics (v0.7.13.30, Owner decision 2026-10-15 — ALL acp(x) switches
+    are independent OPT-IN, default OFF; writer and binding do NOT follow
+    each other because neither needs the other):
+      - true           -> ON: deploy + force-register the channel plugin.
+      - false / unset  -> OFF: real opt-out (helper disables the plugin and
+        keeps the boot config valid — the operator kill switch; unset now
+        means a fresh install simply has the plugin off)."""
     value = os.environ.get("ACP_DASHBOARD_BINDING_ENABLED", "").strip().lower()
-    return value not in ("0", "false", "no", "off")
+    return value in ("1", "true", "yes", "on")
 
 
 def deploy_plugins() -> bool:
@@ -1167,17 +1169,23 @@ def deploy_plugins() -> bool:
       - 'acp-dashboard-binding'  (channel plugin, dashboard key bridge):
         gated by acp_dashboard_binding_enabled (env
         ACP_DASHBOARD_BINDING_ENABLED, see _binding_option_state for the
-        GaRoN 2026-10-12 semantics: unset/default ON, explicit false =
-        real opt-out that flips the entries gate and strips the channel
-        config block).
+        v0.7.13.30 semantics: default OFF (opt-in), explicit false = real
+        opt-out that flips the entries gate and strips the channel config
+        block, explicit true = deploy).
       - 'harness-config-writer'  (standalone feature plugin):
         gated by harness_config_writer_enabled (env
-        HARNESS_CONFIG_WRITER_ENABLED). UNSET follows the channel-plugin
-        option so existing setups keep the previous bundled behavior
-        (binding on = writer on); explicit true/false overrides it.
+        HARNESS_CONFIG_WRITER_ENABLED). Independent switch, default OFF —
+        no coupling with the binding option (neither plugin needs the other;
+        v0.7.13.30, Owner decision 2026-10-15).
 
     Option gating happens BEFORE any payload or openclaw.json is touched;
     a skip is success for callers, not a failure.
+
+    Master-gate contract (v0.7.13.30, Owner decision 2026-10-15): the caller
+    only invokes the helper when acpx_enabled=true — acpx_enabled=false means
+    NO writer and NO binding deploy/config transfer, whatever their switches
+    say. Within the master, the two plugin switches are independent of each
+    other.
 
     Backup-Rewrite (GaRoN 2026-10-11): a writer-enabled boot takes the
     one-time pre-writer snapshot of all managed harness config surfaces
@@ -1188,24 +1196,19 @@ def deploy_plugins() -> bool:
     ok = True
     if not binding_enabled:
         log("INFO: plugin acp-dashboard-binding disabled "
-            "(acp_dashboard_binding_enabled=false — real opt-out)")
+            "(acp_dashboard_binding_enabled unset/false — not opted in)")
         # GaRoN 2026-10-12: the off switch is now a REAL opt-out — flip the
         # entries gate and keep the boot config valid (no undeclared channel
         # block), instead of skip-only which left the old registration live.
         if not _disable_binding_plugin():
             ok = False
 
-    writer_env = os.environ.get("HARNESS_CONFIG_WRITER_ENABLED", "").strip().lower()
-    if writer_env == "":
-        writer_enabled = binding_enabled
-        if writer_enabled:
-            log("INFO: plugin harness-config-writer enabled by default "
-                "(follows acp_dashboard_binding_enabled=true)")
-    else:
-        writer_enabled = _env_flag("HARNESS_CONFIG_WRITER_ENABLED")
-        if not writer_enabled:
-            log("INFO: plugin harness-config-writer deploy disabled by option "
-                "(harness_config_writer_enabled=false)")
+    # v0.7.13.30: independent switches. The unset case falls through to
+    # _env_flag == False — default OFF for BOTH plugins, no coupling.
+    writer_enabled = _env_flag("HARNESS_CONFIG_WRITER_ENABLED")
+    if not writer_enabled:
+        log("INFO: plugin harness-config-writer deploy disabled "
+            "(harness_config_writer_enabled unset/false — independent switch)")
 
     if binding_enabled:
         # Master switch ON = the binding plugin's enable decision is the HA
@@ -1214,17 +1217,25 @@ def deploy_plugins() -> bool:
         ok = _deploy_and_register_plugin(PLUGIN_NAME, force_enable=True) and ok
     if writer_enabled:
         ok = _deploy_and_register_plugin(HARNESS_CONFIG_WRITER_PLUGIN_NAME) and ok
-        migrate_legacy_harnesses_config()
-        # Add-on-Level-Harness-Defaults (GaRoN 2026-10-11): HARNESS_WRITER_*
-        # envs (base_url Aktivator, model, api_key, excluded_agents) additiv
-        # in die writer harnesses-Entry mergen — Operator-Handeinträge
-        # unangetastet, stale generierte Entries bereinigt.
-        merge_addon_harness_defaults()
         # Backup-Rewrite (GaRoN 2026-10-11): first-enable snapshot of the
         # operator pre-writer state, consumed when the gate goes off again.
         ok = backup_harness_writer_targets_once() and ok
     else:
         restore_harness_writer_targets()
+    # Repo-Split A2 legacy migration — v0.7.13.30 DECOUPLED from the writer
+    # gate: the OLD harnesses key under the channel entry breaks the binding
+    # manifest schema (additionalProperties:false) once the channel plugin is
+    # deployed, so the one-time data move must run whenever EITHER switch
+    # actually deploys. A fresh writer entry only gets enabled:true when the
+    # writer switch is on (the deploy gate owns enable decisions).
+    if binding_enabled or writer_enabled:
+        migrate_legacy_harnesses_config(enable_fresh_entry=writer_enabled)
+    if writer_enabled:
+        # Add-on-Level-Harness-Defaults (GaRoN 2026-10-11): HARNESS_WRITER_*
+        # envs (base_url Aktivator, model, api_key, excluded_agents) additiv
+        # in die writer harnesses-Entry mergen — Operator-Handeinträge
+        # unangetastet, stale generierte Entries bereinigt.
+        merge_addon_harness_defaults()
     return ok
 
 
@@ -1378,8 +1389,14 @@ def patch_openclaw_config() -> bool:
         return True
 
 def main() -> int:
-    log("Initializing local-model ACP harnesses (Codex, Claude, OpenCode)")
-    deploy_harness_configs()
+    # v0.7.13.30, Owner decision 2026-10-15: run.sh only invokes the helper
+    # when the acpx_enabled MASTER gate is on. Within it, the two plugin
+    # switches (binding, config-writer) are INDEPENDENT of each other — each
+    # deploys only on its own switch. Because the custom plugins do not work
+    # without the ACPX plugin, the infrastructure below (npm project +
+    # openclaw.json acp patch) is always set up whenever the helper runs.
+    log("Initializing acp(x) components (binding / config-writer — self-gated; ACPX infra always on)")
+    deploy_harness_configs()  # retired no-op (kept for the stable surface)
     ok = deploy_plugins()
     ok = install_acpx_npm_project() and ok
     ok = patch_openclaw_config() and ok

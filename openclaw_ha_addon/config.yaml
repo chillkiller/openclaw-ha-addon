@@ -101,25 +101,40 @@ options:
   # first-class). Its switch sits at top level, before the custom plugins
   # below. Existing user-configured coding agents are preserved as-is; the
   # app does not modify agents.list.
-  acpx_enabled: true
-  # Repo-Split A2, 2026-10-11: deploy + register the bundled
-  # harness-config-writer plugin in OpenClaw (generates the harness-native
-  # file/env config for local-provider harnesses from its config.harnesses
-  # surface). UNSET follows acp_dashboard_binding_enabled (existing setups
-  # keep the previous bundled behavior); true runs it even with the channel
-  # plugin off; false keeps it off. The legacy
+  #
+  # v0.7.13.30, Owner decision 2026-10-15: acpx_enabled is the MASTER gate
+  # for the whole acp(x) surface. acpx_enabled=false means NO writer and NO
+  # binding deploy / config transfer, whatever their switches say. With the
+  # master on, the two plugin switches below (writer/binding, both DEFAULT
+  # OFF) act independently of each other (the writer does not need the
+  # binding and vice versa).
+  #
+  # Without harness_base_url, every value in the `harness` group below
+  # is IGNORED except the switches themselves (models, agents, utility_model
+  # only apply once a base URL is configured).
+  acpx_enabled: false
+  # Deploy + register the bundled harness-config-writer plugin in OpenClaw
+  # (generates the harness-native file/env config for local-provider
+  # harnesses from its config.harnesses surface). Fine switch WITHIN the
+  # acpx_enabled master gate, INDEPENDENT of acp_dashboard_binding_enabled
+  # (neither follows nor drives it), DEFAULT OFF, and needs
+  # harness_base_url to actually generate anything (empty base URL
+  # = complete no-op). The legacy
   # plugins.entries['acp-dashboard-binding'].config.harnesses key is
   # migrated to plugins.entries['harness-config-writer'].config.harnesses
   # once at boot (idempotent, before the gateway reads the config).
-  # Backup-Rewrite: the first enabled boot snapshots the pre-writer state of
-  # all managed harness config files; when the option goes off again the
-  # originals are restored automatically (snapshot in
-  # /config/.openclaw/harness-config-writer-backup/).
-  #
-  # NOTE: this field is deliberately left WITHOUT a value (YAML null = UNSET).
-  # Do not "fix" the empty value — the tri-state IS the documented behavior.
-  harness_config_writer_enabled:
+  # Copy-not-clobber: only byte-identical previously GENERATED entries are
+  # refreshed; operator hand-edits (and generated entries without the
+  # configured base_url) are never overwritten — the first enabled boot
+  # snapshots the pre-writer state of all managed harness config files, and
+  # when the option goes off again the originals are restored automatically
+  # (snapshot in /config/.openclaw/harness-config-writer-backup/).
+  harness_config_writer_enabled: false
   # Shared custom-plugin/harness defaults (eine Ebene tiefer).
+  # GATING (v0.7.13.30): ohne harness_base_url sind ALLE Werte hier
+  # INERT — es gelten nur die Schalter (harness_config_writer_enabled /
+  # acp_dashboard_binding_enabled). Modelle, Agents und utility_model werden
+  # erst mit gesetzter Base URL übernommen.
   harness:
     # Backend endpoint for ALL local-provider harnesses (any OpenAI-compatible
     # API — not just Ollama): forwarded to the acpx wrapper templates and the
@@ -165,9 +180,11 @@ options:
     additional_agents: ""
     # Optional (Phase 2.15, GaRoN): deploy + register the bundled
     # acp-dashboard-binding plugin in OpenClaw (resolves dashboard/webchat
-    # conversations to ACP harness sessions). Default is true — the binding is
-    # the add-on core surface; set to false for a real operator opt-out.
-    acp_dashboard_binding_enabled: true
+    # conversations to ACP harness sessions). Fine switch WITHIN the
+    # acpx_enabled master gate (config transfer only happens while
+    # acpx_enabled is true), INDEPENDENT of harness_config_writer_enabled
+    # (neither follows nor drives it), DEFAULT OFF (v0.7.13.30).
+    acp_dashboard_binding_enabled: false
 
   gateway_ext:
     # Public base URL for opening the Gateway Web UI in a new tab (not embedded).

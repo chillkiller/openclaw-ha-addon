@@ -4,9 +4,10 @@
 Both bundled plugins must be OPT-IN via add-on options (forwarded by run.sh
 as env): acp_dashboard_binding_enabled (channel plugin) and
 harness_config_writer_enabled (Repo-Split A2 standalone feature plugin,
-2026-10-11). Default (unset or false) = no deploy, no openclaw.json
-registration; the writer option UNSET follows the channel option so existing
-setups keep the previous bundled behavior, explicit values override it.
+2026-10-11). v0.7.13.30, Owner decision 2026-10-15: ALL acp(x) switches are
+INDEPENDENT opt-in switches, default OFF — unset or false = no deploy, no
+openclaw.json registration, and no coupling (the writer neither follows nor
+drives the channel option; neither needs acpx_enabled).
 The legacy plugins.entries['acp-dashboard-binding'].config.harnesses key is
 migrated to plugins.entries['harness-config-writer'].config.harnesses once
 the writer deploys. Run with:
@@ -90,21 +91,22 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
     def write_config(self, plugins_cfg: dict) -> None:
         (self.config_dir / "openclaw.json").write_text(json.dumps(plugins_cfg))
 
-    # --- channel plugin (Phase 2.15 semantics, unchanged) -------------------
+    # --- channel plugin (v0.7.13.30: independent switch, default OFF) -------
 
-    def test_option_unset_defaults_on_and_activates(self) -> None:
-        """GaRoN 2026-10-12: unset = ON out of the box — the binding is the
-        addon core surface (user vision: harness agents usable in the
-        dashboard without setup). Protection is the explicit OFF switch
-        (real opt-out) + the fail-open claim path."""
+    def test_option_unset_defaults_off_and_deploys_nothing(self) -> None:
+        """v0.7.13.30, Owner decision 2026-10-15: ALL acp(x) switches default
+        OFF — unset env = not opted in. No deploy, no openclaw.json
+        registration, and the writer is NOT pulled along (independent
+        switches)."""
         os.environ.pop("ACP_DASHBOARD_BINDING_ENABLED", None)
         self.assertTrue(helper.deploy_plugins())
-        dst = self.config_dir / "plugins" / helper.PLUGIN_NAME
-        self.assertTrue((dst / "openclaw.plugin.json").is_file())
-        self.assertTrue(self.read_entry().get("enabled") is True)
-        # Legacy Phase 2.15 comment removed: writer follows the (on) option.
-        self.assertTrue(
-            self.read_entry(helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME).get("enabled") is True
+        self.assertFalse(
+            (self.config_dir / "plugins" / helper.PLUGIN_NAME).exists()
+        )
+        self.assertNotIn("enabled", self.read_entry())
+        self.assertFalse(
+            (self.config_dir / "plugins"
+             / helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME).exists()
         )
 
     def test_option_false_is_real_optout(self) -> None:
@@ -209,13 +211,19 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
 
     # --- Repo-Split A2: harness-config-writer gating ------------------------
 
-    def test_writer_follows_binding_option_by_default(self) -> None:
-        """UNSET writer option = follows the channel option (behavior-preserve
-        for setups that relied on the previous bundled one-plugin surface)."""
+    def test_writer_stays_off_when_binding_on_and_writer_unset(self) -> None:
+        """v0.7.13.30, Owner decision 2026-10-15: writer and binding are
+        INDEPENDENT opt-in switches — binding=on does NOT pull the writer
+        in when the writer switch is unset (supersedes the old
+        follow-the-channel default)."""
         os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "true"
         os.environ.pop("HARNESS_CONFIG_WRITER_ENABLED", None)
         self.assertTrue(helper.deploy_plugins())
-        self.assertTrue(self.read_entry(helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME).get("enabled") is True)
+        self.assertTrue(self.read_entry().get("enabled") is True)
+        self.assertFalse(
+            (self.config_dir / "plugins"
+             / helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME).exists()
+        )
 
     def test_writer_off_override_wins_when_binding_on(self) -> None:
         """Explicit writer=false veto beats binding=on (operator veto)."""
@@ -266,7 +274,13 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
     # --- Repo-Split A2: legacy harnesses config key migration ---------------
 
     def test_legacy_harnesses_key_is_migrated(self) -> None:
+        """v0.7.13.30: the migration is DECOUPLED from the writer gate — it
+        runs whenever the binding deploys, because the legacy key breaks the
+        binding manifest schema. The data move lands in the writer entry even
+        with the writer switch off, but WITHOUT an enabled flag: the deploy
+        gate owns enable decisions (independent switches)."""
         os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "true"
+        os.environ.pop("HARNESS_CONFIG_WRITER_ENABLED", None)
         legacy = {"codex": {"model": "m1", "baseUrl": "http://ollama.internal:11434"}}
         path = self.config_dir / "openclaw.json"
         path.write_text(json.dumps({
@@ -281,9 +295,13 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
         self.assertEqual(
             entries[helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME]["config"]["harnesses"],
             legacy,
-            "legacy key must be copied to the writer entry",
+            "legacy key must be copied to the writer entry (data move, not enable)",
         )
-        self.assertTrue(entries[helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME]["enabled"] is True)
+        self.assertNotIn(
+            "enabled",
+            entries[helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME],
+            "writer switch is OFF — no enable decision by the migration",
+        )
         self.assertNotIn(
             "harnesses",
             entries[helper.PLUGIN_NAME].get("config", {}),

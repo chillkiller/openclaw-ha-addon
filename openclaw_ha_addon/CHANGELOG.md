@@ -17,6 +17,8 @@
 - Ops: das First-Enable-Backup-Manifest (11.10. 16:31) wurde archiviert (`manifest.json.archived-pre-gamma-20261011`) — der Helper nimmt beim nächsten Enabled-Boot einen FRISCHEN Snapshot des γ-Stands (der alte Stand hätte OFF-Restore die 7 env-Files löschen + 24→1 Modelle einkürzen lassen).
 - Ops-Wissen: die Crash-Kaskade begann 13.10. 14:03 lok. mit dem .26-Deploy (erster 120-s-Timeout schon auf .26); der Writer ist exkulpiert (Plugin-Load ~150 s > Watchdog-Fenster); exit 137 = Watchdog-Stop-Kill, kein OOM; supervisor-Log-Stamps nach jedem Supervisor-Boot +2 h zweideutig (`docker logs -t` ist verlässlich).
 
+- **acp(x)-Schalter-Reset (Owner-Direktive 2026-10-15):** `acpx_enabled` ist der **MASTER-Gate** (Owner-Klarstellung): `acpx_enabled=false` ⇒ KEINE Config-Übertragung für writer/binding (deren Schalter wirkungslos, sichtbare INFO-Zeile); `acpx_enabled=true` ⇒ Freigabe — dann entscheiden `harness_config_writer_enabled` / `acp_dashboard_binding_enabled` (beide default **false**) eigenständig, untereinander entkoppelt (Tri-state UNSET-follow des Writers retired). Ohne `harness_base_url` werden alle Harness-Gruppen-Werte IGNORIERT, nur die Schalter gelten (BASE_URL-Gate-Zweig in run.sh + INFO-Zeile). Helper-Bootstrap läuft nur hinter dem Master; die ACPX-Infrastruktur (npm project + openclaw.json-acp-Patch) bei jedem Helper-Run mitgebaut (Custom-Plugins ohne ACPX nutzlos). writer=true kopiert configs, überschreibt NIE Einträge ohne die gesetzte BASE_URL.
+
 ### Verification
 - vitest Writer 81/81 (r2-Anker +5) + vitest Binding 231/231, tsc strict 0, Python-Helper 46/46, `bash -n run.sh` OK.
 

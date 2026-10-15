@@ -403,10 +403,19 @@ All of these live in the collapsible `harness` section (top-level switches
 `acpx_enabled` / `harness_config_writer_enabled` sit above it). The backend is
 any OpenAI-compatible API — not just Ollama. Old names still coalesce on read.
 
+The three acp(x) switches — `acpx_enabled`, `harness_config_writer_enabled`,
+`acp_dashboard_binding_enabled` — all default OFF (v0.7.13.30).
+`acpx_enabled` is the MASTER gate: with it off, NO writer/binding deploy or
+config transfer happens, whatever their switches say. With it on, the
+writer and the binding act independently of EACH OTHER (the writer neither
+follows nor drives the binding) and the ACPX infrastructure is set up.
+Without `harness_base_url` every value in
+this group is INERT — only the switches apply.
+
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `acpx_enabled` | bool | `true` | Top level. Install the managed ACPX npm project and wrapper launchers so OpenClaw can run coding agents (Claude Code, Codex, OpenCode) through the local ACPX backend. Existing user-configured agents are preserved |
-| `harness_config_writer_enabled` | bool (tri-state) | UNSET | Top level. Deploy + register the bundled harness-config-writer plugin; UNSET follows `acp_dashboard_binding_enabled`, `true` forces it on, `false` keeps it off |
+| `acpx_enabled` | bool | `false` | Top level. MASTER gate for the whole acp(x) surface: `false` = no writer/binding deploy or config transfer (their switches are inert); `true` = installs the managed ACPX npm project and wrapper launchers so OpenClaw can run coding agents (Claude Code, Codex, OpenCode) through the local ACPX backend, and the custom plugin switches become effective. Existing user-configured agents are preserved |
+| `harness_config_writer_enabled` | bool | `false` | Top level. Deploy + register the bundled harness-config-writer plugin. Fine switch within the `acpx_enabled` master gate (only effective while it is on), independent of `acp_dashboard_binding_enabled` (no coupling); needs `harness_base_url` to actually generate anything (empty base URL = complete no-op). Copies but never overwrites: only byte-identical previously generated entries are refreshed — operator hand-edits and entries without the configured base URL are left intact |
 | `harness_base_url` | string | _(empty)_ | Backend endpoint for all local-provider harnesses (any OpenAI-compatible API, e.g. `http://198.51.100.20:11434`). Used by the ACPX wrappers when no real `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` is set (ignored per provider once real keys exist in `gateway_env_vars`). Doubles as the harness-config-writer ACTIVATOR: empty = nothing generated. Built-in fallback when unset: `http://localhost:11434` |
 | `harness_api_key` | string | _(empty)_ | API key handed to generated harness entries (shared writer default) |
 | `harness_model` | string | _(empty)_ | Shared harness default model; applies to all non-excluded harnesses. Empty = per-harness defaults win |
@@ -416,7 +425,7 @@ any OpenAI-compatible API — not just Ollama. Old names still coalesce on read.
 | `harness_codex_model` | string | *(empty)* | Override the model the Codex (audit) harness uses (default `kimi-k2.7-code:cloud`). Empty = built-in default |
 | `harness_excluded_agents` | string | *(empty)* | Comma-separated harness ids excluded from the shared defaults above (e.g. `codex,opencode`) |
 | `additional_agents` | string | *(empty)* | Comma-separated extra ACP harness names to allow besides the bundled `claude`/`codex`/`opencode`/`openclaw` (see [Custom ACP harnesses](#6f-custom-acp-harnesses-advanced)) |
-| `acp_dashboard_binding_enabled` | bool | `true` | Deploy + register the bundled acp-dashboard-binding plugin (resolves dashboard/webchat conversations to ACP harness sessions) |
+| `acp_dashboard_binding_enabled` | bool | `false` | Deploy + register the bundled acp-dashboard-binding plugin (resolves dashboard/webchat conversations to ACP harness sessions). Fine switch within the `acpx_enabled` master gate (only effective while it is on), independent of `harness_config_writer_enabled` (no coupling) |
 
 ---
 

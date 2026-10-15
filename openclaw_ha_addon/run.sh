@@ -166,23 +166,34 @@ export OLLAMA_BASE_URL="${HARNESS_BASE_URL:-http://localhost:11434}"
 # GaRoN 2026-10-10): forwarded as env for oc_acpx_helper.py + acpx templates.
 # v0.7.13.30 renames (harness_* / additional_agents) coalesced with the legacy
 # ollama_acp_* / acp_additional_allowed_agents keys for pre-migration stores.
-export OLLAMA_CODEX_MODEL=$(jq -r '(.harness_codex_model // "" | select(length > 0)) // .ollama_acp_codex_model // empty' "$OPTIONS_FILE")
-export OLLAMA_OPENCODE_MODEL=$(jq -r '(.harness_opencode_model // "" | select(length > 0)) // .ollama_acp_opencode_model // empty' "$OPTIONS_FILE")
-# γ (2026-10-13): third flagship harness default (claude) — mirrors the
-# helper's _writer_model_for claude ladder (OLLAMA_CLAUDE_MODEL → legacy
-# OLLAMA_ACP_MODEL → default glm-5.3-flash:cloud).
-export OLLAMA_CLAUDE_MODEL=$(jq -r '(.harness_claude_model // "" | select(length > 0)) // .ollama_acp_claude_model // empty' "$OPTIONS_FILE")
-export ACP_ADDITIONAL_ALLOWED_AGENTS=$(jq -r '(.additional_agents // "" | select(length > 0)) // .acp_additional_allowed_agents // empty' "$OPTIONS_FILE")
-# Phase 2.15 (GaRoN): plugin deploy is opt-in — same env-forwarding pattern as
-# ACP_ADDITIONAL_ALLOWED_AGENTS. GaRoN 2026-10-12 semantics: unset = binding
-# ON out of the box (addon core surface); explicit false = REAL opt-out (the
-# helper flips plugins.entries to enabled=false and strips the channel config
-# block so the boot config stays valid).
+# v0.7.13.30 gating (Owner decision 2026-10-15): with NO harness_base_url set,
+# EVERY value below the switches in the acp/harness world is IGNORED — only
+# the switches apply (a harness world without a backend endpoint has no
+# meaning). The helpers keep their built-in defaults for wrapper infra.
+if [ -n "$HARNESS_BASE_URL" ]; then
+  export OLLAMA_CODEX_MODEL=$(jq -r '(.harness_codex_model // "" | select(length > 0)) // .ollama_acp_codex_model // empty' "$OPTIONS_FILE")
+  export OLLAMA_OPENCODE_MODEL=$(jq -r '(.harness_opencode_model // "" | select(length > 0)) // .ollama_acp_opencode_model // empty' "$OPTIONS_FILE")
+  # γ (2026-10-13): third flagship harness default (claude) — mirrors the
+  # helper's _writer_model_for claude ladder (OLLAMA_CLAUDE_MODEL → legacy
+  # OLLAMA_ACP_MODEL → default glm-5.3-flash:cloud).
+  export OLLAMA_CLAUDE_MODEL=$(jq -r '(.harness_claude_model // "" | select(length > 0)) // .ollama_acp_claude_model // empty' "$OPTIONS_FILE")
+  export ACP_ADDITIONAL_ALLOWED_AGENTS=$(jq -r '(.additional_agents // "" | select(length > 0)) // .acp_additional_allowed_agents // empty' "$OPTIONS_FILE")
+  # V36.2 (2026-10-13): utility_model → agents.defaults.utilityModel (helper
+  # merge_utility_model). UNSET/empty = no write — operator owns the value.
+  export OPENCLAW_UTILITY_MODEL=$(jq -r '.utility_model // empty' "$OPTIONS_FILE" 2>/dev/null)
+else
+  echo "INFO: harness_base_url not configured — harness-group values (models, utility_model, additional_agents) are IGNORED; only the switches apply"
+fi
+# Phase 2.15 (GaRoN): plugin deploy gating — v0.7.13.30: INDEPENDENT switches,
+# all default OFF (unset/false = not opted in; no coupling between writer and
+# binding — neither needs the other). Explicit true deploys; explicit false =
+# real opt-out (the binding helper flips the entries gate and strips the
+# channel config block so the boot config stays valid).
 export ACP_DASHBOARD_BINDING_ENABLED=$(jq -r '.acp_dashboard_binding_enabled // empty' "$OPTIONS_FILE" 2>/dev/null)
 # Repo-Split A2 (2026-10-11): the harness-config-writer is its own plugin.
-# UNSET default in the helper = follows acp_dashboard_binding_enabled (so
-# existing setups keep the previous bundled behavior); explicit true/false
-# overrides it (true = writer runs even with the channel plugin off).
+# v0.7.13.30: INDEPENDENT switch, default false (was: UNSET followed
+# acp_dashboard_binding_enabled). It only runs when explicitly true AND does
+# nothing without HARNESS_WRITER_BASE_URL below (base_url = activator).
 export HARNESS_CONFIG_WRITER_ENABLED=$(jq -r '.harness_config_writer_enabled // empty' "$OPTIONS_FILE" 2>/dev/null)
 
 # Kammerjäger #1 (Restart-Log 2026-10-11): startup trace — per-phase/plugin
@@ -203,11 +214,9 @@ export HARNESS_WRITER_MODEL=$(jq -r '.harness_model // empty' "$OPTIONS_FILE" 2>
 export HARNESS_WRITER_API_KEY=$(jq -r '.harness_api_key // empty' "$OPTIONS_FILE" 2>/dev/null)
 export HARNESS_WRITER_EXCLUDED_AGENTS=$(jq -r '.harness_excluded_agents // empty' "$OPTIONS_FILE" 2>/dev/null)
 
-# V36.2 (2026-10-13): utility_model → agents.defaults.utilityModel (helper
-# merge_utility_model). Carries the gateway's internal utility callouts (the
-# session observer's strict-JSON run digests first among them). UNSET/empty =
-# no write — operator owns the value (never auto-cleared).
-export OPENCLAW_UTILITY_MODEL=$(jq -r '.utility_model // empty' "$OPTIONS_FILE" 2>/dev/null)
+# (utility_model → OPENCLAW_UTILITY_MODEL is exported in the BASE_URL-gated
+# block above: without a harness_base_url it is ignored like the rest of the
+# acp/harness group values — only the switches apply.)
 
 # Local-model provider routing for ACP harnesses (verified 2026-10-09):
 # The acpx generated codex/claude wrappers passthrough this ambient env, so
@@ -235,8 +244,10 @@ ABORT_ON_UPGRADE_BACKUP_FAILURE=$(jq -r 'if has("abort_on_upgrade_backup_failure
 UPGRADE_BACKUP_KEEP=$(jq -r 'if has("upgrade_backup_keep") and (.upgrade_backup_keep != null) then (.upgrade_backup_keep|tonumber) else 3 end' "$OPTIONS_FILE")
 GW_DOCTOR_REPAIR_MAX=$(jq -r 'if has("gateway_doctor_repair_max") and (.gateway_doctor_repair_max != null) then (.gateway_doctor_repair_max|tonumber) else 3 end' "$OPTIONS_FILE")
 
-# ACPX harnesses (Claude Code, Codex, OpenCode)
-ACPX_ENABLED=$(jq -r 'if has("acpx_enabled") then (.acpx_enabled|tostring) else "true" end' "$OPTIONS_FILE")
+# ACPX harnesses (Claude Code, Codex, OpenCode). Default OFF (v0.7.13.30):
+# all acp(x) switches are opt-in (acpx_enabled / harness_config_writer_enabled /
+# acp_dashboard_binding_enabled, each independent).
+ACPX_ENABLED=$(jq -r 'if has("acpx_enabled") then (.acpx_enabled|tostring) else "false" end' "$OPTIONS_FILE")
 
 export TZ="$TZNAME"
 
@@ -1347,10 +1358,14 @@ elif [ "$AUTO_CONFIGURE_MCP" = "true" ] && [ -z "$HA_TOKEN" ]; then
 fi
 
 # ------------------------------------------------------------------------------
-# Initialize ACPX harnesses (Claude Code, Codex, OpenCode)
-# This sets up the wrapper launchers and the managed npm project so that the
-# local ACPX harness backend can be used. Agent definitions are NOT modified
-# here; existing user-configured coding agents are preserved.
+# Initialize acp(x) components (ACPX infra + custom plugins)
+# v0.7.13.30: acpx_enabled is the MASTER gate. acpx_enabled=false means NO
+# writer and NO binding deploy / config transfer, whatever their own switches
+# say. With the master on, the two plugin switches act independently of each
+# other (writer neither follows nor drives binding); the ACPX infrastructure
+# (managed npm project + openclaw.json acp patch) is always set up when the
+# helper runs. Agent definitions are NOT modified here; existing
+# user-configured coding agents are preserved.
 # ------------------------------------------------------------------------------
 ACPX_HELPER_PATH="/oc_acpx_helper.py"
 if [ ! -f "$ACPX_HELPER_PATH" ] && [ -f "$(dirname "$0")/oc_acpx_helper.py" ]; then
@@ -1358,16 +1373,19 @@ if [ ! -f "$ACPX_HELPER_PATH" ] && [ -f "$(dirname "$0")/oc_acpx_helper.py" ]; t
 fi
 if [ "$ACPX_ENABLED" = "true" ] || [ "$ACPX_ENABLED" = "1" ]; then
   if [ -f "$ACPX_HELPER_PATH" ]; then
-    echo "INFO: Initializing ACPX harnesses..."
+    echo "INFO: Initializing acp(x) components (acpx master on; binding/writer per their own switches)..."
     # GATEWAY_INTERNAL_PORT is exported above (run.sh owns the config
     # bootstrap; the helper only patches the acp section).
     python3 "$ACPX_HELPER_PATH" || \
-      echo "ERROR: ACPX harness initialization failed (exit $?) — Claude/Codex/OpenCode harnesses unavailable this boot"
+      echo "ERROR: acp(x) initialization failed (exit $?) — see per-switch WARN/ERROR lines above"
   else
-    echo "WARN: ACPX helper not found; skipping ACPX harness initialization"
+    echo "WARN: ACPX helper not found; skipping acp(x) initialization"
   fi
 else
-  echo "INFO: ACPX harnesses disabled (acpx_enabled=$ACPX_ENABLED)"
+  echo "INFO: acpx_enabled off — no ACP initialization; writer/binding config transfer stays OFF (master gate)"
+  case "$ACP_DASHBOARD_BINDING_ENABLED$HARNESS_CONFIG_WRITER_ENABLED" in
+    *true*|*True*|*1*) echo "INFO: acp_dashboard_binding_enabled/harness_config_writer_enabled set, but acpx_enabled=false — plugin config transfer remains OFF (set acpx_enabled=true to enable)" ;;
+  esac
 fi
 
 start_openclaw_runtime() {

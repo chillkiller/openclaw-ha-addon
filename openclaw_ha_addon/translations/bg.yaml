@@ -54,18 +54,26 @@ configuration:
           Context Protocol. Изключете само ако управлявате mcporter конфигурацията ръчно.
   acpx_enabled:
     name: ACPX инфраструктура
-    description: Инсталиране на ACPX wrapper стартери (Claude Code, Codex, OpenCode), за да може OpenClaw да изпълнява кодинг
-      агенти през локалния ACPX бекенд. Съществуващо потребителски конфигурирани кодинг агенти се запазват без промяна.
+    description: Инсталиране на ACPX wrapper стартери (Claude Code, Codex, OpenCode), за да може OpenClaw да изпълнява кодинг агенти
+      през локалния ACPX бекенд. Съществуващо потребителски конфигурирани кодинг агенти се запазват без промяна.
+      Майстор-ключ на цялата acp(x) повърхност — ИЗКЛ. (по подразбиране) = без прехвърляне на конфигурация за
+      Writer/Binding, техните ключове остават инертни; ВКЛ. = разрешение — ключовете Writer/Binding решават тогава
+      самостоятелно.
   harness_config_writer_enabled:
     name: Harness Config Writer
     description: Опционално (Repo-Split A2) - Разгръщане + регистриране на вградения harness-config-writer плъгин (генерира
-      harness-нативната файл/env конфигурация от config.harnesses). БЕЗ СТОЙНОСТ следва ключа на ACP Dashboard Binding; ВКЛ.
-      го принуждава дори с изключено binding; ИЗКЛ. го държи трайно изключен. Първата активирана сесия прави снапшот на
-      управляваните harness файлове — повторното изключване автоматично възстановява оригиналите.
+      harness-нативната файл/env конфигурация от config.harnesses). Независим opt-in ключ, по подразбиране ИЗКЛ. — нито
+      следва, нито управлява ACP Dashboard Binding; действа само при включен acpx_enabled (майстор); за реално генериране
+      е необходима harness_base_url (празно = пълен no-op). Копира, но никога не презаписва — обновяват се само
+      byte-идентични, преди това ГЕНЕРИРАНИ записи; ръчните редакции на оператора и записите без конфигурирания base URL
+      остават недокоснати. Първата активирана сесия прави снапшот на управляваните harness файлове — повторното изключване
+      автоматично възстановява оригиналите.
   harness:
     name: Harness (кодинг бекендове)
-    description: Споделени provider/модел стойности по подразбиране за вградените acpx harnesses (Claude Code, Codex, OpenCode)
-      и harness-config-writer. Ендпойнтът е всеки OpenAI-съвместим API — не само Ollama.
+    description: Споделени provider/модел стойности по подразбиране за вградените acpx harnesses (Claude Code, Codex, OpenCode) и
+      harness-config-writer. Ендпойнтът е всеки OpenAI-съвместим API — не само Ollama. Без зададена harness_base_url
+      всички стойности в тази група са INERT — важат само ключовете (моделите, агентите и utility_model се прилагат чак
+      със base URL).
     fields:
       harness_base_url:
         name: Базов URL на Harness
@@ -107,8 +115,9 @@ configuration:
       acp_dashboard_binding_enabled:
         name: ACP Dashboard Binding
         description: Опционално (Фаза 2.15) - Разгръщане + регистриране на вградения acp-dashboard-binding плъгин (съпоставя
-          dashboard/webchat разговори с ACP harness сесии). ВКЛ. по подразбиране — binding-ът е основната повърхност на добавката;
-          ИЗКЛ. за реален операторски opt-out.
+          dashboard/webchat разговори с ACP harness сесии). Независим opt-in ключ, по подразбиране ИЗКЛ. (v0.7.13.30) — нито
+          следва, нито управлява Harness Config Writer; действа само докато acpx_enabled=true (майстор-ключ); иначе
+          прехвърлянето на конфигурация остава изключено.
   gateway_ext:
     name: Gateway (external)
     description: URLs, trusted proxies and allowed origins for gateway access
