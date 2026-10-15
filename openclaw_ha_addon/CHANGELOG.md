@@ -1,3 +1,20 @@
+## [0.7.13.31] - 2026-10-16
+
+### Fixed
+- **ciao-mDNS-Self-Conflict-Storm (Bug ②, Root-Cause + Build-Patch):** `@homebridge/ciao` (1.3.12, gebundelt via openclaw) keyed `CiaoService.serviceRecords.reverseAddressPTRs` mit den RAW `os.networkInterfaces()`-Strings (Node FULL-Form, z. B. `fd12:8ca5:a145:0:872:…`), während inbound AAAA-rdata via `shortenIPv6` dekodiert (RFC-komprimiert, `fd12:8ca5:a145::…`). `hasAddress()` = raw-string Map-Lookup ⇒ ciao's EIGENE ULA-Adresse (FRITZ!Box-Default-ULA `fd12:8ca5:a145::/48`, jeder LAN-Adapter) sah im RFC-6762-9-Conflict-Check FOREIGN aus ⇒ jede eigene Echo-Reflection = "conflicting record" ⇒ probe→rename (`Name (N)`)→re-publish→echo→… Endlos-Storm (~1 rename/s gemessen; live-Instanz erreichte "(76)" in ~4.5 h). Fix: Build-Time-Dist-Patch `ciao-mdns-guard/apply-ciao-mdns-guard-patch.mjs` normalisiert die Map-Keys auf die dekodierte Form (`shortenIPv6∘enlargeIPv6`) — Foreign-Claims konfliktieren weiterhin, nur das Selbst-Reflexions-Falsch-Positiv verschwindet; A-Records (IPv4) unberührt. Verankert wie der unicode-guard-Patch (fail-loud, idempotent, `node --check`, Universality-Sweep; akzeptiert auch hoisted Dependency-Layouts). Live-verifiziert: 0 Konflikte in beiden Modis nach Patch, A/B-Beleg ~1 rename/s davor; wirkt mit dem nächsten Gateway-Restart (neues Image).
+- **Boot-Heal-Timing (Bug ③, §23.3):** der Single-Shot-Boot-Sweep beim `gateway_start` fiel auf großen Stores wholesale durch (alle Agents noch in der Background-Admission — "5 second foreground startup budget elapsed" ⇒ alle settle/listSessionEntries UNAVAILABLE) ⇒ 9 Legacy-Stamps blieben ungeheilt. Fix: `runBootHealWithRetries` (bounded Retry-Treiber, Delays 0/15/30/60/120/240 s; Failure-Signal = jede logger.warn im Attempt; Legs bleiben idempotent; `bootCutoff` wird EINMAL vor Attempt 1 erfasst) — der `gateway_start`-Handler ist async und startet den Treiber DETACHED (der Hook-Runner wird nie von einem Retry-Sleep gehalten); Give-up-Log verweist auf `gateway_start`-Re-Attempt bzw. `/config/pushbug-tools/`-Scripte.
+
+### Changed
+- **OpenClaw-Pin 2026.10.2 → 2026.10.3.** Re-Verifikationen gegen den 10.3-Tarball: unicode-guard-Patch applied CLEAN (0 Remanenten, Universality-Sweep über 9843 Files); agentId-Fix weiterhin nativ fixiert (`dist/openai-http-j90i3YZW.mjs`, `resolveGatewayRequestContext`-Pfad — comment im Dockerfile verlängert); ciao weiterhin 1.3.12 (Bug intact ⇒ ciao-mdns-guard-Patch nötig).
+- **ttyd-Reviver-Forensics (Bug ①, Mitigation + Beweissammlung):** Root-Cause weiter offen — ttyd 1.7.7 kann ALIVE-but-not-listening stehen (belegt: `stop_stale_ttyd` loggt "Stopping previous ttyd process" nur bei erfolgreichem `kill -0`, d. h. JEDE Revive-Entscheidung traf einen lebenden Prozess; Hang-Rate skaliert sichtbar mit aktiver Terminal-Nutzung). Der 30-s-Reviver hält die Fläche; neu: beim Revive wird der vollständige Forensic-Snapshot (stat/wchan/threads/fd-count pro Thread) in den Container-Log gedumpt, statt dass die Beweislage wieder verdampft.
+
+### Verification
+- vitest Binding 234/234 (+3 Retry-Treiber-Anker: warn-free single run; Re-run-bis-warnfrei mit Live-2026-10-15-Motiv; gethrowte runOnce = 3 Attempts + "giving up"), vitest Writer 81/81, `tsc --noEmit` strict 0 beide Plugins, `bash -n run.sh` OK, ciao-mdns-guard: 1 File gepatcht + idempotent (Live) + 1 File gepatcht (10.3-Tree, hoisted layout).
+
+### Known issues (nicht in .31)
+- **Slow-Boot (Bug ④):** Kaltstart beim .30-Deploy real 367 s (>2× über dem Supervisor-Start-Fenster-Budget) — der `watchdog_start_seconds`-Komplex bleibt eigene Folgearbeit (Kandidaten: ttyd-Boot-Gate 30 s, Plugin-Load ~150 s, Gateway-Start; `startup_trace`-Option als Post-Mortem-Lage).
+- Translation-Drift bg/es/pl/pt-BR (options-Listen) — preexisted, Backlog.
+
 ## [0.7.13.30] - 2026-10-14
 
 ### Fixed
