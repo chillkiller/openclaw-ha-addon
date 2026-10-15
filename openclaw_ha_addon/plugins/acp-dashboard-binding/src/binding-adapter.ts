@@ -492,7 +492,8 @@ export function createDashboardBindingAdapter(options: DashboardBindingAdapterOp
       const channel = normalizeChannelId(ref.channel);
       const accountId = normalizeAccountId(ref.accountId);
       const bound = findExplicit(channel, accountId, conversationId);
-      if (bound) return projectRecordForDispatchMode(bound);
+      if (bound)
+        return await awaitNativeDispatchReadiness(projectRecordForDispatchMode(bound));
       // §4.2: the mid-cascade row-miss delegation hop goes through the
       // bridge's EXPORTED async resolver (same deterministic core as
       // resolveDashboardBinding, mirrored by the sync variant above).
