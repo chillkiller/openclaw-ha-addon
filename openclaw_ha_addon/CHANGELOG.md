@@ -8,6 +8,7 @@
 ### Added
 - **Multi-Model γ re-landed** (Cherry-Picks `e6dbb18` + `7a0351e` auf main): alle openclaw.json-Provider-Modelle wandern in die Harness-Surfaces (codex-[profiles.*], opencode models-Map, claude `CLAUDE_MODEL_CONFIG`, ENV-Kommentarlisten); das Add-on-Modell bleibt Default; Signatur-Semantik (`# harness-config-writer (generated)`) macht writer-generierte config.toml bytes-sync-refreshbar.
 - **γ.1 codex `model_catalog_json`:** Operator-`contextWindow`-Metadaten aus openclaw.json → `/config/.codex/model-catalog.json` (binary-verifiziertes Entry-Template); fixt die codex-Warnung "Model metadata for `X` not found" (65× belegt) für direkte CLI-Nutzer. ACP-Sessions bleiben bundled-Katalog (Key nicht acpx-vererbt — upstream-Watchlist).
+- **Binding-Pack gemerged** (`feature/binding-native-unarchive` @ 2a7ea59, Session 4b5b8fbd; Merge `c2ecc3e`): §23 **native-mode un-archive** — Boot-Heal der legacy γ-Stamps im Native-Modus, es werden (anders als im Claim-Modus) keine Stamps mehr geschrieben; §23.2/**V39** — derselbe Boot-Heal räumt `spawnedBy`-Over-Hiding-Stamps auf der Clone-Grammatik auf (5 REAL-Sessions live falsch als Subagenten verhüllt, jetzt sichtbar); §24 **Init-Race** — bounded (10 s) Join der in-flight Provision an 4 async-Ingress-Grenzen, §24 join gap — explizit gebundene Records joinen denselben Readiness-Lauf. Doku: `BRIDGE.md` §23/§23.6/§24; Merge-Szenarien/Restrisiken: `MERGE-HANDOVER.md`. Deploy-Beweis = Boot-Log-Greps (`un-archived 4 legacy γ stamp(s)`, `cleared spawnedBy … 5 overstamped work session(s)`) + Smoke `/acp status`/`/reset` auf 60bac3d6.
 - Nota für Bestands-Setups mit `harness_base_url`: der Helper generiert ab γ einen claude-Entry by Default (Ausschluss via `harness_excluded_agents`).
 
 ### Changed
@@ -16,7 +17,7 @@
 - Ops-Wissen: die Crash-Kaskade begann 13.10. 14:03 lok. mit dem .26-Deploy (erster 120-s-Timeout schon auf .26); der Writer ist exkulpiert (Plugin-Load ~150 s > Watchdog-Fenster); exit 137 = Watchdog-Stop-Kill, kein OOM; supervisor-Log-Stamps nach jedem Supervisor-Boot +2 h zweideutig (`docker logs -t` ist verlässlich).
 
 ### Verification
-- vitest 76/76 (inkl. neuer M1 iii/iv/v, M2-Entry, M3-Mode-Tests), tsc strict 0, Python-Helper 46/46, `bash -n run.sh` OK.
+- vitest Writer 81/81 (r2-Anker +5) + vitest Binding 231/231, tsc strict 0, Python-Helper 46/46, `bash -n run.sh` OK.
 
 ## [0.7.13.29] - 2026-10-14
 
