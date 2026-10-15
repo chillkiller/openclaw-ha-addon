@@ -646,6 +646,66 @@ export async function sweepOwnedStuckSessions(params: {
 }
 
 /**
+ * §23 boot-heal retry schedule (drives runBootHealWithRetries below).
+ * Attempt 0 runs immediately (pre-.31 single-shot semantic), then backs off.
+ * Total budget ≈ 7:45 — LIVE 2026-10-15: the gateway's 5-second foreground
+ * startup budget elapses for EVERY agent on a big store and admission
+ * (inspection continues in the background) can keep the session APIs
+ * UNAVAILABLE for minutes after gateway_start, so a generous-but-bounded
+ * schedule is what gets the heal actually applied on the FIRST boot instead
+ * of waiting for the next restart.
+ */
+export const BOOT_HEAL_RETRY_DELAYS_MS: readonly number[] = [0, 15_000, 30_000, 60_000, 120_000, 240_000];
+
+/**
+ * Boot-heal retry driver: runs `runOnce` on BOOT_HEAL_RETRY_DELAYS_MS until an
+ * attempt finishes without a single logger.warn call. Any warn inside runOnce
+ * (a failed session listing, a failed settle, a failed patch) is treated as
+ * "the store is not usable yet" — the agent-admission UNAVAILABLE shape. All
+ * sweep legs are idempotent, so re-attempting is safe; the boot cutoff (no
+ * in-process run can predate it) is captured ONCE by the caller BEFORE the
+ * first attempt — later attempts MUST hand the SAME cutoff to
+ * sweepOwnedStuckSessions so a host-recovery write racing the retries is
+ * never misread as a stuck orphan. The last attempt that still fails leaves
+ * one summary warn; the next gateway_start (or the pushbug-tools scripts)
+ * remains the recovery path.
+ */
+export async function runBootHealWithRetries(params: {
+  runOnce: (logger: HarnessReplyClaimLogger) => Promise<void>;
+  logger: HarnessReplyClaimLogger;
+  delaysMs?: readonly number[];
+}): Promise<void> {
+  const delays = params.delaysMs ?? BOOT_HEAL_RETRY_DELAYS_MS;
+  for (let attempt = 0; attempt < delays.length; attempt += 1) {
+    if (delays[attempt] > 0) await new Promise((resolve) => setTimeout(resolve, delays[attempt]));
+    let failures = 0;
+    const attemptLogger: HarnessReplyClaimLogger = {
+      debug: (message) => params.logger.debug?.(message),
+      warn: (message) => {
+        failures += 1;
+        params.logger.warn?.(message);
+      },
+    };
+    try {
+      await params.runOnce(attemptLogger);
+    } catch (error) {
+      failures += 1;
+      params.logger.warn?.(`[acp-dashboard-binding] boot heal attempt failed — ${error instanceof Error ? error.message : String(error)}`);
+    }
+    if (failures === 0) return;
+    if (attempt < delays.length - 1) {
+      params.logger.warn?.(
+        `[acp-dashboard-binding] boot heal incomplete (attempt ${attempt + 1}, ${failures} failed leg(s)) — retrying in ${Math.round(delays[attempt + 1] / 1000)}s`,
+      );
+    } else {
+      params.logger.warn?.(
+        `[acp-dashboard-binding] boot heal incomplete (attempt ${attempt + 1}, ${failures} failed leg(s)) — giving up; the next gateway_start re-attempts (or /config/pushbug-tools/ scripts)`,
+      );
+    }
+  }
+}
+
+/**
  * Native-mode boot heal (§23 reset-bug, GaRoN directive 2026-10-14): clears
  * OUR γ archive stamps from OUR owned key shapes at gateway_start so the host
  * never refuses dispatch on an archived binding target again. The claim path

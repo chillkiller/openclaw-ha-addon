@@ -18,6 +18,7 @@ import {
   buildClaimSettlePatch,
   buildCloneHiddenPatch,
   isOursCloneArchive,
+  runBootHealWithRetries,
   settleClaimedTurnSessions,
   stampCloneHidden,
   stampSubagentProvenance,
@@ -635,3 +636,67 @@ describe("BRIDGE §23.2/V39 (native dispatch mode): unhideOverstampedCloneSessio
     expect((store.entries[stamped] as SettleSessionEntryLike).spawnedBy).toBe("agent:claude:main");
   });
 });
+
+describe("runBootHealWithRetries ([§23.3/.31] boot-heal retry driver)", () => {
+  it("runs once and returns when the attempt completes without warns", async () => {
+    const warns: string[] = [];
+    const runs: string[][] = [];
+    await runBootHealWithRetries({
+      runOnce: async (logger) => {
+        runs.push(["ok"]);
+        logger.debug?.("fine");
+      },
+      logger: { warn: (m) => warns.push(m) },
+      delaysMs: [0],
+    });
+    expect(runs).toEqual([["ok"]]);
+    expect(warns).toEqual([]);
+  });
+
+  it("re-runs until an attempt is warn-free (agent stores unavailable at gateway_start, LIVE 2026-10-15)", async () => {
+    const warns: string[] = [];
+    let attempt = 0;
+    const store = createFakeStore({
+      entries: {
+        "agent:claude:acp:binding:webchat:default:4b5b8fbd9d36116f": { status: "running", updatedAt: 1 },
+      },
+    });
+    await runBootHealWithRetries({
+      runOnce: async (logger) => {
+        attempt += 1;
+        if (attempt < 3) {
+          logger.warn?.("[acp-dashboard-binding] settle of sweep session agent:claude:… failed — Agent claude has not completed startup inspection and preparation.");
+          return;
+        }
+        await sweepOwnedStuckSessions({ sessionStore: store, agentIds: ["claude"], logger, cutoffMs: 100 });
+      },
+      logger: { warn: (m) => warns.push(m) },
+      delaysMs: [0, 1, 1, 1],
+    });
+    expect(attempt).toBe(3);
+    expect(store.patches).toEqual([expect.objectContaining({ sessionKey: "agent:claude:acp:binding:webchat:default:4b5b8fbd9d36116f" })]);
+    // one incomplete-attempt warn per failed attempt (bounded retries)
+    expect(warns.filter((m) => m.includes("boot heal incomplete"))).toEqual([
+      "[acp-dashboard-binding] boot heal incomplete (attempt 1, 1 failed leg(s)) — retrying in 0s",
+      "[acp-dashboard-binding] boot heal incomplete (attempt 2, 1 failed leg(s)) — retrying in 0s",
+    ]);
+  });
+
+  it("catches thrown runOnce attempts like store failures and stops after the schedule is exhausted", async () => {
+    const warns: string[] = [];
+    let attempts = 0;
+    await runBootHealWithRetries({
+      runOnce: async () => {
+        attempts += 1;
+        throw new Error("Agent claude has not completed startup inspection and preparation.");
+      },
+      logger: { warn: (m) => warns.push(m) },
+      delaysMs: [0, 1, 1],
+    });
+    expect(attempts).toBe(3);
+    expect(warns.filter((m) => m.includes("boot heal attempt failed")).length).toBe(3);
+    expect(warns.some((m) => m.includes("giving up"))).toBe(true);
+  });
+});
+// (runBootHealWithRetries is imported with the other session-settle exports
+// below — see the import block addition.)

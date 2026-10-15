@@ -56,6 +56,7 @@ import {
   type InboundClaimResultLike,
 } from "./src/reply-claim.js";
 import {
+  runBootHealWithRetries,
   sweepOwnedStuckSessions,
   unarchiveOwnedLegacyStamps,
   unhideOverstampedCloneSessions,
@@ -308,70 +309,76 @@ function registerStuckSessionSweep(api: OpenClawPluginApi, sessionStore: Session
     hookName: string,
     handler: (event: unknown, ctx: unknown) => Promise<void>,
   ) => void)("gateway_start", async () => {
-    try {
-      const cfg = api.config as { agents?: { entries?: Record<string, unknown> } } | undefined;
-      const agentIds = Object.keys(cfg?.agents?.entries ?? {}).filter((agentId) =>
-        createConfigHarnessRoster(api.config).isHarnessAgent(agentId),
-      );
-      if (agentIds.length === 0) return;
-      const sweep = sweepOwnedStuckSessions({
-        sessionStore: sessionStore as SweepSessionStoreApi,
-        agentIds,
-        logger: {
-          debug: (message) => api.logger.debug?.(message),
-          warn: (message) => api.logger.warn(message),
-        },
-      });
-      const result = await sweep;
-      if (result.settled.length > 0) {
-        api.logger.info(
-          `[${CHANNEL_ID}] boot sweep settled ${result.settled.length} stuck session(s): ${result.settled.join(", ")}`,
+    // §23 (.31) boot-heal resilience: agent databases keep inspecting in the
+    // background after the gateway's 5-second foreground startup budget
+    // elapses and the session APIs can stay UNAVAILABLE for minutes
+    // (LIVE 2026-10-15: the single-shot sweep ran the moment gateway_start
+    // fired and every leg failed with the admission warning — 9 stamps stayed
+    // un-healed for the whole boot). The heal runs with bounded retries
+    // (runBootHealWithRetries); the legs are idempotent and the cutoff is
+    // captured ONCE here so a host-recovery write racing the retries is never
+    // misread as a stuck orphan. Detached from the handler: the hook runner is
+    // never held while a retry sleeps.
+    const bootCutoff = Date.now();
+    void runBootHealWithRetries({
+      runOnce: async (logger) => {
+        const cfg = api.config as { agents?: { entries?: Record<string, unknown> } } | undefined;
+        const agentIds = Object.keys(cfg?.agents?.entries ?? {}).filter((agentId) =>
+          createConfigHarnessRoster(api.config).isHarnessAgent(agentId),
         );
-      }
-      if (result.archived.length > 0) {
-        api.logger.info(
-          `[${CHANNEL_ID}] boot sweep archived ${result.archived.length} harness clone(s) (γ hidden from standard listings): ${result.archived.join(", ")}`,
-        );
-      }
-      // §23 native-mode un-archive heal: the claim path's per-dispatch
-      // unarchiveHiddenClone never fires in native dispatch mode (zero
-      // inbound_claim events, LIVE 2026-10-14), so legacy γ stamps would keep
-      // refusing dispatch/`/reset` on archived binding targets. gateway_start
-      // is race-free (no in-process turn can predate the process).
-      if (isNativeDispatchModeEnabled()) {
-        const healed = await unarchiveOwnedLegacyStamps({
+        if (agentIds.length === 0) return;
+        const result = await sweepOwnedStuckSessions({
           sessionStore: sessionStore as SweepSessionStoreApi,
           agentIds,
-          logger: {
-            debug: (message) => api.logger.debug?.(message),
-            warn: (message) => api.logger.warn(message),
-          },
+          cutoffMs: bootCutoff,
+          logger,
         });
-        if (healed.restored.length > 0) {
+        if (result.settled.length > 0) {
           api.logger.info(
-            `[${CHANNEL_ID}] native dispatch mode: un-archived ${healed.restored.length} legacy γ stamp(s) (archived targets refuse dispatch): ${healed.restored.join(", ")}`,
+            `[${CHANNEL_ID}] boot sweep settled ${result.settled.length} stuck session(s): ${result.settled.join(", ")}`,
           );
         }
-        // V39 dry-run finding 2026-10-15: spawnedBy provenance stamps hide REAL
-        // work sessions from all listings (readSessionListSelectionFacts:
-        // spawnedBy outside dashboard: rest ⇒ isSubagent). Same boot moment.
-        const unhidden = await unhideOverstampedCloneSessions({
-          sessionStore: sessionStore as SweepSessionStoreApi,
-          agentIds,
-          logger: {
-            debug: (message) => api.logger.debug?.(message),
-            warn: (message) => api.logger.warn(message),
-          },
-        });
-        if (unhidden.unhidden.length > 0) {
+        if (result.archived.length > 0) {
           api.logger.info(
-            `[${CHANNEL_ID}] native dispatch mode: cleared spawnedBy provenance on ${unhidden.unhidden.length} overstamped work session(s) (V39 over-hiding): ${unhidden.unhidden.join(", ")}`,
+            `[${CHANNEL_ID}] boot sweep archived ${result.archived.length} harness clone(s) (γ hidden from standard listings): ${result.archived.join(", ")}`,
           );
         }
-      }
-    } catch (error) {
-      api.logger?.warn?.(`[${CHANNEL_ID}] boot sweep failed — ${errorBrief(error)}`);
-    }
+        // §23 native-mode un-archive heal: the claim path's per-dispatch
+        // unarchiveHiddenClone never fires in native dispatch mode (zero
+        // inbound_claim events, LIVE 2026-10-14), so legacy γ stamps would keep
+        // refusing dispatch/`/reset` on archived binding targets. gateway_start
+        // is race-free (no in-process turn can predate the process).
+        if (isNativeDispatchModeEnabled()) {
+          const healed = await unarchiveOwnedLegacyStamps({
+            sessionStore: sessionStore as SweepSessionStoreApi,
+            agentIds,
+            logger,
+          });
+          if (healed.restored.length > 0) {
+            api.logger.info(
+              `[${CHANNEL_ID}] native dispatch mode: un-archived ${healed.restored.length} legacy γ stamp(s) (archived targets refuse dispatch): ${healed.restored.join(", ")}`,
+            );
+          }
+          // V39 dry-run finding 2026-10-15: spawnedBy provenance stamps hide REAL
+          // work sessions from all listings (readSessionListSelectionFacts:
+          // spawnedBy outside dashboard: rest ⇒ isSubagent). Same boot moment.
+          const unhidden = await unhideOverstampedCloneSessions({
+            sessionStore: sessionStore as SweepSessionStoreApi,
+            agentIds,
+            logger,
+          });
+          if (unhidden.unhidden.length > 0) {
+            api.logger.info(
+              `[${CHANNEL_ID}] native dispatch mode: cleared spawnedBy provenance on ${unhidden.unhidden.length} overstamped work session(s) (V39 over-hiding): ${unhidden.unhidden.join(", ")}`,
+            );
+          }
+        }
+      },
+      logger: {
+        debug: (message) => api.logger.debug?.(message),
+        warn: (message) => api.logger.warn(message),
+      },
+    });
   });
 }
 
