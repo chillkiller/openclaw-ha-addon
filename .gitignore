@@ -24,3 +24,5 @@ INVESTIGATION-*
 # dürfen weder ins Repo noch ins Image (ausgeschlossen via openclaw_ha_addon/.dockerignore).
 openclaw_ha_addon/plugins/*/node_modules/
 openclaw_ha_addon/plugins/*/package-lock.json
+# Lokaler npm-Convenience-Symlink (Binding → Writer node_modules), nie im Repo:
+openclaw_ha_addon/plugins/*/node_modules_deps
