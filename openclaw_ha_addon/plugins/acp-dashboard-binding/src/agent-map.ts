@@ -1281,6 +1281,47 @@ export function pendingDashboardHarnessProvisioning(targetOrAgentId: unknown): P
   return provisioningInFlight.get(buildHarnessProvisionedSessionKey({ agentId: sanitizeAgentId(raw) })) ?? null;
 }
 
+/**
+ * §24 native readiness join (Init-Race): the host's own pre-dispatch ready
+ * wait (`ensureConfiguredBindingRouteReady`, 30 s budget, binding-routing-
+ * DrKISi49.mjs:150) runs ONLY for `bindingMode.kind === "configured"` —
+ * plugin-owned bindings are skipped (bot-message-BSJK5l6G.mjs:1211), so the
+ * FIRST message into a freshly derived conversation races the cold ACP spawn
+ * (the .29 init-race: failure bubble on message 1, retry works). The
+ * fire-and-forget cascade ensure (resolveHarnessTarget, provisioning leg
+ * above) starts the spawn at resolve time, but nobody ever joins it.
+ *
+ * This helper JOINS the in-flight ensure for ONE target, bounded (default
+ * 10 s ≫ the observed ~4-5 s cold spawn, ≪ the host's own 30 s). Zero
+ * overhead steady state: no in-flight ensure → returns immediately. An
+ * ensure FAILURE must not hold the record back — swallow (the host's
+ * on-demand turn path will surface/retry as today, the ensure signature
+ * bookkeeping retries on the next resolve).
+ *
+ * For the ASYNC ingress resolvers only (binding-adapter /
+ * dashboard-bridge resolveByConversationAsync + inspectByConversationAsync) —
+ * the host prefers the async variants exactly on the flows that can wait.
+ * Sync resolves stay fire-and-forget; claim mode is untouched (the claim
+ * barrier joined provisions before turns all along, reply-claim.ts:447).
+ */
+export const DEFAULT_NATIVE_READINESS_JOIN_MS = 10_000;
+
+export async function awaitPendingDashboardHarnessProvisioning(
+  targetSessionKey: unknown,
+  timeoutMs: number = DEFAULT_NATIVE_READINESS_JOIN_MS,
+): Promise<void> {
+  if (!isNativeDispatchModeEnabled()) return;
+  const target = typeof targetSessionKey === "string" ? targetSessionKey.trim() : "";
+  if (!target) return;
+  const pending = pendingDashboardHarnessProvisioning(target);
+  if (!pending) return;
+  const deadline = new Promise<void>((resolve) => {
+    const timer = setTimeout(resolve, Math.max(0, timeoutMs));
+    timer.unref?.();
+  });
+  await Promise.race([pending.catch(() => undefined), deadline]);
+}
+
 export type HarnessTargetOrigin = "configured" | "provisioned" | "synthetic";
 
 /**

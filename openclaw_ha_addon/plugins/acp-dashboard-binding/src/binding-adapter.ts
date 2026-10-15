@@ -75,6 +75,7 @@ import {
   buildBindingId,
   buildChannelAccountKey,
   buildPluginOwnedBindingMetadata,
+  awaitPendingDashboardHarnessProvisioning,
   isNativeDispatchModeEnabled,
   parseAgentIdFromConversationId,
   resolveHarnessAgentSpec,
@@ -308,6 +309,21 @@ export function deriveDashboardBindingRecord(
  * Deterministic per resolve: the host's resolve → touchAsync → re-resolve
  * stability comparison sees the identical projection both times.
  */
+/**
+ * §24 native readiness join at the async return boundaries: a null record
+ * (no binding for the conversation) has no target to wait for; anything else
+ * joins its in-flight provision, bounded (agent-map awaitPending...). Record
+ * content NEVER changes — the host's resolve → touchAsync → re-resolve
+ * stability comparison is unaffected.
+ */
+async function awaitNativeDispatchReadiness(
+  record: DashboardBindingRecord | null,
+): Promise<DashboardBindingRecord | null> {
+  if (!record) return record;
+  await awaitPendingDashboardHarnessProvisioning((record.targetSessionKey ?? "").trim());
+  return record;
+}
+
 function projectRecordForDispatchMode(record: DashboardBindingRecord | null): DashboardBindingRecord | null {
   if (!record || !isNativeDispatchModeEnabled()) return record;
   if (!record.metadata || typeof record.metadata !== "object" || Object.keys(record.metadata).length === 0) {
@@ -490,12 +506,12 @@ export function createDashboardBindingAdapter(options: DashboardBindingAdapterOp
       }), {
         roster: createConfigHarnessRoster(options.getConfig?.()),
       });
-      if (bridged) return projectRecordForDispatchMode(bridged as unknown as DashboardBindingRecord);
-      return projectRecordForDispatchMode(deriveBindingRecord({ channel, accountId, conversationId, ...ref.parentConversationId ? { parentConversationId: ref.parentConversationId } : {} }, options));
+      if (bridged) return await awaitNativeDispatchReadiness(projectRecordForDispatchMode(bridged as unknown as DashboardBindingRecord));
+      return await awaitNativeDispatchReadiness(projectRecordForDispatchMode(deriveBindingRecord({ channel, accountId, conversationId, ...ref.parentConversationId ? { parentConversationId: ref.parentConversationId } : {} }, options)));
     },
     // "Inspects committed ownership without creating storage or pruning rows."
     async inspectByConversationAsync(ref: BindingConversationRef): Promise<DashboardBindingRecord | null> {
-      return resolve(ref);
+      return await awaitNativeDispatchReadiness(resolve(ref));
     },
 
     // Derived records need no activity bookkeeping; explicit MVP bindings do

@@ -30,15 +30,18 @@ import {
 import { createDashboardBindingAdapter, deriveDashboardBindingRecord } from "./binding-adapter.js";
 import {
   ORCHESTRATOR_AGENT_IDS,
+  awaitPendingDashboardHarnessProvisioning,
   buildHarnessProvisionedSessionKey,
   isOrchestratorAgentId,
   isRosterEligibleAgentId,
+  resetDashboardBindingDispatchModeForTest,
   resetDashboardBindingProvisionerForTest,
   resetOriginWorkspaceReaderForTest,
   resolveBoundAgentAllowlist,
   resolveExcludedAgentIds,
   resolveHarnessAgentSpec,
   resolveHarnessAgentSpecs,
+  setDashboardBindingDispatchMode,
   setDashboardBindingProvisioner,
   setOriginWorkspaceReader,
 } from "./agent-map.js";
@@ -1388,5 +1391,116 @@ describe("dashboard-bridge: Phase 2.21 auto-provisioning — bridge roster path"
     expect(decision?.targetOrigin).toBe("configured");
     expect(decision?.targetSessionKey).toBe(REAL_CODEX_KEY);
     expect(decision?.provisionedCwd).toBeUndefined();
+  });
+});
+
+// --- §24 (Init-Race): native readiness join am async-Ingress (GaRoN 2026-10-15) ---
+  describe("§24: awaitPendingDashboardHarnessProvisioning / async-Ingress readiness join", () => {
+    afterEach(() => {
+      resetDashboardBindingDispatchModeForTest();
+      resetDashboardBindingProvisionerForTest();
+    });
+
+    it("Claim-Modus: helper wartet NICHT auf die Provision (Claim-Barrier ist der Join-Punkt)", async () => {
+      resetDashboardBindingDispatchModeForTest();
+      let release!: () => void;
+      let kickCount = 0;
+      setDashboardBindingProvisioner(async () => {
+        kickCount++;
+        await new Promise<void>((res) => {
+          release = res;
+        });
+      });
+      const conversation = {
+        channel: "webchat",
+        accountId: "default",
+        conversationId: CODEX_DASHBOARD_KEY,
+      };
+      resolveDashboardBinding(conversation, { roster: harnessRoster() });
+      expect(kickCount).toBe(1);
+      const t0 = Date.now();
+      await awaitPendingDashboardHarnessProvisioning(
+        buildDashboardAcpTargetSessionKey({ agentId: "codex", conversationId: CODEX_DASHBOARD_KEY }),
+      );
+      // Native-gate: der Join antwortet in Claim sofort, die Provision bleibt in flight.
+      expect(Date.now() - t0).toBeLessThan(500);
+      expect(kickCount).toBe(1);
+      release();
+    });
+
+    it("Native: helper JOINT die in-flight Provision, bounded", async () => {
+      setDashboardBindingDispatchMode("native");
+      let settled = false;
+      setDashboardBindingProvisioner(
+        () =>
+          new Promise<boolean>((resolve) => {
+            setTimeout(() => {
+              settled = true;
+              resolve(true);
+            }, 120);
+          }),
+      );
+      const target = buildDashboardAcpTargetSessionKey({
+        agentId: "codex",
+        conversationId: CODEX_DASHBOARD_KEY,
+      });
+      resolveDashboardBinding(
+        { channel: "webchat", accountId: "default", conversationId: CODEX_DASHBOARD_KEY },
+        { roster: harnessRoster() },
+      );
+      const t0 = Date.now();
+      await awaitPendingDashboardHarnessProvisioning(target);
+      expect(settled).toBe(true);
+      expect(Date.now() - t0).toBeGreaterThanOrEqual(100);
+    });
+
+    it("Native: hängende Provision hält den Resolve NICHT fest (bounded timeout)", async () => {
+      setDashboardBindingDispatchMode("native");
+      setDashboardBindingProvisioner(() => new Promise<boolean>(() => {}));
+      const target = buildDashboardAcpTargetSessionKey({
+        agentId: "codex",
+        conversationId: CODEX_DASHBOARD_KEY,
+      });
+      resolveDashboardBinding(
+        { channel: "webchat", accountId: "default", conversationId: CODEX_DASHBOARD_KEY },
+        { roster: harnessRoster() },
+      );
+      const t0 = Date.now();
+      await awaitPendingDashboardHarnessProvisioning(target, 40);
+      expect(Date.now() - t0).toBeLessThan(3_000);
+    });
+
+  it("Kein in-flight Provision: Helper antwortet sofort (steady-state zero-overhead)", async () => {
+    setDashboardBindingDispatchMode("native");
+    const t0 = Date.now();
+    await awaitPendingDashboardHarnessProvisioning("agent:codex:acp:binding:webchat:default:0123abcd0123abcd");
+    expect(Date.now() - t0).toBeLessThan(100);
+  });
+
+  it("Webchat-adapter-async: inspectByConversationAsync joint ebenfalls (gleicher Klon-Key)", async () => {
+    setDashboardBindingDispatchMode("native");
+    let settled = false;
+    setDashboardBindingProvisioner(
+      () =>
+        new Promise<boolean>((resolve) => {
+          setTimeout(() => {
+            settled = true;
+            resolve(true);
+          }, 80);
+        }),
+    );
+    const adapter = createWebchatDashboardBindingAdapter({
+      roster: harnessRoster(),
+      store: createBridgeRowStore(),
+    });
+    const record = await adapter.inspectByConversationAsync({
+      channel: "webchat",
+      accountId: "default",
+      conversationId: CODEX_DASHBOARD_KEY,
+    });
+    expect(settled).toBe(true);
+    expect(record?.targetSessionKey).toBe(
+      buildDashboardAcpTargetSessionKey({ agentId: "codex", conversationId: CODEX_DASHBOARD_KEY }),
+    );
   });
 });

@@ -1499,3 +1499,42 @@ auf OUR-Clone-Grammatik (CLONE_KEY_REST_RE) bei gateway_start — DAS SELBE Boot
 der Un-Archive-Heal. Der .27-Guard (2dd81d9) verhindert nur NEUE Stamps; dieser Heal
 befreit die 5 existierenden REAL-Sessions (im .28-Baseline ungespielt). Dashboard-Rows
 beweis-clean (Prädikat schützt `dashboard:`-Rest); subagent-Rows nie Ziel.
+
+## 24. Init-Race: Native Readiness-Join (0.7.13.30-Zug, 2026-10-15)
+
+**Wurzel (dist-verifiziert):** der Host hat einen Pre-Dispatch-Ready-Wait —
+`ensureConfiguredBindingRouteReady` (binding-routing-DrKISi49.mjs:150, 30 s
+Budget) — aber er läuft NUR für `bindingMode.kind === "configured"`
+(bot-message-BSJK5l6G.mjs:1211). Plugin-owned Bindings sind ausdrücklich
+ausgeschlossen: kein Warten, kein Spawn-ahead → die erste Nachricht einer
+frisch abgeleiteten Konversation rennt gegen den Kaltstart (~4-5 s ACP-Spawn).
+Der Plugin-Cascade feuert das Ensure zwar beim Resolve (fire-and-forget,
+agent-map resolveHarnessTarget leg 2), aber NIEMAND joint es.
+
+### §24.1 Fix: `awaitPendingDashboardHarnessProvisioning` (agent-map.ts, NEU)
+
+Join der in-flight Provision EINER Session, bounded (Default **10 s**, ≫
+Kaltstart, ≪ Host-30 s). Zero-Overhead-Steady-State (kein in-flight → sofort).
+Ensure-Fehler werden geschluckt (Host-Turn-Path liefert/retry wie bisher;
+Signature-Bookkeeping retryt beim nächsten Resolve). Self-gegate auf Native —
+Claim behält seinen eingeführten Join-Punkt (Claim-Barrier, reply-claim.ts:447);
+sync-Resolves bleiben fire-and-forget.
+
+### §24.2 Anbringung (async-Ingress only)
+
+- binding-adapter.ts: `resolveByConversationAsync` (nach bridge-derive/desk) +
+  `inspectByConversationAsync` — nach Record-Kalkulation, Record-Content
+  UNVERÄNDERT (Host-Stabilitätsvergleich resolve→touch→re-resolve unberührt).
+- dashboard-bridge.ts: `resolveByConversationAsync` + `inspectByConversationAsync`
+  (nach store.whenReady). Der Host präferiert die async-Varianten genau auf den
+  Flüssen, die warten können.
+
+### §24.3 Tests (+5, Suite 231/231 incl. timeout-bound case)
+
+Claim-Modus wartet nicht (Join-Punkt Claim-Barrier), Native joint deterministisch,
+hängende Provision wird durch den Bound gebrochen, kein in-flight = sofort,
+Webchat-Adapter-Async joint ebenfalls.
+
+### §24.4 Bewusst NICHT hier
+
+- Host-seitige Erweiterung des configured-Only-Gates (bot-message:1211) — Host-Code.
