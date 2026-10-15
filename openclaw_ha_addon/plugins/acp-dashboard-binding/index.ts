@@ -58,6 +58,7 @@ import {
 import {
   sweepOwnedStuckSessions,
   unarchiveOwnedLegacyStamps,
+  unhideOverstampedCloneSessions,
   type SessionStoreApi,
   type SweepSessionStoreApi,
   type SettleSessionEntryLike,
@@ -349,6 +350,22 @@ function registerStuckSessionSweep(api: OpenClawPluginApi, sessionStore: Session
         if (healed.restored.length > 0) {
           api.logger.info(
             `[${CHANNEL_ID}] native dispatch mode: un-archived ${healed.restored.length} legacy γ stamp(s) (archived targets refuse dispatch): ${healed.restored.join(", ")}`,
+          );
+        }
+        // V39 dry-run finding 2026-10-15: spawnedBy provenance stamps hide REAL
+        // work sessions from all listings (readSessionListSelectionFacts:
+        // spawnedBy outside dashboard: rest ⇒ isSubagent). Same boot moment.
+        const unhidden = await unhideOverstampedCloneSessions({
+          sessionStore: sessionStore as SweepSessionStoreApi,
+          agentIds,
+          logger: {
+            debug: (message) => api.logger.debug?.(message),
+            warn: (message) => api.logger.warn(message),
+          },
+        });
+        if (unhidden.unhidden.length > 0) {
+          api.logger.info(
+            `[${CHANNEL_ID}] native dispatch mode: cleared spawnedBy provenance on ${unhidden.unhidden.length} overstamped work session(s) (V39 over-hiding): ${unhidden.unhidden.join(", ")}`,
           );
         }
       }

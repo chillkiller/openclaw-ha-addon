@@ -1471,3 +1471,31 @@ No-op. Das Live-Korridor-Beispiel der Fehlversuche
 - Init-Race Readiness-Wait (~10 s bounded) — eigenes Bein desselben
   .30-Batches, separater Commit/Review.
 - Host-seitige /reset-Verhärtung (commands.runtime) — Host-Code, nicht Plugin.
+
+### §23.6 Dry-Run gegen das Default-System (GaRoN 2026-10-15) — 2 Befunde
+
+**Methodik:** echte Host-dist-Module im Container geladen (`readSessionListSelectionFacts`,
+`mergeSessionEntry`, `resolveSessionWorkStartError`, `isPluginOwnedSessionBindingRecord`) und
+gegen die REAL live DB-Entries (read-only) geführt — kein Write, kein Reboot.
+
+1. **Heal-Semantik am echten Host bewiesen** (nicht nur Fake-Store):
+   `mergeSessionEntry` (types-BZlUzQZy.mjs:90 → mergeSessionEntryWithPolicy:51) ist
+   `{...existing, ...patch}` — explicit-undefined OVERWRITET den Wert (Key bleibt mit
+   `undefined`); `archivedAt !== void 0` (die Gate-Prüfung) antwortet dann false.
+   Matrix am realen Stamp-Entry 4fbefeb9: PRE-HEAL = Archiv-Refusal, POST-HEAL =
+   undefined = KEIN Refusal. Die §23-Kette funktioniert mit dem echten Writer.
+
+2. **V39-Over-Hiding LIVE quantifiziert: 5 REAL-Arbeits-Sessions sind über-hidden.**
+   Das Listing-Prädikat (session-list-target-C2rmz7hN.mjs:39): `spawnedBy` gesetzt und
+   rest KEIN `dashboard:`-Rest ⇒ `isSubagent` ⇒ aus ALLEN Standard-Listings gefiltert.
+   Betroffen (alle Werte = Eltern-Referenzen, i. e. OUR Stamp-Form):
+   60bac3d6 (Main-Binding, spawnedBy=agent:claude:main), 4b5b8fbd, f13a1603,
+   5b4952f6, 5f3d7dec. In Native sind das DIE Konversations-Sessions — Rail/Palette/
+   Counts verstecken sie falsch.
+
+**Neues drittes Fix-Bein: `unhideOverstampedCloneSessions`** (session-settle.ts, §23.2):
+self-gegate auf Native (Claim-Semantik unverändert), räumt `spawnedBy`-Legacy-Provenance
+auf OUR-Clone-Grammatik (CLONE_KEY_REST_RE) bei gateway_start — DAS SELBE Boot-Moment wie
+der Un-Archive-Heal. Der .27-Guard (2dd81d9) verhindert nur NEUE Stamps; dieser Heal
+befreit die 5 existierenden REAL-Sessions (im .28-Baseline ungespielt). Dashboard-Rows
+beweis-clean (Prädikat schützt `dashboard:`-Rest); subagent-Rows nie Ziel.

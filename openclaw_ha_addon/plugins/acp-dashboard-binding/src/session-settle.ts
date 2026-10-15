@@ -716,3 +716,71 @@ export async function unarchiveOwnedLegacyStamps(params: {
   }
   return { restored };
 }
+
+/**
+ * V39 over-hiding boot heal (§23.2 dry-run finding 2026-10-15: the host's
+ * listing predicate — readSessionListSelectionFacts, session-list-target-
+ * C2rmz7hN.mjs:39 — treats ANY set spawnedBy outside a `dashboard:` rest as
+ * isSubagent, so provenance-stamped clone rows drop out of every standard
+ * listing while remaining fully live, binding-reachable work sessions).
+ *
+ * The stamps on OUR clone grammar are OUR legacy provenance writes
+ * (stampSubagentProvenance, spawnedBy = the origin parent key — LIVE 5/5
+ * values confirmed parent keys). In NATIVE dispatch mode the clone row IS the
+ * real conversation session; a parent-stamp there is pure over-hiding noise
+ * with a
+ * real cost (hidden rail/palette/counts). The .27 V39 guard (2dd81d9, not in
+ * the .28 baseline) prevents future stamps; this leg un-hides existing ones.
+ * Claim mode keeps γ semantics and is untouched (self-gate like the archive
+ * heal). DASHBOARD rows proved clean (isSubagent=false by the predicate) —
+ * clear runs on clone grammar only.
+ */
+export async function unhideOverstampedCloneSessions(params: {
+  sessionStore: SweepSessionStoreApi;
+  agentIds: readonly string[];
+  logger?: HarnessReplyClaimLogger;
+}): Promise<{ unhidden: string[] }> {
+  if (!isNativeDispatchModeEnabled()) return { unhidden: [] };
+  const unhidden: string[] = [];
+  for (const agentId of params.agentIds) {
+    let rows: Array<{ sessionKey: string; entry: SettleSessionEntryLike }>;
+    try {
+      rows = params.sessionStore.listSessionEntries({ agentId, readOnly: true });
+    } catch (error) {
+      params.logger?.warn?.(
+        `[acp-dashboard-binding] V39 heal listing agent ${agentId} failed — ${error instanceof Error ? error.message : String(error)}`,
+      );
+      continue;
+    }
+    for (const { sessionKey, entry } of rows) {
+      const rest = sessionKey
+        .trim()
+        .split(":")
+        .slice(2)
+        .join(":");
+      if (!CLONE_KEY_REST_RE.test(rest)) continue;
+      const stamped = typeof entry.spawnedBy === "string" && entry.spawnedBy.trim() !== "";
+      if (!stamped) continue;
+      try {
+        await params.sessionStore.patchSessionEntry({
+          sessionKey,
+          agentId,
+          update: (current) =>
+            typeof current.spawnedBy === "string" && current.spawnedBy.trim()
+              ? ({ spawnedBy: undefined } as SessionEntryPatch)
+              : null,
+          ...(params.sessionStore.requireWriteSuccess ? { requireWriteSuccess: true } : {}),
+        });
+        unhidden.push(sessionKey);
+        params.logger?.debug?.(
+          `[acp-dashboard-binding] cleared legacy spawnedBy stamp on ${sessionKey} (V39 over-hiding: real work session listed as subagent)`,
+        );
+      } catch (error) {
+        params.logger?.warn?.(
+          `[acp-dashboard-binding] spawnedBy clear of ${sessionKey} failed — ${error instanceof Error ? error.message : String(error)}`,
+        );
+      }
+    }
+  }
+  return { unhidden };
+}
