@@ -75,3 +75,30 @@ Measured on the released aarch64 build (v0.7.12.1):
 Main contributors: OpenClaw runtime + npm packages, Playwright Chromium, Python tooling (`node-llama-cpp`, crawl4ai basis), Homebrew (installed under `/config`, persisted outside the image), CUPS/scanner stack.
 
 > Plan disk space for the uncompressed image plus HA backups. On a Raspberry Pi booting from SD card, an SSD is strongly recommended.
+
+## Options sections migration (one-time, required for the collapsible config UI)
+
+Since the config schema groups options into sections (see DOCS.md §5), a stored
+`options.json` from a pre-0.7.13.30 install is still flat and **fails schema
+validation** on the first boot after the update. Migrate BEFORE deploying the
+new version:
+
+1. Snapshot current options:
+   `curl -s -H "Authorization: Bearer $SUPERVISOR_TOKEN" http://supervisor/addons/45b315ab_openclaw_ha_addon/info | jq .data.options > options-backup.json`
+2. Build the sectioned payload from the backup (mapping: `terminal_ui`,
+   `gateway_ext`, `logging_diag`, `safety_nets`, `acpx_harness`,
+   `ha_integration`, `runtime`, `legacy`; `timezone`, `network_mode`,
+   `gateway_port`, `gateway_mode`, `gateway_env_vars` stay top-level). Helper:
+   `/config/pushbug-tools/options_migrate_sections.py` (host-persistent, not in repo).
+3. Push it back:
+   `curl -s -X POST -H "Authorization: Bearer $SUPERVISOR_TOKEN" -H "Content-Type: application/json" -d @options-migrated.json http://supervisor/addons/45b315ab_openclaw_ha_addon/options`
+4. Update the addon, start it, verify the boot log line
+   `DEBUG: options layout: sectioned -> flattening for reads` shows reads worked
+   and all env-derived behavior matches (spot-check `gateway_port`, `network_mode`).
+
+Alternatively: open Settings → Apps → OpenClaw Assistant → Configuration and
+hit Save once after the update — the UI renders the new sectioned defaults and
+saving stores the sectioned shape. Values you set are preserved by the UI.
+
+The `run.sh` normalization keeps **reads** compatible with both layouts either
+way — the migration above exists so the Supervisor schema validation is happy.

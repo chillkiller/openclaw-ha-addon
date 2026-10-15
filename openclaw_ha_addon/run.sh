@@ -14,6 +14,76 @@ if [ ! -f "$OPTIONS_FILE" ]; then
 fi
 
 # ------------------------------------------------------------------------------
+# Options layout normalization (sections, v0.7.13.30+)
+#
+# The config schema groups options into collapsible sections (config.yaml
+# "Options layout"). A pre-migration install stores the OLD flat layout.
+# The schema change also means: a flat stored options file must be migrated
+# ONCE (via the Supervisor options API) before a new-schema update boots —
+# see DEPLOYMENT.md "Options sections migration". Until then the flat
+# layout passes through unchanged below; a sectioned layout is flattened
+# into the same view so every read keeps its exact has()-based semantics.
+# ------------------------------------------------------------------------------
+
+OPTIONS_FLAT="/tmp/options.flat.json"
+
+if jq -e 'has("terminal_ui") or has("acpx_harness")' "$OPTIONS_FILE" >/dev/null 2>&1; then
+  echo "DEBUG: options layout: sectioned -> flattening for reads"
+  jq '
+    {
+      timezone: .timezone,
+      network_mode: .network_mode,
+      gateway_port: .gateway_port,
+      gateway_mode: .gateway_mode,
+      gateway_env_vars: .gateway_env_vars,
+      enable_terminal: .terminal_ui.enable_terminal,
+      terminal_port: .terminal_ui.terminal_port,
+      enable_webui: .terminal_ui.enable_webui,
+      enable_docs: .terminal_ui.enable_docs,
+      gateway_public_url: .gateway_ext.gateway_public_url,
+      gateway_remote_url: .gateway_ext.gateway_remote_url,
+      gateway_trusted_proxies: .gateway_ext.gateway_trusted_proxies,
+      gateway_additional_allowed_origins: .gateway_ext.gateway_additional_allowed_origins,
+      gateway_log_to_console: .logging_diag.gateway_log_to_console,
+      gateway_log_level: .logging_diag.gateway_log_level,
+      trace_log_to_console: .logging_diag.trace_log_to_console,
+      gateway_startup_trace: .logging_diag.gateway_startup_trace,
+      nginx_log_level: .logging_diag.nginx_log_level,
+      force_ipv4_dns: .logging_diag.force_ipv4_dns,
+      mdns_mode: .logging_diag.mdns_mode,
+      mdns_host_name: .logging_diag.mdns_host_name,
+      abort_on_upgrade_backup_failure: .safety_nets.abort_on_upgrade_backup_failure,
+      upgrade_backup_keep: .safety_nets.upgrade_backup_keep,
+      gateway_doctor_repair_max: .safety_nets.gateway_doctor_repair_max,
+      acpx_enabled: .acpx_harness.acpx_enabled,
+      ollama_base_url: .acpx_harness.ollama_base_url,
+      ollama_acp_codex_model: .acpx_harness.ollama_acp_codex_model,
+      ollama_acp_opencode_model: .acpx_harness.ollama_acp_opencode_model,
+      ollama_acp_claude_model: .acpx_harness.ollama_acp_claude_model,
+      acp_additional_allowed_agents: .acpx_harness.acp_additional_allowed_agents,
+      acp_dashboard_binding_enabled: .acpx_harness.acp_dashboard_binding_enabled,
+      harness_config_writer_enabled: .acpx_harness.harness_config_writer_enabled,
+      harness_base_url: .acpx_harness.harness_base_url,
+      harness_model: .acpx_harness.harness_model,
+      harness_api_key: .acpx_harness.harness_api_key,
+      harness_excluded_agents: .acpx_harness.harness_excluded_agents,
+      utility_model: .acpx_harness.utility_model,
+      homeassistant_token: .ha_integration.homeassistant_token,
+      http_proxy: .ha_integration.http_proxy,
+      enable_openai_api: .ha_integration.enable_openai_api,
+      auto_configure_mcp: .ha_integration.auto_configure_mcp,
+      runtime_apt_packages: .runtime.runtime_apt_packages,
+      custom_init_script: .runtime.custom_init_script,
+      blocked_hostnames: .runtime.blocked_hostnames,
+      controlui_disable_device_auth: .legacy.controlui_disable_device_auth
+    }
+  ' "$OPTIONS_FILE" > "$OPTIONS_FLAT"
+  OPTIONS_FILE="$OPTIONS_FLAT"
+else
+  echo "DEBUG: options layout: legacy flat (sections not set) -> passthrough"
+fi
+
+# ------------------------------------------------------------------------------
 # Read app options (only app-specific knobs; OpenClaw is configured via onboarding)
 # ------------------------------------------------------------------------------
 

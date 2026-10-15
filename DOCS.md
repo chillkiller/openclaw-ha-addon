@@ -294,6 +294,21 @@ Additionally, the Dockerfile `HEALTHCHECK` verifies both `/api/health` and the O
 
 All options are set via **Settings → Apps → OpenClaw Assistant → Configuration** in Home Assistant. They are applied automatically on each app restart.
 
+Starting with v0.7.13.30 the options UI shows **collapsible sections** (click the
+section header to open it): `terminal_ui`, `gateway_ext`, `logging_diag`,
+`safety_nets`, `acpx_harness`, `ha_integration`, `runtime`, `legacy`. The hottest
+knobs (`timezone`, `network_mode`, `gateway_port`, `gateway_mode`,
+`gateway_env_vars`) stay at the top level. The option *names* are unchanged for
+everything referenced in this document — only their position in the config UI
+(along with the stored `options.json` nesting) moved into the sections.
+
+> **Update note (pre-0.7.13.29 configs):** installs whose stored options still
+> use the flat layout must be migrated once when updating (settings UI save or
+> one-time Supervisor API call — see DEPLOYMENT.md
+> "Options sections migration"). The app keeps reading both layouts
+> (`run.sh` "Options layout normalization"), but the new schema requires the
+> sectioned shape in the stored options file.
+
 ### General
 
 | Option | Type | Default | Description |

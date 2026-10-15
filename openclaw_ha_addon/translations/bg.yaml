@@ -2,146 +2,175 @@ configuration:
   timezone:
     name: Часова зона
     description: Часова зона за добавката (напр. Europe/Sofia, America/New_York)
-  
-  enable_terminal:
-    name: Активиране на уеб терминал
-    description: Активиране на уеб терминал бутона в Home Assistant (Ingress) чрез ttyd
-  
-  terminal_port:
-    name: Порт на терминал
-    description: Номер на порт за уеб терминала (по подразбиране - 7681). Променете, ако този порт е в конфликт с друга услуга.
-  
-  gateway_public_url:
-    name: Публичен URL на Gateway
-    description: Публичен базов URL за отваряне на Gateway уеб интерфейса в нов таб (не вграден). Пример - https://example.duckdns.org:12345 или http://192.168.1.10:18789
-  
-  homeassistant_token:
-    name: Home Assistant токен
-    description: Опционално - дълготраен токен на Home Assistant за локални API скриптове/инструменти
-
-  http_proxy:
-    name: Изходящ HTTP прокси
-    description: Опционално - URL на прокси за изходящи HTTP/HTTPS заявки (пример - http://192.168.2.1:3128)
-  
-  gateway_mode:
-    name: Режим на Gateway
-    description: Режим на работа на Gateway - local (локално изпълнение, препоръчително) или remote (свързване към отдалечен gateway)
-    options:
-      local: "Локален (препоръчително)"
-      remote: "Отдалечен"
-
-  gateway_remote_url:
-    name: URL на отдалечен Gateway
-    description: WebSocket URL на отдалечения gateway, използван когато Gateway Mode е remote (пример - ws://192.168.1.20:18789 или wss://gateway.example.com:443)
-
-  gateway_additional_allowed_origins:
-    name: Допълнителни разрешени origins
-    description: Допълнителни origins за Control UI, разделени със запетая; сливат се в gateway.controlUi.allowedOrigins при lan_https (пример - https://ha.example.com:8443,capacitor://localhost)
-
-  controlui_disable_device_auth:
-    name: Отживяла — без ефект (сдвояването винаги е чрез device flow)
-    description: "Отживяла опция (запазена за съвместимост). От OpenClaw 2026.9.8 флагът gateway.controlUi.dangerouslyDisableDeviceAuth е премахнат и игнориран от upstream, а приложението повече не го записва в конфигурацията на gateway. Браузърите на Control-UI винаги се сдвояват чрез нормалния device flow във всеки мрежов режим; не са необходими ръчни стъпки в терминала."
-  
-  abort_on_upgrade_backup_failure:
-    name: Прекъсване при неуспешен backup преди обновяване
-    description: "Когато е ВКЛ. (препоръчително), приложението не стартира новата OpenClaw версия, ако резервното копие преди обновяването е неуспешно (напр. пълен диск). Изключвайте само в извънредни случаи; връщането към предишната версия тогава може да е невъзможно."
-  
-  upgrade_backup_keep:
-    name: Запазени backup-и преди обновяване
-    description: "Колко архивни копия преди обновяване се пазят, преди най-старото да бъде изтрито (по подразбиране 3)."
-  
-  gateway_doctor_repair_max:
-    name: Doctor-ремонти на старт
-    description: "Максимален брой автоматични `openclaw doctor --fix` старта на приложение след 2 последователни неуспешни старта на gateway. 0 изключва автоматичния ремонт."
-
+  network_mode:
+    name: Режим на мрежата
+    description: Единен източник на истина за gateway.bind/auth/tls/tailscale. ingress_only - само HA Ingress и терминал;
+      lan_http - HTTP в LAN без TLS; lan_https - HTTPS в LAN с автоматичен TLS; tailnet_serve/tailnet_funnel - HTTPS през
+      Tailscale; reverse_proxy - външен ревърс прокси.
   gateway_port:
     name: Порт на Gateway
     description: Номер на порт, на който OpenClaw gateway да слуша (по подразбиране - 18789)
-
-  gateway_trusted_proxies:
-    name: Доверени прокси на Gateway
-    description: Списък с доверени прокси IP/CIDR, разделени със запетая, за trusted-proxy режим (пример - 127.0.0.1,192.168.88.0/24).
-
-  enable_openai_api:
-    name: Активиране на OpenAI API
-    description: Активиране на OpenAI-съвместим Chat Completions ендпойнт. Позволява използването на OpenClaw като разговорен агент в HA Assist pipeline чрез Extended OpenAI Conversation (HACS) или всеки OpenAI-съвместим клиент.
-
-  force_ipv4_dns:
-    name: Принудителен IPv4 DNS ред
-    description: Принудително задава IPv4-приоритет при DNS резолв. Повечето HAOS VM нямат IPv6 изход — предизвиква web_fetch и Telegram грешки. Препоръчително ВКЛЮЧЕНО (по подразбиране).
-
-  nginx_log_level:
-    name: Nginx ниво на логове
-    description: "Подробност на логовете на nginx проксито. 'minimal' (по подразбиране) потиска повтарящи се HA health-check заявки. 'full' логва всичко."
-    options:
-      minimal: "Минимално (потискане на HA polling шум)"
-      full: "Пълно (логване на всички заявки)"
-
-  mdns_mode:
-    name: mDNS режим
-    description: "mDNS/Bonjour конфигурация за LAN откриване. 'off' деактивира mDNS, 'minimal' рекламира gateway услугата (по подразбиране), 'full' рекламира с всички метаданни."
-    options:
-      off: "Изключено (без mDNS)"
-      minimal: "Минимално (рекламиране на gateway услуга, по подразбиране)"
-      full: "Пълно (рекламиране с всички метаданни)"
-      avahi: "Avahi (OS-level mDNS, режим gateway изключен)"
-
-  mdns_host_name:
-    name: mDNS име на хост
-    description: Опционално име на хост за mDNS реклама (напр. homeassistant.local). По подразбиране е "openclaw". Ако е празно, автоматично се открива от контейнера.
-
-  gateway_log_to_console:
-    name: Показвай Gateway лог в HA лог
-    description: Когато е ВКЛ., изходът от gateway (stdout/stderr) се огледалва в лог прозореца на Home Assistant добавката, освен в лог файла. Полезно за диагностика в реално време. При ИЗКЛ., логовете се записват само във файл.
-
-  gateway_log_level:
-    name: Ниво на Gateway лог
-    description: "Подробност на Gateway логовете. 'off' показва само грешки, 'info' (по подразбиране) показва нормална работа, 'debug' показва детайли за отстраняване на грешки."
-    options:
-      off: "Изключено (само грешки)"
-      info: "Info (по подразбиране)"
-      debug: "Debug (подробно)"
-
-  trace_log_to_console:
-    name: Показвай Boot Trace в HA лог
-    description: Когато е ВКЛ., детайлната проследена последователност на зареждане (set -x) се огледалва в лог прозореца на Home Assistant добавката. Много подробен — активирайте само за отстраняване на грешки.
-
   gateway_env_vars:
     name: Променливи на средата за Gateway
-    description: Променливи на средата, предавани на OpenClaw gateway процеса при стартиране (списък от записи name/value в Home Assistant UI; макс. 50 променливи, ключове до 255 знака, стойности до 10000 знака).
-
-  auto_configure_mcp:
-    name: Автоматично конфигуриране на MCP за Home Assistant
-    description: "Когато е ВКЛ. и Home Assistant Token е зададен, автоматично регистрира Home Assistant като MCP сървър при всяко стартиране. Това позволява на OpenClaw да контролира HA устройства, услуги и автоматизации чрез Model Context Protocol. Изключете само ако управлявате mcporter конфигурацията ръчно."
-
-  runtime_apt_packages:
-    name: APT пакети за изпълнение
-    description: Опционално - Списък с APT пакети, разделени с интервал, които се инсталират при стартиране на контейнера. Пакетите се преинсталират при всеки рестарт (не са постоянни в образа). Пример - ffmpeg postgresql-client
-
-  custom_init_script:
-    name: Потребителски init скрипт
-    description: Опционално - Път до изпълним скрипт, който се стартира преди OpenClaw. Трябва да е идемпотентен. Монтирайте чрез /config/ или /share/. Пример - /share/scripts/my-init.sh
-
-  acpx_enabled:
-    name: "ACPX инфраструктура"
-    description: "Инсталиране на ACPX wrapper стартери (Claude Code, Codex, OpenCode), за да може OpenClaw да изпълнява кодинг агенти през локалния ACPX бекенд."
-
-  blocked_hostnames:
-    name: "Блокирани имена на хостове"
-    description: "Списък, разделен със запетаи, на блокирани имена на хостове за изходящ мрежов достъп. Оставете празно, за да разрешите всички. Пример - router.lan,192.168.178.1"
-
-  enable_docs:
-    name: "Активиране на Docs"
-    description: "Показване на раздела Docs в Ingress интерфейса (статична документация и статус на живо)."
-
-  enable_webui:
-    name: "Активиране на WebUI"
-    description: "Показване на раздела WebUI в Ingress интерфейса (Контролен панел на OpenClaw)."
-
-  network_mode:
-    name: "Режим на мрежата"
-    description: "Единен източник на истина за gateway.bind/auth/tls/tailscale. ingress_only - само HA Ingress и терминал; lan_http - HTTP в LAN без TLS; lan_https - HTTPS в LAN с автоматичен TLS; tailnet_serve/tailnet_funnel - HTTPS през Tailscale; reverse_proxy - външен ревърс прокси."
-
-  ollama_base_url:
-    name: "Базов URL на Ollama"
-    description: "Базов URL на отдалечената Ollama инстанция, използван от ACPX обвивките, когато няма конфигурирани API ключове. Пример - http://192.168.178.34:11434"
+    description: Променливи на средата, предавани на OpenClaw gateway процеса при стартиране (списък от записи name/value
+      в Home Assistant UI; макс. 50 променливи, ключове до 255 знака, стойности до 10000 знака).
+  gateway_mode:
+    name: Режим на Gateway
+    description: Режим на работа на Gateway - local (локално изпълнение, препоръчително) или remote (свързване към отдалечен
+      gateway)
+    options:
+      local: Локален (препоръчително)
+      remote: Отдалечен
+  terminal_ui:
+    name: Terminal & UI
+    description: Web terminal, app web UI and the docs page
+    fields:
+      enable_terminal:
+        name: Активиране на уеб терминал
+        description: Активиране на уеб терминал бутона в Home Assistant (Ingress) чрез ttyd
+      terminal_port:
+        name: Порт на терминал
+        description: Номер на порт за уеб терминала (по подразбиране - 7681). Променете, ако този порт е в конфликт с друга
+          услуга.
+      enable_webui:
+        name: Активиране на WebUI
+        description: Показване на раздела WebUI в Ingress интерфейса (Контролен панел на OpenClaw).
+      enable_docs:
+        name: Активиране на Docs
+        description: Показване на раздела Docs в Ingress интерфейса (статична документация и статус на живо).
+  gateway_ext:
+    name: Gateway (external)
+    description: URLs, trusted proxies and allowed origins for gateway access
+    fields:
+      gateway_public_url:
+        name: Публичен URL на Gateway
+        description: Публичен базов URL за отваряне на Gateway уеб интерфейса в нов таб (не вграден). Пример - https://example.duckdns.org:12345
+          или http://192.168.1.10:18789
+      gateway_remote_url:
+        name: URL на отдалечен Gateway
+        description: WebSocket URL на отдалечения gateway, използван когато Gateway Mode е remote (пример - ws://192.168.1.20:18789
+          или wss://gateway.example.com:443)
+      gateway_trusted_proxies:
+        name: Доверени прокси на Gateway
+        description: Списък с доверени прокси IP/CIDR, разделени със запетая, за trusted-proxy режим (пример - 127.0.0.1,192.168.88.0/24).
+      gateway_additional_allowed_origins:
+        name: Допълнителни разрешени origins
+        description: Допълнителни origins за Control UI, разделени със запетая; сливат се в gateway.controlUi.allowedOrigins
+          при lan_https (пример - https://ha.example.com:8443,capacitor://localhost)
+  logging_diag:
+    name: Logging & diagnostics
+    description: Console mirroring, log levels, startup trace, nginx, DNS and mDNS
+    fields:
+      gateway_log_to_console:
+        name: Показвай Gateway лог в HA лог
+        description: Когато е ВКЛ., изходът от gateway (stdout/stderr) се огледалва в лог прозореца на Home Assistant добавката,
+          освен в лог файла. Полезно за диагностика в реално време. При ИЗКЛ., логовете се записват само във файл.
+      gateway_log_level:
+        name: Ниво на Gateway лог
+        description: Подробност на Gateway логовете. 'off' показва само грешки, 'info' (по подразбиране) показва нормална
+          работа, 'debug' показва детайли за отстраняване на грешки.
+        options:
+          false: Изключено (само грешки)
+          info: Info (по подразбиране)
+          debug: Debug (подробно)
+      trace_log_to_console:
+        name: Показвай Boot Trace в HA лог
+        description: Когато е ВКЛ., детайлната проследена последователност на зареждане (set -x) се огледалва в лог прозореца
+          на Home Assistant добавката. Много подробен — активирайте само за отстраняване на грешки.
+      nginx_log_level:
+        name: Nginx ниво на логове
+        description: Подробност на логовете на nginx проксито. 'minimal' (по подразбиране) потиска повтарящи се HA health-check
+          заявки. 'full' логва всичко.
+        options:
+          minimal: Минимално (потискане на HA polling шум)
+          full: Пълно (логване на всички заявки)
+      force_ipv4_dns:
+        name: Принудителен IPv4 DNS ред
+        description: Принудително задава IPv4-приоритет при DNS резолв. Повечето HAOS VM нямат IPv6 изход — предизвиква web_fetch
+          и Telegram грешки. Препоръчително ВКЛЮЧЕНО (по подразбиране).
+      mdns_mode:
+        name: mDNS режим
+        description: mDNS/Bonjour конфигурация за LAN откриване. 'off' деактивира mDNS, 'minimal' рекламира gateway услугата
+          (по подразбиране), 'full' рекламира с всички метаданни.
+        options:
+          false: Изключено (без mDNS)
+          minimal: Минимално (рекламиране на gateway услуга, по подразбиране)
+          full: Пълно (рекламиране с всички метаданни)
+          avahi: Avahi (OS-level mDNS, режим gateway изключен)
+      mdns_host_name:
+        name: mDNS име на хост
+        description: Опционално име на хост за mDNS реклама (напр. homeassistant.local). По подразбиране е "openclaw". Ако
+          е празно, автоматично се открива от контейнера.
+  safety_nets:
+    name: Safety nets
+    description: Upgrade state backups and automatic gateway repair
+    fields:
+      abort_on_upgrade_backup_failure:
+        name: Прекъсване при неуспешен backup преди обновяване
+        description: Когато е ВКЛ. (препоръчително), приложението не стартира новата OpenClaw версия, ако резервното копие
+          преди обновяването е неуспешно (напр. пълен диск). Изключвайте само в извънредни случаи; връщането към предишната
+          версия тогава може да е невъзможно.
+      upgrade_backup_keep:
+        name: Запазени backup-и преди обновяване
+        description: Колко архивни копия преди обновяване се пазят, преди най-старото да бъде изтрито (по подразбиране 3).
+      gateway_doctor_repair_max:
+        name: Doctor-ремонти на старт
+        description: Максимален брой автоматични `openclaw doctor --fix` старта на приложение след 2 последователни неуспешни
+          старта на gateway. 0 изключва автоматичния ремонт.
+  acpx_harness:
+    name: ACPX & coding harnesses
+    description: ACPX backend, harness plugins and local model defaults
+    fields:
+      acpx_enabled:
+        name: ACPX инфраструктура
+        description: Инсталиране на ACPX wrapper стартери (Claude Code, Codex, OpenCode), за да може OpenClaw да изпълнява
+          кодинг агенти през локалния ACPX бекенд.
+      ollama_base_url:
+        name: Базов URL на Ollama
+        description: Базов URL на отдалечената Ollama инстанция, използван от ACPX обвивките, когато няма конфигурирани API
+          ключове. Пример - http://192.168.178.34:11434
+  ha_integration:
+    name: Home Assistant integration
+    description: HA token, MCP, OpenAI API endpoint and proxy
+    fields:
+      homeassistant_token:
+        name: Home Assistant токен
+        description: Опционално - дълготраен токен на Home Assistant за локални API скриптове/инструменти
+      http_proxy:
+        name: Изходящ HTTP прокси
+        description: Опционално - URL на прокси за изходящи HTTP/HTTPS заявки (пример - http://192.168.2.1:3128)
+      enable_openai_api:
+        name: Активиране на OpenAI API
+        description: Активиране на OpenAI-съвместим Chat Completions ендпойнт. Позволява използването на OpenClaw като разговорен
+          агент в HA Assist pipeline чрез Extended OpenAI Conversation (HACS) или всеки OpenAI-съвместим клиент.
+      auto_configure_mcp:
+        name: Автоматично конфигуриране на MCP за Home Assistant
+        description: Когато е ВКЛ. и Home Assistant Token е зададен, автоматично регистрира Home Assistant като MCP сървър
+          при всяко стартиране. Това позволява на OpenClaw да контролира HA устройства, услуги и автоматизации чрез Model
+          Context Protocol. Изключете само ако управлявате mcporter конфигурацията ръчно.
+  runtime:
+    name: Runtime
+    description: Apt packages, custom init script and SSRP hostname blocklist
+    fields:
+      runtime_apt_packages:
+        name: APT пакети за изпълнение
+        description: Опционално - Списък с APT пакети, разделени с интервал, които се инсталират при стартиране на контейнера.
+          Пакетите се преинсталират при всеки рестарт (не са постоянни в образа). Пример - ffmpeg postgresql-client
+      custom_init_script:
+        name: Потребителски init скрипт
+        description: Опционално - Път до изпълним скрипт, който се стартира преди OpenClaw. Трябва да е идемпотентен. Монтирайте
+          чрез /config/ или /share/. Пример - /share/scripts/my-init.sh
+      blocked_hostnames:
+        name: Блокирани имена на хостове
+        description: Списък, разделен със запетаи, на блокирани имена на хостове за изходящ мрежов достъп. Оставете празно,
+          за да разрешите всички. Пример - router.lan,192.168.178.1
+  legacy:
+    name: Legacy
+    description: Retired options kept for compatibility
+    fields:
+      controlui_disable_device_auth:
+        name: Отживяла — без ефект (сдвояването винаги е чрез device flow)
+        description: Отживяла опция (запазена за съвместимост). От OpenClaw 2026.9.8 флагът gateway.controlUi.dangerouslyDisableDeviceAuth
+          е премахнат и игнориран от upstream, а приложението повече не го записва в конфигурацията на gateway. Браузърите
+          на Control-UI винаги се сдвояват чрез нормалния device flow във всеки мрежов режим; не са необходими ръчни стъпки
+          в терминала.

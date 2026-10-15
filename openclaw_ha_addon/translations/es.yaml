@@ -2,146 +2,176 @@ configuration:
   timezone:
     name: Zona horaria
     description: Zona horaria para el complemento (ej. Europe/Berlin, America/New_York)
-  
-  enable_terminal:
-    name: Activar terminal web
-    description: Activar botón de terminal web dentro de Home Assistant (Ingress) mediante ttyd
-  
-  terminal_port:
-    name: Puerto del terminal
-    description: Número de puerto para el terminal web (predeterminado - 7681). Cambie si este puerto entra en conflicto con otro servicio.
-  
-  gateway_public_url:
-    name: URL pública del Gateway
-    description: URL base pública para abrir la interfaz web del Gateway en una nueva pestaña (no integrada). Ejemplo - https://ejemplo.duckdns.org:12345 o http://192.168.1.10:18789
-  
-  homeassistant_token:
-    name: Token de Home Assistant
-    description: Opcional - Token de larga duración de Home Assistant para scripts/herramientas de API local
-
-  http_proxy:
-    name: Proxy HTTP de salida
-    description: Opcional - URL de proxy para solicitudes HTTP/HTTPS salientes (ejemplo - http://192.168.2.1:3128)
-  
-  gateway_mode:
-    name: Modo del Gateway
-    description: Modo de operación del Gateway - local (ejecutar gateway localmente, recomendado) o remote (conectar a un gateway remoto)
-    options:
-      local: "Local (recomendado)"
-      remote: "Remoto"
-
-  gateway_remote_url:
-    name: URL del Gateway Remoto
-    description: URL WebSocket del gateway remoto utilizada cuando Gateway Mode es Remote (ejemplo - ws://192.168.1.20:18789 o wss://gateway.example.com:443)
-
-  gateway_additional_allowed_origins:
-    name: Orígenes permitidos adicionales
-    description: Orígenes extra de Control UI separados por comas que se combinan en gateway.controlUi.allowedOrigins en modo lan_https (ejemplo - https://ha.example.com:8443,capacitor://localhost)
-
-  controlui_disable_device_auth:
-    name: Obsoleta — sin efecto (el emparejamiento siempre es por flujo de dispositivo)
-    description: "Opción obsoleta (se mantiene por compatibilidad). Desde OpenClaw 2026.9.8, el flag gateway.controlUi.dangerouslyDisableDeviceAuth ha sido retirado e ignorado por upstream, y la aplicación ya no lo escribe en la configuración del gateway. Los navegadores del Control-UI siempre se emparejan mediante el flujo de dispositivo normal en cualquier modo de red; no se requieren pasos manuales en el terminal."
-  
-  abort_on_upgrade_backup_failure:
-    name: Abortar si falla la copia previa a la actualización
-    description: "Si está ACTIVADO (recomendado), la app no arrancará una nueva versión de OpenClaw si falla la copia de seguridad previa (p. ej. disco lleno). Desactivar solo en emergencias; entonces puede ser imposible volver a la versión anterior."
-  
-  upgrade_backup_keep:
-    name: Copias de actualización a conservar
-    description: "Cuántas copias previas a la actualización se conservan antes de borrar la más antigua (por defecto 3)."
-  
-  gateway_doctor_repair_max:
-    name: Reparaciones doctor por arranque
-    description: "Máximo de ejecuciones automáticas de `openclaw doctor --fix` por arranque de la app tras 2 inicios fallidos consecutivos del gateway. 0 desactiva la reparación automática."
-
+  network_mode:
+    name: Modo de red
+    description: Fuente única de verdad para gateway.bind/auth/tls/tailscale. ingress_only - solo HA Ingress y terminal; lan_http
+      - HTTP en LAN sin TLS; lan_https - HTTPS en LAN con TLS automático; tailnet_serve/tailnet_funnel - HTTPS de Tailscale;
+      reverse_proxy - proxy inverso externo.
   gateway_port:
     name: Puerto del Gateway
     description: Número de puerto en el que el gateway de OpenClaw escuchará (predeterminado - 18789)
-
-  gateway_trusted_proxies:
-    name: Proxys de confianza del Gateway
-    description: Lista de IPs/CIDR de proxys de confianza separados por comas para el modo trusted-proxy (ejemplo - 127.0.0.1,192.168.88.0/24).
-
-  enable_openai_api:
-    name: Activar API OpenAI
-    description: Activar endpoint de Chat Completions compatible con OpenAI. Permite usar OpenClaw como agente de conversación en HA Assist pipeline mediante Extended OpenAI Conversation (HACS) o cualquier cliente compatible con OpenAI.
-
-  force_ipv4_dns:
-    name: Forzar orden DNS IPv4
-    description: Fuerza prioridad IPv4 en DNS. La mayoría de VMs HAOS no tienen salida IPv6 — causa errores en web_fetch y Telegram. Recomendado ACTIVADO (por defecto).
-
-  nginx_log_level:
-    name: Nivel de log Nginx
-    description: "Nivel de detalle del log de acceso de nginx. 'minimal' (por defecto) suprime las solicitudes repetitivas de health-check y polling de HA. 'full' registra todo."
-    options:
-      minimal: "Mínimo (suprimir ruido de polling HA)"
-      full: "Completo (registrar todas las solicitudes)"
-
-  mdns_mode:
-    name: Modo mDNS
-    description: "Configuración mDNS/Bonjour para descubrimiento en LAN. 'off' desactiva mDNS, 'minimal' anuncia el servicio gateway (predeterminado), 'full' anuncia con todos los metadatos."
-    options:
-      off: "Desactivado (sin mDNS)"
-      minimal: "Mínimo (anunciar servicio gateway, predeterminado)"
-      full: "Completo (anunciar con todos los metadatos)"
-      avahi: "Avahi (OS-level mDNS, modo gateway desactivado)"
-
-  mdns_host_name:
-    name: Nombre de host mDNS
-    description: Nombre de host opcional para anuncio mDNS (ej. homeassistant.local). El valor predeterminado es "openclaw". Si está vacío, se detecta automáticamente desde el nombre de host del contenedor.
-
-  gateway_log_to_console:
-    name: Mostrar log del Gateway en log de HA
-    description: Cuando está ACTIVADO, la salida del gateway (stdout/stderr) se refleja en la ventana de log del complemento de Home Assistant además del archivo de log. Útil para diagnóstico en tiempo real. Cuando está DESACTIVADO, los logs se escriben solo en el archivo.
-
-  gateway_log_level:
-    name: Nivel de log del Gateway
-    description: "Verbosidad del log del Gateway. 'off' muestra solo errores, 'info' (predeterminado) muestra operación normal, 'debug' muestra detalles detallados para solución de problemas."
-    options:
-      off: "Desactivado (solo errores)"
-      info: "Info (predeterminado)"
-      debug: "Debug (detallado)"
-
-  trace_log_to_console:
-    name: Mostrar traza de arranque en log de HA
-    description: Cuando está ACTIVADO, la secuencia de arranque detallada (salida set -x) se refleja en la ventana de log del complemento de Home Assistant. Muy detallado — activar solo para depuración.
-
   gateway_env_vars:
     name: Variables de entorno del Gateway
-    description: Variables de entorno que se pasan al proceso del gateway OpenClaw al iniciarse (lista de entradas name/value en la UI de Home Assistant; máximo 50 variables, claves de hasta 255 caracteres, valores de hasta 10.000 caracteres).
-
-  auto_configure_mcp:
-    name: Configurar MCP automáticamente para Home Assistant
-    description: "Cuando está ACTIVADO y el token de Home Assistant está configurado, registra automáticamente Home Assistant como servidor MCP en cada inicio. Esto permite a OpenClaw controlar entidades, servicios y automatizaciones de HA mediante el Model Context Protocol. Desactive solo si administra la configuración de mcporter manualmente."
-
-  runtime_apt_packages:
-    name: Paquetes APT en tiempo de ejecución
-    description: Opcional - Lista de paquetes APT separados por espacios para instalar al iniciar el contenedor. Los paquetes se reinstalan en cada reinicio (no persistentes en la imagen). Ejemplo - ffmpeg postgresql-client
-
-  custom_init_script:
-    name: Script de init personalizado
-    description: Opcional - Ruta a un script ejecutable que se ejecuta antes de OpenClaw. Debe ser idempotente. Monte mediante /config/ o /share/. Ejemplo - /share/scripts/my-init.sh
-
-  acpx_enabled:
-    name: "Infraestructura ACPX"
-    description: "Instalar lanzadores wrapper ACPX (Claude Code, Codex, OpenCode) para que OpenClaw ejecute agentes de programación mediante el backend ACPX local."
-
-  blocked_hostnames:
-    name: "Nombres de host bloqueados"
-    description: "Lista separada por comas de nombres de host bloqueados para el acceso de red saliente. Dejar vacío para permitir todos. Ejemplo - router.lan,192.168.178.1"
-
-  enable_docs:
-    name: "Activar Docs"
-    description: "Mostrar la pestaña Docs en la interfaz Ingress (documentación estática y estado en vivo)."
-
-  enable_webui:
-    name: "Activar WebUI"
-    description: "Mostrar la pestaña WebUI en la interfaz Ingress (Panel de Control de OpenClaw)."
-
-  network_mode:
-    name: "Modo de red"
-    description: "Fuente única de verdad para gateway.bind/auth/tls/tailscale. ingress_only - solo HA Ingress y terminal; lan_http - HTTP en LAN sin TLS; lan_https - HTTPS en LAN con TLS automático; tailnet_serve/tailnet_funnel - HTTPS de Tailscale; reverse_proxy - proxy inverso externo."
-
-  ollama_base_url:
-    name: "URL base de Ollama"
-    description: "URL base de la instancia remota de Ollama usada por los wrappers ACPX cuando no hay claves API configuradas. Ejemplo - http://192.168.178.34:11434"
+    description: Variables de entorno que se pasan al proceso del gateway OpenClaw al iniciarse (lista de entradas name/value
+      en la UI de Home Assistant; máximo 50 variables, claves de hasta 255 caracteres, valores de hasta 10.000 caracteres).
+  gateway_mode:
+    name: Modo del Gateway
+    description: Modo de operación del Gateway - local (ejecutar gateway localmente, recomendado) o remote (conectar a un
+      gateway remoto)
+    options:
+      local: Local (recomendado)
+      remote: Remoto
+  terminal_ui:
+    name: Terminal & UI
+    description: Web terminal, app web UI and the docs page
+    fields:
+      enable_terminal:
+        name: Activar terminal web
+        description: Activar botón de terminal web dentro de Home Assistant (Ingress) mediante ttyd
+      terminal_port:
+        name: Puerto del terminal
+        description: Número de puerto para el terminal web (predeterminado - 7681). Cambie si este puerto entra en conflicto
+          con otro servicio.
+      enable_webui:
+        name: Activar WebUI
+        description: Mostrar la pestaña WebUI en la interfaz Ingress (Panel de Control de OpenClaw).
+      enable_docs:
+        name: Activar Docs
+        description: Mostrar la pestaña Docs en la interfaz Ingress (documentación estática y estado en vivo).
+  gateway_ext:
+    name: Gateway (external)
+    description: URLs, trusted proxies and allowed origins for gateway access
+    fields:
+      gateway_public_url:
+        name: URL pública del Gateway
+        description: URL base pública para abrir la interfaz web del Gateway en una nueva pestaña (no integrada). Ejemplo
+          - https://ejemplo.duckdns.org:12345 o http://192.168.1.10:18789
+      gateway_remote_url:
+        name: URL del Gateway Remoto
+        description: URL WebSocket del gateway remoto utilizada cuando Gateway Mode es Remote (ejemplo - ws://192.168.1.20:18789
+          o wss://gateway.example.com:443)
+      gateway_trusted_proxies:
+        name: Proxys de confianza del Gateway
+        description: Lista de IPs/CIDR de proxys de confianza separados por comas para el modo trusted-proxy (ejemplo - 127.0.0.1,192.168.88.0/24).
+      gateway_additional_allowed_origins:
+        name: Orígenes permitidos adicionales
+        description: Orígenes extra de Control UI separados por comas que se combinan en gateway.controlUi.allowedOrigins
+          en modo lan_https (ejemplo - https://ha.example.com:8443,capacitor://localhost)
+  logging_diag:
+    name: Logging & diagnostics
+    description: Console mirroring, log levels, startup trace, nginx, DNS and mDNS
+    fields:
+      gateway_log_to_console:
+        name: Mostrar log del Gateway en log de HA
+        description: Cuando está ACTIVADO, la salida del gateway (stdout/stderr) se refleja en la ventana de log del complemento
+          de Home Assistant además del archivo de log. Útil para diagnóstico en tiempo real. Cuando está DESACTIVADO, los
+          logs se escriben solo en el archivo.
+      gateway_log_level:
+        name: Nivel de log del Gateway
+        description: Verbosidad del log del Gateway. 'off' muestra solo errores, 'info' (predeterminado) muestra operación
+          normal, 'debug' muestra detalles detallados para solución de problemas.
+        options:
+          false: Desactivado (solo errores)
+          info: Info (predeterminado)
+          debug: Debug (detallado)
+      trace_log_to_console:
+        name: Mostrar traza de arranque en log de HA
+        description: Cuando está ACTIVADO, la secuencia de arranque detallada (salida set -x) se refleja en la ventana de
+          log del complemento de Home Assistant. Muy detallado — activar solo para depuración.
+      nginx_log_level:
+        name: Nivel de log Nginx
+        description: Nivel de detalle del log de acceso de nginx. 'minimal' (por defecto) suprime las solicitudes repetitivas
+          de health-check y polling de HA. 'full' registra todo.
+        options:
+          minimal: Mínimo (suprimir ruido de polling HA)
+          full: Completo (registrar todas las solicitudes)
+      force_ipv4_dns:
+        name: Forzar orden DNS IPv4
+        description: Fuerza prioridad IPv4 en DNS. La mayoría de VMs HAOS no tienen salida IPv6 — causa errores en web_fetch
+          y Telegram. Recomendado ACTIVADO (por defecto).
+      mdns_mode:
+        name: Modo mDNS
+        description: Configuración mDNS/Bonjour para descubrimiento en LAN. 'off' desactiva mDNS, 'minimal' anuncia el servicio
+          gateway (predeterminado), 'full' anuncia con todos los metadatos.
+        options:
+          false: Desactivado (sin mDNS)
+          minimal: Mínimo (anunciar servicio gateway, predeterminado)
+          full: Completo (anunciar con todos los metadatos)
+          avahi: Avahi (OS-level mDNS, modo gateway desactivado)
+      mdns_host_name:
+        name: Nombre de host mDNS
+        description: Nombre de host opcional para anuncio mDNS (ej. homeassistant.local). El valor predeterminado es "openclaw".
+          Si está vacío, se detecta automáticamente desde el nombre de host del contenedor.
+  safety_nets:
+    name: Safety nets
+    description: Upgrade state backups and automatic gateway repair
+    fields:
+      abort_on_upgrade_backup_failure:
+        name: Abortar si falla la copia previa a la actualización
+        description: Si está ACTIVADO (recomendado), la app no arrancará una nueva versión de OpenClaw si falla la copia de
+          seguridad previa (p. ej. disco lleno). Desactivar solo en emergencias; entonces puede ser imposible volver a la
+          versión anterior.
+      upgrade_backup_keep:
+        name: Copias de actualización a conservar
+        description: Cuántas copias previas a la actualización se conservan antes de borrar la más antigua (por defecto 3).
+      gateway_doctor_repair_max:
+        name: Reparaciones doctor por arranque
+        description: Máximo de ejecuciones automáticas de `openclaw doctor --fix` por arranque de la app tras 2 inicios fallidos
+          consecutivos del gateway. 0 desactiva la reparación automática.
+  acpx_harness:
+    name: ACPX & coding harnesses
+    description: ACPX backend, harness plugins and local model defaults
+    fields:
+      acpx_enabled:
+        name: Infraestructura ACPX
+        description: Instalar lanzadores wrapper ACPX (Claude Code, Codex, OpenCode) para que OpenClaw ejecute agentes de
+          programación mediante el backend ACPX local.
+      ollama_base_url:
+        name: URL base de Ollama
+        description: URL base de la instancia remota de Ollama usada por los wrappers ACPX cuando no hay claves API configuradas.
+          Ejemplo - http://192.168.178.34:11434
+  ha_integration:
+    name: Home Assistant integration
+    description: HA token, MCP, OpenAI API endpoint and proxy
+    fields:
+      homeassistant_token:
+        name: Token de Home Assistant
+        description: Opcional - Token de larga duración de Home Assistant para scripts/herramientas de API local
+      http_proxy:
+        name: Proxy HTTP de salida
+        description: Opcional - URL de proxy para solicitudes HTTP/HTTPS salientes (ejemplo - http://192.168.2.1:3128)
+      enable_openai_api:
+        name: Activar API OpenAI
+        description: Activar endpoint de Chat Completions compatible con OpenAI. Permite usar OpenClaw como agente de conversación
+          en HA Assist pipeline mediante Extended OpenAI Conversation (HACS) o cualquier cliente compatible con OpenAI.
+      auto_configure_mcp:
+        name: Configurar MCP automáticamente para Home Assistant
+        description: Cuando está ACTIVADO y el token de Home Assistant está configurado, registra automáticamente Home Assistant
+          como servidor MCP en cada inicio. Esto permite a OpenClaw controlar entidades, servicios y automatizaciones de HA
+          mediante el Model Context Protocol. Desactive solo si administra la configuración de mcporter manualmente.
+  runtime:
+    name: Runtime
+    description: Apt packages, custom init script and SSRP hostname blocklist
+    fields:
+      runtime_apt_packages:
+        name: Paquetes APT en tiempo de ejecución
+        description: Opcional - Lista de paquetes APT separados por espacios para instalar al iniciar el contenedor. Los paquetes
+          se reinstalan en cada reinicio (no persistentes en la imagen). Ejemplo - ffmpeg postgresql-client
+      custom_init_script:
+        name: Script de init personalizado
+        description: Opcional - Ruta a un script ejecutable que se ejecuta antes de OpenClaw. Debe ser idempotente. Monte
+          mediante /config/ o /share/. Ejemplo - /share/scripts/my-init.sh
+      blocked_hostnames:
+        name: Nombres de host bloqueados
+        description: Lista separada por comas de nombres de host bloqueados para el acceso de red saliente. Dejar vacío para
+          permitir todos. Ejemplo - router.lan,192.168.178.1
+  legacy:
+    name: Legacy
+    description: Retired options kept for compatibility
+    fields:
+      controlui_disable_device_auth:
+        name: Obsoleta — sin efecto (el emparejamiento siempre es por flujo de dispositivo)
+        description: Opción obsoleta (se mantiene por compatibilidad). Desde OpenClaw 2026.9.8, el flag gateway.controlUi.dangerouslyDisableDeviceAuth
+          ha sido retirado e ignorado por upstream, y la aplicación ya no lo escribe en la configuración del gateway. Los
+          navegadores del Control-UI siempre se emparejan mediante el flujo de dispositivo normal en cualquier modo de red;
+          no se requieren pasos manuales en el terminal.
