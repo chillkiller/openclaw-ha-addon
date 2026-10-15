@@ -26,6 +26,7 @@ import {
   BINDING_CHANNEL,
   CHANNEL_ID,
   clearDashboardHarnessProvisions,
+  isNativeDispatchModeEnabled,
   resolvePluginCloneAutoArchive,
   resolvePluginDispatchMode,
   setDashboardBindingCloneAutoArchive,
@@ -56,6 +57,8 @@ import {
 } from "./src/reply-claim.js";
 import {
   sweepOwnedStuckSessions,
+  unarchiveOwnedLegacyStamps,
+  unhideOverstampedCloneSessions,
   type SessionStoreApi,
   type SweepSessionStoreApi,
   type SettleSessionEntryLike,
@@ -330,6 +333,42 @@ function registerStuckSessionSweep(api: OpenClawPluginApi, sessionStore: Session
           `[${CHANNEL_ID}] boot sweep archived ${result.archived.length} harness clone(s) (γ hidden from standard listings): ${result.archived.join(", ")}`,
         );
       }
+      // §23 native-mode un-archive heal: the claim path's per-dispatch
+      // unarchiveHiddenClone never fires in native dispatch mode (zero
+      // inbound_claim events, LIVE 2026-10-14), so legacy γ stamps would keep
+      // refusing dispatch/`/reset` on archived binding targets. gateway_start
+      // is race-free (no in-process turn can predate the process).
+      if (isNativeDispatchModeEnabled()) {
+        const healed = await unarchiveOwnedLegacyStamps({
+          sessionStore: sessionStore as SweepSessionStoreApi,
+          agentIds,
+          logger: {
+            debug: (message) => api.logger.debug?.(message),
+            warn: (message) => api.logger.warn(message),
+          },
+        });
+        if (healed.restored.length > 0) {
+          api.logger.info(
+            `[${CHANNEL_ID}] native dispatch mode: un-archived ${healed.restored.length} legacy γ stamp(s) (archived targets refuse dispatch): ${healed.restored.join(", ")}`,
+          );
+        }
+        // V39 dry-run finding 2026-10-15: spawnedBy provenance stamps hide REAL
+        // work sessions from all listings (readSessionListSelectionFacts:
+        // spawnedBy outside dashboard: rest ⇒ isSubagent). Same boot moment.
+        const unhidden = await unhideOverstampedCloneSessions({
+          sessionStore: sessionStore as SweepSessionStoreApi,
+          agentIds,
+          logger: {
+            debug: (message) => api.logger.debug?.(message),
+            warn: (message) => api.logger.warn(message),
+          },
+        });
+        if (unhidden.unhidden.length > 0) {
+          api.logger.info(
+            `[${CHANNEL_ID}] native dispatch mode: cleared spawnedBy provenance on ${unhidden.unhidden.length} overstamped work session(s) (V39 over-hiding): ${unhidden.unhidden.join(", ")}`,
+          );
+        }
+      }
     } catch (error) {
       api.logger?.warn?.(`[${CHANNEL_ID}] boot sweep failed — ${errorBrief(error)}`);
     }
@@ -465,7 +504,9 @@ export default defineBundledChannelCompatibleEntry({
       setDashboardBindingCloneAutoArchive(autoArchive);
       if (!autoArchive) {
         api.logger?.info?.(
-          `[${CHANNEL_ID}] clone auto-archive = off (default): no γ archive stamps, clone transcripts stay readable; pre-dispatch un-archive still heals legacy stamps`,
+          isNativeDispatchModeEnabled()
+            ? `[${CHANNEL_ID}] clone auto-archive = off (default): no γ archive stamps in native mode; boot sweep un-archives legacy stamps (claim path's pre-dispatch un-archive does not fire here)`
+            : `[${CHANNEL_ID}] clone auto-archive = off (default): no γ archive stamps, clone transcripts stay readable; pre-dispatch un-archive still heals legacy stamps`,
         );
       }
     }

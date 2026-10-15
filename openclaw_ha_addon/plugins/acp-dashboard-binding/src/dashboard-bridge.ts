@@ -10,6 +10,7 @@ import {
   BINDING_ID_PREFIX,
   BINDING_MODE,
   CHANNEL_ID,
+  awaitPendingDashboardHarnessProvisioning,
   buildHarnessProvisionedConversationId,
   buildHarnessProvisionedSessionKey,
   buildPluginOwnedBindingMetadata,
@@ -864,11 +865,17 @@ export function createWebchatDashboardBindingAdapter(args: {
     async resolveByConversationAsync(ref: ConversationRefLike): Promise<SessionBindingRecordLike | null> {
       // Phase 2.12 F2: never answer from a half-hydrated store.
       await args.store.whenReady();
-      return resolveSync(ref);
+      const record = resolveSync(ref);
+      // §24 native readiness join: hold the async resolve until the target's
+      // in-flight provision settled (bounded); record content unchanged.
+      await awaitPendingDashboardHarnessProvisioning((record?.targetSessionKey ?? "").trim());
+      return record;
     },
     async inspectByConversationAsync(ref: ConversationRefLike): Promise<SessionBindingRecordLike | null> {
       await args.store.whenReady();
-      return resolveSync(ref);
+      const record = resolveSync(ref);
+      await awaitPendingDashboardHarnessProvisioning((record?.targetSessionKey ?? "").trim());
+      return record;
     },
     async touchAsync(bindingId: string, at?: number): Promise<void> {
       await args.store.whenReady();

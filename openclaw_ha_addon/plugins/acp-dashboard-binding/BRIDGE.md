@@ -1410,3 +1410,131 @@ weil es archiviert war. Direktive: Plugin OHNE Auto-Archivierung.
   als auch die Tests fixieren beide Modi (`cloneAutoArchive:true` = Legacy-Suite,
   Default-Suite ohne Archivierung). Suite 218/218, tsc strict 0, esbuild-Bundle
   mit Deploy-Flags geprüft.
+
+## 23. (Main) Session Reset-Bug — Native-Mode Un-Archivierung (0.7.13.30-Zug, 2026-10-14/15)
+
+GaRoN: „die Main Session resettet sich nicht im Main Session-Chat." Live-Beleg
+(Main-Binding `60bac3d6…`): `/reset` scheiterte 2/2 mit `acp reset failed for
+…: Session "…" is archived. Restore it before starting new work.` (commands.
+runtime-GrTblwEH.mjs:102/:126), erst ein Out-of-Band-Reset auf `agent:claude:main`
+stellte den Betrieb wieder her (fresh `--session-id`, 5,7 s).
+
+### §23.1 Befund
+
+- Der γ-Stamm auf dem Main-Binding-Clone war ein Legacy-Stamp (.25-Ära,
+  `archivedBy: {system, acp-dashboard-binding}`, kein archiveReason).
+- Der Claim-Pfad heilt solche Stamps vor jedem Dispatch
+  (`unarchiveHiddenClone`, src/session-settle.ts) — ABER: in
+  `dispatchMode: "native"` feuert der Claim-Handler NIE
+  (`inbound_claim: 0 lines am ganzenTag`, LIVE 2026-10-14). Der Host
+  dispatcht nativ in das archivierte Ziel → Refusal.
+- Der .29-Bootline-Text („pre-dispatch un-archive still heals legacy stamps")
+  galt für Native faktisch NICHT — korrigiert.
+- Auch der Boot-Sweep archiviert zwar nur nach Gate (default off), heilt aber
+  nichts → ein einmal existierender Legacy-Stamp blieb in Native für immer
+  blockierend (Jeder-/reset-/First-Dispatch-Treffer).
+
+### §23.2 Fix (drei Beine, alle im Native-Modus wirksam)
+
+1. **`unarchiveOwnedLegacyStamps`** (src/session-settle.ts, NEU): Boot-Heal bei
+   `gateway_start`, selbst-gegate auf Native (Claim-Modus bewahrt γ-Semantik —
+   dort heilt der Claim-Dispatch weiterhin pro Turn). Enumeriert per
+   `listSessionEntries` alle Einträge, greift NUR bei OUR-Stamps
+   (`isOursCloneArchive`) auf OUR-Key-Grammatik (Clone-/Dashboard-Rest-Regexe)
+   und löscht `archivedAt`/`archivedBy` per explicit-undefined-Patch. Fremde
+   Archive (host maintenance archiveReason, UI-manual human archivedBy) werden
+   nie berührt.
+2. **`buildCloneHiddenPatch` lehnt Native ab** (unabhängig von
+   `cloneAutoArchive`): in Native erzeugt das Plugin KEINE neuen Archive-Stamps
+   — sonst wäre jeder idle Clone der nächste Reset-Fehler (kein Pre-Dispatch-
+   Heal existiert dort). γ mit `cloneAutoArchive: true` bleibt daher
+   bewusst NUR Claim-Modus-kombinierbar.
+3. **Bootline-Korrektur** (index.ts): der „off"-Log trennt jetzt die Modi —
+   Native nennt den Boot-Sweep-Heal, Claim den bekannten Pre-Dispatch-Heal.
+
+### §23.3 Race-Freiheit
+
+`gateway_start` hat keinen in-process Turn (Boot-Parität wie §19c), gegen
+Live-Turns kann der Heal nicht rennen. Idempotent: schon geheilte/gefremde
+Einträge produzieren leere Patches.
+
+### §23.4 Tests
+
+Suite 223/223 (8 Dateien): Native-Block deckt ab — kein Stamp in Native auch
+bei `cloneAutoArchive:true` (Patch UND Sweep-Leg), Heal räumt OUR-Stamps auf
+Clone-UNDA-Key-Formen, Fremd-/Manual-/nicht-OUR-Keys unberührt, Claim-Modus
+No-op. Das Live-Korridor-Beispiel der Fehlversuche
+(60bac3d65e697154) steht als Fixtur-Key.
+
+### §23.5 Bewusst NICHT hier (Backlog)
+
+- Init-Race Readiness-Wait (~10 s bounded) — eigenes Bein desselben
+  .30-Batches, separater Commit/Review.
+- Host-seitige /reset-Verhärtung (commands.runtime) — Host-Code, nicht Plugin.
+
+### §23.6 Dry-Run gegen das Default-System (GaRoN 2026-10-15) — 2 Befunde
+
+**Methodik:** echte Host-dist-Module im Container geladen (`readSessionListSelectionFacts`,
+`mergeSessionEntry`, `resolveSessionWorkStartError`, `isPluginOwnedSessionBindingRecord`) und
+gegen die REAL live DB-Entries (read-only) geführt — kein Write, kein Reboot.
+
+1. **Heal-Semantik am echten Host bewiesen** (nicht nur Fake-Store):
+   `mergeSessionEntry` (types-BZlUzQZy.mjs:90 → mergeSessionEntryWithPolicy:51) ist
+   `{...existing, ...patch}` — explicit-undefined OVERWRITET den Wert (Key bleibt mit
+   `undefined`); `archivedAt !== void 0` (die Gate-Prüfung) antwortet dann false.
+   Matrix am realen Stamp-Entry 4fbefeb9: PRE-HEAL = Archiv-Refusal, POST-HEAL =
+   undefined = KEIN Refusal. Die §23-Kette funktioniert mit dem echten Writer.
+
+2. **V39-Over-Hiding LIVE quantifiziert: 5 REAL-Arbeits-Sessions sind über-hidden.**
+   Das Listing-Prädikat (session-list-target-C2rmz7hN.mjs:39): `spawnedBy` gesetzt und
+   rest KEIN `dashboard:`-Rest ⇒ `isSubagent` ⇒ aus ALLEN Standard-Listings gefiltert.
+   Betroffen (alle Werte = Eltern-Referenzen, i. e. OUR Stamp-Form):
+   60bac3d6 (Main-Binding, spawnedBy=agent:claude:main), 4b5b8fbd, f13a1603,
+   5b4952f6, 5f3d7dec. In Native sind das DIE Konversations-Sessions — Rail/Palette/
+   Counts verstecken sie falsch.
+
+**Neues drittes Fix-Bein: `unhideOverstampedCloneSessions`** (session-settle.ts, §23.2):
+self-gegate auf Native (Claim-Semantik unverändert), räumt `spawnedBy`-Legacy-Provenance
+auf OUR-Clone-Grammatik (CLONE_KEY_REST_RE) bei gateway_start — DAS SELBE Boot-Moment wie
+der Un-Archive-Heal. Der .27-Guard (2dd81d9) verhindert nur NEUE Stamps; dieser Heal
+befreit die 5 existierenden REAL-Sessions (im .28-Baseline ungespielt). Dashboard-Rows
+beweis-clean (Prädikat schützt `dashboard:`-Rest); subagent-Rows nie Ziel.
+
+## 24. Init-Race: Native Readiness-Join (0.7.13.30-Zug, 2026-10-15)
+
+**Wurzel (dist-verifiziert):** der Host hat einen Pre-Dispatch-Ready-Wait —
+`ensureConfiguredBindingRouteReady` (binding-routing-DrKISi49.mjs:150, 30 s
+Budget) — aber er läuft NUR für `bindingMode.kind === "configured"`
+(bot-message-BSJK5l6G.mjs:1211). Plugin-owned Bindings sind ausdrücklich
+ausgeschlossen: kein Warten, kein Spawn-ahead → die erste Nachricht einer
+frisch abgeleiteten Konversation rennt gegen den Kaltstart (~4-5 s ACP-Spawn).
+Der Plugin-Cascade feuert das Ensure zwar beim Resolve (fire-and-forget,
+agent-map resolveHarnessTarget leg 2), aber NIEMAND joint es.
+
+### §24.1 Fix: `awaitPendingDashboardHarnessProvisioning` (agent-map.ts, NEU)
+
+Join der in-flight Provision EINER Session, bounded (Default **10 s**, ≫
+Kaltstart, ≪ Host-30 s). Zero-Overhead-Steady-State (kein in-flight → sofort).
+Ensure-Fehler werden geschluckt (Host-Turn-Path liefert/retry wie bisher;
+Signature-Bookkeeping retryt beim nächsten Resolve). Self-gegate auf Native —
+Claim behält seinen eingeführten Join-Punkt (Claim-Barrier, reply-claim.ts:447);
+sync-Resolves bleiben fire-and-forget.
+
+### §24.2 Anbringung (async-Ingress only)
+
+- binding-adapter.ts: `resolveByConversationAsync` (nach bridge-derive/desk) +
+  `inspectByConversationAsync` — nach Record-Kalkulation, Record-Content
+  UNVERÄNDERT (Host-Stabilitätsvergleich resolve→touch→re-resolve unberührt).
+- dashboard-bridge.ts: `resolveByConversationAsync` + `inspectByConversationAsync`
+  (nach store.whenReady). Der Host präferiert die async-Varianten genau auf den
+  Flüssen, die warten können.
+
+### §24.3 Tests (+5, Suite 231/231 incl. timeout-bound case)
+
+Claim-Modus wartet nicht (Join-Punkt Claim-Barrier), Native joint deterministisch,
+hängende Provision wird durch den Bound gebrochen, kein in-flight = sofort,
+Webchat-Adapter-Async joint ebenfalls.
+
+### §24.4 Bewusst NICHT hier
+
+- Host-seitige Erweiterung des configured-Only-Gates (bot-message:1211) — Host-Code.

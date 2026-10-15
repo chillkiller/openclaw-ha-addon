@@ -10,7 +10,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
   resetDashboardBindingCloneAutoArchiveForTest,
+  resetDashboardBindingDispatchModeForTest,
   setDashboardBindingCloneAutoArchive,
+  setDashboardBindingDispatchMode,
 } from "./agent-map.js";
 import {
   buildClaimSettlePatch,
@@ -21,6 +23,8 @@ import {
   stampSubagentProvenance,
   sweepOwnedStuckSessions,
   unarchiveHiddenClone,
+  unarchiveOwnedLegacyStamps,
+  unhideOverstampedCloneSessions,
   type SessionStoreApi,
   type SettleSessionEntryLike,
   type SweepSessionStoreApi,
@@ -480,5 +484,154 @@ describe("BRIDGE §19c: sweepOwnedStuckSessions", () => {
     });
     expect(result.settled).toEqual([]);
     expect(store.patches).toEqual([]);
+  });
+});
+describe("BRIDGE §23 (native dispatch mode, reset-bug): no stamps in + boot un-archive heal", () => {
+  beforeEach(() => setDashboardBindingDispatchMode("native"));
+  afterEach(() => {
+    resetDashboardBindingDispatchModeForTest();
+    resetDashboardBindingCloneAutoArchiveForTest();
+  });
+
+  it("buildCloneHiddenPatch refuses NATIVE mode even with cloneAutoArchive:true (archived targets refuse dispatch)", () => {
+    setDashboardBindingCloneAutoArchive(true);
+    expect(buildCloneHiddenPatch({ status: "done", endedAt: 5 })).toBeNull();
+  });
+
+  it("sweep γ leg no-ops in native mode even with cloneAutoArchive:true", async () => {
+    setDashboardBindingCloneAutoArchive(true);
+    const store = createFakeStore({ entries: { [TARGET]: { status: "done", endedAt: 5 } } });
+    const result = await sweepOwnedStuckSessions({
+      sessionStore: store,
+      agentIds: ["claude"],
+      cutoffMs: Date.now() - 1_000,
+    });
+    expect(result.archived).toEqual([]);
+    expect(store.patches).toEqual([]);
+  });
+
+  it("unarchiveOwnedLegacyStamps clears OUR stamps on clone and dashboard shapes", async () => {
+    const stashClone = "agent:claude:acp:binding:webchat:default:60bac3d65e697154";
+    const dashboard = "agent:claude:dashboard:3afa8a32-1111-2222-3333-444455556666";
+    const store = createFakeStore({
+      entries: {
+        [stashClone]: {
+          status: "done",
+          archivedAt: 100,
+          archivedBy: { type: "system", id: "acp-dashboard-binding" },
+        },
+        [dashboard]: {
+          status: "done",
+          archivedAt: 101,
+          archivedBy: { type: "system", id: "acp-dashboard-binding" },
+        },
+      },
+    });
+    const result = await unarchiveOwnedLegacyStamps({
+      sessionStore: store,
+      agentIds: ["claude"],
+    });
+    expect(result.restored.sort()).toEqual([stashClone, dashboard].sort());
+    for (const key of [stashClone, dashboard]) {
+      const cleared = store.entries[key] as SettleSessionEntryLike;
+      expect(Object.hasOwn(cleared, "archivedAt")).toBe(false);
+      expect(Object.hasOwn(cleared, "archivedBy")).toBe(false);
+    }
+  });
+
+  it("unarchiveOwnedLegacyStamps never touches foreign/manual archives or non-owned keys", async () => {
+    const stashClone = "agent:claude:acp:binding:webchat:default:60bac3d65e697154";
+    const foreign = `${stashClone.slice(0, -8)}aaaa0000`;
+    const outside = "agent:claude:subagent:abc:123";
+    const store = createFakeStore({
+      entries: {
+        [stashClone]: { status: "done", archivedAt: 50, archiveReason: "stale-dashboard" },
+        [foreign]: { status: "done", archivedAt: 60, archivedBy: { type: "human" }, archiveReason: "manual" },
+        [outside]: {
+          status: "done",
+          archivedAt: 70,
+          archivedBy: { type: "system", id: "acp-dashboard-binding" },
+        },
+      },
+    });
+    const result = await unarchiveOwnedLegacyStamps({
+      sessionStore: store,
+      agentIds: ["claude"],
+    });
+    expect(result.restored).toEqual([]);
+    expect(store.patches).toEqual([]);
+    expect((store.entries[stashClone] as SettleSessionEntryLike).archivedAt).toBe(50);
+    expect((store.entries[foreign] as SettleSessionEntryLike).archivedAt).toBe(60);
+    expect((store.entries[outside] as SettleSessionEntryLike).archivedAt).toBe(70);
+  });
+
+  it("claim mode: the boot heal stands down (γ semantics unchanged there)", async () => {
+    resetDashboardBindingDispatchModeForTest();
+    const stashClone = "agent:claude:acp:binding:webchat:default:60bac3d65e697154";
+    const store = createFakeStore({
+      entries: {
+        [stashClone]: {
+          status: "done",
+          archivedAt: 100,
+          archivedBy: { type: "system", id: "acp-dashboard-binding" },
+        },
+      },
+    });
+    const result = await unarchiveOwnedLegacyStamps({
+      sessionStore: store,
+      agentIds: ["claude"],
+    });
+    expect(result.restored).toEqual([]);
+    expect(store.patches).toEqual([]);
+    expect((store.entries[stashClone] as SettleSessionEntryLike).archivedAt).toBe(100);
+  });
+});
+
+describe("BRIDGE §23.2/V39 (native dispatch mode): unhideOverstampedCloneSessions", () => {
+  beforeEach(() => setDashboardBindingDispatchMode("native"));
+  afterEach(() => {
+    resetDashboardBindingDispatchModeForTest();
+    resetDashboardBindingCloneAutoArchiveForTest();
+  });
+
+  it("clears spawnedBy provenance stamps on clone grammar (real 5/5 stamp values are parent keys)", async () => {
+    const stamped = "agent:claude:acp:binding:webchat:default:60bac3d65e697154";
+    const store = createFakeStore({
+      entries: {
+        [stamped]: { status: "done", spawnedBy: "agent:claude:main" },
+      },
+    });
+    const result = await unhideOverstampedCloneSessions({ sessionStore: store, agentIds: ["claude"] });
+    expect(result.unhidden).toEqual([stamped]);
+    const cleared = store.entries[stamped] as SettleSessionEntryLike;
+    expect(cleared.spawnedBy).toBeUndefined();
+  });
+
+  it("leaves unstamped clones, dashboard rows, and non-clone grammar untouched", async () => {
+    const stampedClone = "agent:claude:acp:binding:webchat:default:5b4952f61b67a9d1";
+    const dashboard = "agent:claude:dashboard:21fac764-1420-4093-a37b-2db0d0a39d85";
+    const subagent = "agent:claude:subagent:abc:123";
+    const store = createFakeStore({
+      entries: {
+        [stampedClone]: { status: "done" },
+        [dashboard]: { status: "done", spawnedBy: "agent:claude" },
+        [subagent]: { status: "done", spawnedBy: "agent:claude" },
+      },
+    });
+    const result = await unhideOverstampedCloneSessions({ sessionStore: store, agentIds: ["claude"] });
+    expect(result.unhidden).toEqual([]);
+    expect(store.patches).toEqual([]);
+    // dashboard rows are predicate-hidden anyway (rest starts with dashboard:)
+    // and subagent rows are real subagents — never our heal's business.
+  });
+
+  it("claim mode: the heal stands down (γ + provenance semantics unchanged there)", async () => {
+    resetDashboardBindingDispatchModeForTest();
+    const stamped = "agent:claude:acp:binding:webchat:default:60bac3d65e697154";
+    const store = createFakeStore({ entries: { [stamped]: { status: "done", spawnedBy: "agent:claude:main" } } });
+    const result = await unhideOverstampedCloneSessions({ sessionStore: store, agentIds: ["claude"] });
+    expect(result.unhidden).toEqual([]);
+    expect(store.patches).toEqual([]);
+    expect((store.entries[stamped] as SettleSessionEntryLike).spawnedBy).toBe("agent:claude:main");
   });
 });
