@@ -1724,6 +1724,18 @@ supervise_ttyd() {
       continue
     fi
     echo "WARN: web terminal (ttyd) not listening on ${TERMINAL_PORT}; restarting it..."
+    # Forensic snapshot of the hung process (ttyd 1.7.7 can sit ALIVE but not
+    # listening — the kill -0 in stop_stale_ttyd succeeds on every revive; the
+    # root cause is still open and this is the only place that sees it live).
+    for FORENSIC_PID in $(pgrep -x ttyd 2>/dev/null); do
+      echo "ttyd forensics pid=${FORENSIC_PID} stat=$(awk '{print $3}' /proc/${FORENSIC_PID}/stat 2>/dev/null)" \
+        "wchan=$(cat /proc/${FORENSIC_PID}/wchan 2>/dev/null)" \
+        "threads=$(ls /proc/${FORENSIC_PID}/task 2>/dev/null | wc -l)" \
+        "fds=$(ls /proc/${FORENSIC_PID}/fd 2>/dev/null | wc -l)"
+      for T in /proc/${FORENSIC_PID}/task/*; do
+        echo "  tid=$(basename "$T") state=$(awk '{print $3}' "$T/stat" 2>/dev/null) wchan=$(cat "$T/wchan" 2>/dev/null)"
+      done
+    done
     stop_stale_ttyd
     start_ttyd
     sleep 30

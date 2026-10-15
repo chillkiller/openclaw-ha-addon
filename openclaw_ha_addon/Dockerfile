@@ -1,5 +1,5 @@
 # OpenClaw HA-App v0.7.13 — Debian Bookworm Full-Stack
-# OpenClaw 2026.10.2 + node-llama-cpp@3.20.0 + mcporter@0.12.3 + CUPS/Scanner + crawl4ai + Go-PATH-Fix + D-Bus/Avahi
+# OpenClaw 2026.10.3 + node-llama-cpp@3.20.0 + mcporter@0.12.3 + CUPS/Scanner + crawl4ai + Go-PATH-Fix + D-Bus/Avahi
 # Builder stage removed (dead code since v0.7.5.1 — never wired)
 # Build dependencies are kept in the final image so runtime native builds work
 # NOTE: Since HA Supervisor 2026.04, build.yaml is obsolete. Base image must be
@@ -276,7 +276,7 @@ RUN ARCH=$(echo ${TARGETARCH:-$(dpkg --print-architecture)} | sed 's|arm64|aarch
     && chmod +x /usr/local/bin/ttyd
 
 # =============================================================================
-# Install OpenClaw 2026.10.2 + node-llama-cpp 3.20.0 + mcporter 0.12.3
+# Install OpenClaw 2026.10.3 + node-llama-cpp 3.20.0 + mcporter 0.12.3
 # Bundle node-llama-cpp in the image so the default local memory/embeddings
 # provider works in HAOS without requiring manual npm installs in /usr/lib.
 #
@@ -292,8 +292,8 @@ ENV NODE_LLAMA_CPP_POSTINSTALL=skip
 # engine bump). npm itself verifies the registry dist.integrity for the pinned
 # version; the post-install gate re-checks the exact installed version so a
 # silently wrong registry manifest fails the build loudly.
-RUN npm install -g openclaw@2026.10.2 \
-    && node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('/usr/lib/node_modules/openclaw/package.json','utf8'));if(p.version!=='2026.10.2'){console.error('ERROR: unexpected OpenClaw version installed: '+p.version);process.exit(1)};console.log('OpenClaw pin verified: '+p.version)" \
+RUN npm install -g openclaw@2026.10.3 \
+    && node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('/usr/lib/node_modules/openclaw/package.json','utf8'));if(p.version!=='2026.10.3'){console.error('ERROR: unexpected OpenClaw version installed: '+p.version);process.exit(1)};console.log('OpenClaw pin verified: '+p.version)" \
     && npm install -g node-llama-cpp@3.20.0 \
     && npm install -g mcporter@0.12.3 \
     && npm install -g pnpm \
@@ -301,7 +301,8 @@ RUN npm install -g openclaw@2026.10.2 \
 
 # OpenClaw 2026.9.9+ keeps the openai-http agentId fix natively (tarball-verified
 # 2026-10-09 in dist/openai-http-CQ7X8xZA.mjs (2026.9.9) and re-verified 2026-10-12
-# in the 2026.10.2 tarball (dist/openai-http-BBp46gf8.mjs): agentId forwarded in the
+# in the 2026.10.2 tarball (dist/openai-http-BBp46gf8.mjs) and re-verified 2026-10-16
+# in the 2026.10.3 tarball (dist/openai-http-j90i3YZW.mjs): agentId forwarded in the
 # request-context path). No patch block needed.
 
 # OWASP LLM01:2026 Control #5 — context-sensitive invisible-Unicode stripping at
@@ -317,6 +318,19 @@ RUN npm install -g openclaw@2026.10.2 \
 # control). Behavior matrix + tradeoffs: unicode-guard/README.md.
 COPY unicode-guard /openclaw_ha_addon/unicode-guard
 RUN node /openclaw_ha_addon/unicode-guard/apply-unicode-guard-patch.mjs /usr/lib/node_modules/openclaw
+
+# ciao mDNS self-conflict storm fix (live-verified 2026-10-15, v0.7.13.30):
+# @homebridge/ciao keys its reverseAddressPTRs map with Node's FULL-form IPv6
+# strings while inbound AAAA rdata decodes through shortenIPv6 (RFC-compressed)
+# — hasAddress() then misses ciao's OWN ULA address (every FRITZ!Box LAN:
+# fd12:8ca5:a145::/48) and every self-reflection is "conflicting record"
+# → endless probe/rename/republish (76 renames in ~4.5 h live, instance
+# "(76)"). Normalizing the map keys to the decoded form removes exactly the
+# false positive (foreign claims still conflict). Anchored + fail-loud like
+# the unicode-guard patch; A/B test (restricted vs unrestricted responder):
+# 0 renames after the patch, ~1/s before.
+COPY ciao-mdns-guard /openclaw_ha_addon/ciao-mdns-guard
+RUN node /openclaw_ha_addon/ciao-mdns-guard/apply-ciao-mdns-guard-patch.mjs /usr/lib/node_modules/openclaw
 
 # Patch node-llama-cpp to honor NLC_BUILD_PARALLEL for constrained builds
 RUN node - <<'NODE'
