@@ -1,3 +1,14 @@
+## [0.7.13.32] - 2026-10-16
+
+### Fixed
+- **§25 Leg 2 tot für derived/bridged Bindings (Fix `068f77f`):** der in .31 gelieferte Dual-Reset-Driver (v1) verfehlte sein Ziel live (Owner-Test auf Conversation `ca7fde5b`: Work-Session reset OK, Dashboard-Conversation unverändert, 0 „dual reset"-Logzeilen). Root Cause: der Dashboard-Binding-Adapter speichert nur EXPLICIT-Binds — bridged/derived Records (jede nativ-dispatchte Dashboard-Conversation) werden on-the-fly berechnet und nie gespeichert ⇒ `listBySession(workKey)` (die Reverse-Lookup, über die der Driver beim Registry-Resolve claimt) antwortete `[]` ⇒ Driver deferte an den builtin (Status quo Work-only). Fix: Reverse-Lookup-Cache `derivedByTarget` (bounded 512) in `binding-adapter.ts` — jede Cascade-Leg (sync resolve + resolveByConversationAsync, bridged + derived) notiert ihren projizierten Record; `listBySession` konsultiert explicit ∪ Cache (re-projiziert). Cache warmt sich pro Turn-Dispatch — fehlt er (kein Resolve seit Boot), defert der Driver = Status quo, selbstheilend. Verifikation: vitest Binding 251/251 (+3: listBySession-answered-for-derived inkl. Live-Hash-Integrationstest `22afb5c2cb951156`, defer-when-no-resolve), tsc strict 0. Achtung: Tag `v0.7.13.31` schnitt VOR diesem Fix — daher Patch-Step .32 (Versionierungs-Regel).
+
+### Changed
+- **ttyd-Reviver-Forensics erweitert (Bug ①):** der .31-Snapshot beim ersten Live-Hang (pid 15737: `stat=S wchan=do_epoll_wait threads=1 fds=14`, kein Listener) stellte die Hypothese „lws verliert den Listen-Socket" auf, konnte sie aber nicht belegen (nur fd-COUNT). Neu beim Revive: vollständige fd-Target-Liste (`/proc/PID/fd` → `socket:[inode]`/File) je ttyd-PID + `ss -tlnp`-Kreuzsnapshot — der nächste Live-Hang beweist/widerlegt direkt, ob ein Listener-fd fehlt oder vorhanden-but-verbunden ist.
+
+### Known issues (unverändert aus .31)
+- Slow-Boot (Bug ④, watchdog_start_seconds-Folgearbeit); §25 Trust-Gate live (Verifikation nach dem .32-Deploy via `/reset` in gebundener Test-Conversation); resetSkipped→ok:true (Upstream-Report-Material); ttyd alive-but-hung Root-Cause (Forensik jetzt mit fd-Targets); Translation-Drift bg/es/pl/pt-BR (Backlog).
+
 ## [0.7.13.31] - 2026-10-16
 
 ### Fixed

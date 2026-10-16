@@ -1,8 +1,8 @@
-# OpenClaw Home Assistant App v0.7.13.31 Configuration
+# OpenClaw Home Assistant App v0.7.13.32 Configuration
 # Full OpenClaw runtime with Ingress Web UI, web terminal, Assist pipeline
 # and MCP integration. Option reference lives in DOCS.md ("Configuration").
 name: OpenClaw Assistant
-version: "0.7.13.31"
+version: "0.7.13.32"
 slug: openclaw_ha_addon
 description: Agentic AI assistant for Home Assistant — full OpenClaw runtime with Ingress Web UI, web terminal, Assist pipeline and MCP integration
 url: https://github.com/chillkiller/openclaw-ha-addon

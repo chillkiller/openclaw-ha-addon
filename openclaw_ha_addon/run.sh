@@ -1735,6 +1735,13 @@ supervise_ttyd() {
       for T in /proc/${FORENSIC_PID}/task/*; do
         echo "  tid=$(basename "$T") state=$(awk '{print $3}' "$T/stat" 2>/dev/null) wchan=$(cat "$T/wchan" 2>/dev/null)"
       done
+      # fd targets make the lost-listener hypothesis falsifiable: the live
+      # 05:10 snapshot (v0.7.13.31) saw 1 thread in epoll_wait with 14 fds and
+      # no listener — we need to see WHICH sockets the fd table still holds.
+      for F in /proc/${FORENSIC_PID}/fd/*; do
+        echo "  fd=$(basename "$F") -> $(readlink "$F" 2>/dev/null)"
+      done
+      ss -tlnp 2>/dev/null | grep -F "pid=${FORENSIC_PID}," | head -10
     done
     stop_stale_ttyd
     start_ttyd
