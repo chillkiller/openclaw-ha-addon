@@ -387,6 +387,30 @@ export function createDashboardBindingAdapter(options: DashboardBindingAdapterOp
   const ownChannel = normalizeChannelId(options.channel) || BINDING_CHANNEL;
   const ownAccountId = normalizeAccountId(options.accountId) || BINDING_ACCOUNT_ID;
 
+  // §25 reverse-lookup cache: bridged/derived records are computed on the fly
+  // and never stored, so `listBySession` — the targetSessionKey → conversation
+  // reverse lookup the dual-reset driver's resolution claims through — could
+  // only ever see explicit rows (in-memory MVP binds) and came up EMPTY for
+  // every natively-dispatched dashboard conversation (the 2026-10-16 live
+  // /reset test failure: work session reset, conversation leg never fired).
+  // Every cascade leg below records its projected record here. Bindings
+  // resolve on every turn, so the cache is warm by the time a /reset resolves
+  // through the host registry; worst case the driver defers and the host
+  // behaves exactly as before (work-session-only reset).
+  const derivedByTarget = new Map<string, DashboardBindingRecord>();
+  const DERIVED_CACHE_LIMIT = 512;
+  const noteForReverseLookup = (record: DashboardBindingRecord | null): DashboardBindingRecord | null => {
+    if (!record || record.targetKind !== "session") return record;
+    const key = record.targetSessionKey?.trim();
+    if (!key) return record;
+    if (derivedByTarget.size >= DERIVED_CACHE_LIMIT && !derivedByTarget.has(key)) {
+      const oldest = derivedByTarget.keys().next().value;
+      if (oldest !== undefined) derivedByTarget.delete(oldest);
+    }
+    derivedByTarget.set(key, record);
+    return record;
+  };
+
   /** Explicit rows only — shared by the sync mirror and the async resolver. */
   const findExplicit = (channel: string, accountId: string, conversationId: string): DashboardBindingRecord | null => {
     for (const record of explicit.values()) {
@@ -415,10 +439,14 @@ export function createDashboardBindingAdapter(options: DashboardBindingAdapterOp
       },
       options,
     );
-    if (bridged) return projectRecordForDispatchMode(bridged);
+    if (bridged) return noteForReverseLookup(projectRecordForDispatchMode(bridged));
     // 3. Otherwise derive the ACP target for harness agent conversations
     //    (own Turn-1 synthesis — answers when no bridge is active).
-    return projectRecordForDispatchMode(deriveBindingRecord({ channel, accountId, conversationId, ...ref.parentConversationId ? { parentConversationId: ref.parentConversationId } : {} }, options));
+    return noteForReverseLookup(
+      projectRecordForDispatchMode(
+        deriveBindingRecord({ channel, accountId, conversationId, ...ref.parentConversationId ? { parentConversationId: ref.parentConversationId } : {} }, options),
+      ),
+    );
   };
 
   return {
@@ -472,10 +500,19 @@ export function createDashboardBindingAdapter(options: DashboardBindingAdapterOp
     listBySession(targetSessionKey: string): DashboardBindingRecord[] {
       const key = optionalTrim(targetSessionKey);
       if (!key) return [];
-      return [...explicit.values()]
+      const matches = [...explicit.values()]
         .filter((record) => record.targetSessionKey === key)
         .map((record) => projectRecordForDispatchMode(record))
         .filter((record): record is DashboardBindingRecord => record !== null);
+      // §25: derived/bridged records are not stored — answer from the cascade
+      // reverse-lookup cache (records were projected at note time; re-project
+      // so a dispatch-mode change since then still applies).
+      const cached = derivedByTarget.get(key);
+      if (cached) {
+        const projected = projectRecordForDispatchMode(cached);
+        if (projected) matches.push(projected);
+      }
+      return matches;
     },
 
     // Pure, deterministic — safe to expose synchronously. The host's
@@ -507,8 +544,18 @@ export function createDashboardBindingAdapter(options: DashboardBindingAdapterOp
       }), {
         roster: createConfigHarnessRoster(options.getConfig?.()),
       });
-      if (bridged) return await awaitNativeDispatchReadiness(projectRecordForDispatchMode(bridged as unknown as DashboardBindingRecord));
-      return await awaitNativeDispatchReadiness(projectRecordForDispatchMode(deriveBindingRecord({ channel, accountId, conversationId, ...ref.parentConversationId ? { parentConversationId: ref.parentConversationId } : {} }, options)));
+      if (bridged) {
+        return await awaitNativeDispatchReadiness(
+          noteForReverseLookup(projectRecordForDispatchMode(bridged as unknown as DashboardBindingRecord)),
+        );
+      }
+      return await awaitNativeDispatchReadiness(
+        noteForReverseLookup(
+          projectRecordForDispatchMode(
+            deriveBindingRecord({ channel, accountId, conversationId, ...ref.parentConversationId ? { parentConversationId: ref.parentConversationId } : {} }, options),
+          ),
+        ),
+      );
     },
     // "Inspects committed ownership without creating storage or pruning rows."
     async inspectByConversationAsync(ref: BindingConversationRef): Promise<DashboardBindingRecord | null> {

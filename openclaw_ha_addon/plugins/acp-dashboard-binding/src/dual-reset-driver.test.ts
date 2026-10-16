@@ -18,6 +18,8 @@ import {
   type StatefulBindingTargetDriverLike,
 } from "./dual-reset-driver.js";
 import { STATEFUL_TARGET_DRIVERS_SYMBOL } from "./dual-reset-driver.js";
+import { buildAcpBindingSessionKey } from "./agent-map.js";
+import { createDashboardBindingAdapter } from "./binding-adapter.js";
 
 const WORK_KEY = "agent:claude:acp:binding:webchat:default:9c48a2456423b29b";
 const CONVERSATION_KEY = "agent:claude:dashboard:df380d1f-3109-424e-8ec7-6474c0f4e40b";
@@ -321,5 +323,72 @@ describe("§25 dual-reset driver — registration ordering", () => {
     expect(registry.has(DUAL_RESET_DRIVER_ID)).toBe(false);
     expect(registry.has("acp")).toBe(true);
     void disposed;
+  });
+});
+
+describe("§25 integration — driver claims through the REAL binding adapter", () => {
+  // The 2026-10-16 live /reset test failure lived exactly in this seam: the
+  // derived dashboard record was never stored, so the adapter's listBySession
+  // reversed nothing and the driver deferred to the builtin (work-session-only
+  // reset). This test pins the full chain — derive → note → listBySession →
+  // claim — without any host code.
+  const DASHBOARD_KEY = "agent:claude:dashboard:ca7fde5b-9654-4450-8dc5-4792d9773b9b";
+  const DASHBOARD_REF = {
+    channel: "webchat" as const,
+    accountId: "default",
+    conversationId: DASHBOARD_KEY,
+  };
+  const CFG = {
+    agents: {
+      entries: {
+        claude: {
+          cwd: "/share/temp/claude-ws",
+          runtime: { type: "acp", acp: { backend: "acpx" } },
+        },
+      },
+    },
+  };
+
+  it("derives → notes → claims the plugin-owned key and carries the conversation key", async () => {
+    const adapter = createDashboardBindingAdapter({ getConfig: () => CFG });
+    const workKey = buildAcpBindingSessionKey({
+      channel: "webchat",
+      accountId: "default",
+      conversationId: DASHBOARD_KEY,
+      agentId: "claude",
+    });
+    // The derived-leg resolve warms the reverse-lookup cache (this is the
+    // host's own /reset flow: conversation resolve → registry resolve).
+    const derived = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
+    expect(derived?.targetSessionKey).toBe(workKey);
+    const driver = createDualResetDriver({
+      resolveDriverRegistry: () => new Map([["acp", builtinDriver()]]),
+      getAdapter: () => adapter,
+      hasSessionEntry: async () => true,
+      gatewayRequest: async () => ({ ok: true, entry: { sessionId: "x" } }),
+      logger: { debug: () => {}, info: () => {}, warn: () => {} },
+    });
+    const target = await driver.resolveTargetBySessionKey!({ cfg: CFG, sessionKey: workKey });
+    expect(target).not.toBeNull();
+    expect(target?.conversationSessionKey).toBe(DASHBOARD_KEY);
+    expect(target?.sessionKey).toBe(workKey);
+  });
+
+  it("defers when NO resolve preceded (empty cache → status quo, self-healing)", async () => {
+    const adapter = createDashboardBindingAdapter({ getConfig: () => CFG });
+    const workKey = buildAcpBindingSessionKey({
+      channel: "webchat",
+      accountId: "default",
+      conversationId: DASHBOARD_KEY,
+      agentId: "claude",
+    });
+    const driver = createDualResetDriver({
+      resolveDriverRegistry: () => new Map([["acp", builtinDriver()]]),
+      getAdapter: () => adapter,
+      hasSessionEntry: async () => true,
+      gatewayRequest: async () => ({ ok: true, entry: { sessionId: "x" } }),
+      logger: { debug: () => {}, info: () => {}, warn: () => {} },
+    });
+    expect(await driver.resolveTargetBySessionKey!({ cfg: CFG, sessionKey: workKey })).toBeNull();
   });
 });

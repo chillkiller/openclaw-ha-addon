@@ -271,6 +271,38 @@ describe("dashboard binding adapter (acceptance #2)", () => {
     const viaAsync = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
     expect(viaSync).toEqual(viaAsync);
   });
+
+  // §25 (2026-10-16 live /reset test failure): bridged/derived records are
+  // computed on the fly and never stored, so the reverse lookup the dual-reset
+  // driver claims through returned ONLY explicit rows — every natively
+  // dispatched dashboard conversation answered [] and the conversation reset
+  // leg never fired. The cascade must note its projected records for
+  // listBySession.
+  it("listBySession answers for derived records after a cascade resolve (§25 reverse lookup)", async () => {
+    const adapter = createDashboardBindingAdapter({ getConfig: () => HARNESS_CFG });
+    const workKey = buildAcpBindingSessionKey({
+      channel: "webchat",
+      accountId: "default",
+      conversationId: DASHBOARD_KEY,
+      agentId: "codex"
+    });
+    // Before the first resolve the derived record exists nowhere: [].
+    expect(adapter.listBySession!(workKey)).toEqual([]);
+    const derived = await adapter.resolveByConversationAsync!(DASHBOARD_REF);
+    expect(derived?.targetSessionKey).toBe(workKey);
+    // The dual-reset driver receives the work key and must find the owning
+    // conversation here.
+    const viaList = adapter.listBySession!(workKey);
+    expect(viaList).toHaveLength(1);
+    expect(viaList[0]?.conversation).toMatchObject({ conversationId: DASHBOARD_KEY });
+    expect(viaList[0]?.targetKind).toBe("session");
+    // The sync mirror warms the cache identically (host may use either path).
+    const fresh = createDashboardBindingAdapter({ getConfig: () => HARNESS_CFG });
+    expect(fresh.resolveByConversation!(DASHBOARD_REF)).not.toBeNull();
+    expect(fresh.listBySession!(workKey)).toHaveLength(1);
+    // Foreign/unknown keys still answer empty.
+    expect(adapter.listBySession!("agent:codex:acp:binding:webchat:default:deadbeefdeadbeef")).toEqual([]);
+  });
 });
 
 // --- Weg B: config-gated dispatch mode (BRIDGE.md §21) -----------------------
