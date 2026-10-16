@@ -1,7 +1,8 @@
 {
   "id": "harness-config-writer",
   "name": "Harness Config Writer",
-  "description": "Deploys harness-native file/env config for configured local-provider harnesses (codex+opencode config files; claude/gemini/droid/qwen/kimi/kiro/iflow harness-env) on plugin load, writing ALL available models (auto-matched from the gateway's models.providers by baseUrl; required 'model' stays the default). Additive to bundled acpx: absence of a harness id writes NOTHING — vendor auth runs unchanged.",
+  "description": "Deploys harness-native file/env config for configured local-provider harnesses (codex+opencode config files; claude/gemini/droid/qwen/kimi/kiro/iflow/copilot harness-env) on plugin load, writing ALL available models (auto-matched from the gateway's models.providers by baseUrl; required 'model' stays the default). Additive to bundled acpx: absence of a harness id writes NOTHING — vendor auth runs unchanged.",
+  "categories": ["developer-tools"],
   "activation": {
     "onStartup": true
   },

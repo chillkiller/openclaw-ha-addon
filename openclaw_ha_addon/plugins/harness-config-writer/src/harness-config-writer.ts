@@ -50,11 +50,13 @@
  *                      + Multi-Model via provider.models-Map
  *   B ENV  : claude (ANTHROPIC_* + CLAUDE_MODEL_CONFIG), gemini (GEMINI_*),
  *            droid (FACTORY_API_KEY), qwen (OPENAI_*), kimi (KIMI_MODEL_*),
- *            kiro (KIRO_API_KEY), iflow (IFLOW_*) — je eine env-Datei pro
+ *            kiro (KIRO_API_KEY), iflow (IFLOW_*), copilot (COPILOT_PROVIDER_*
+ *            + COPILOT_MODEL — BYOK/OpenAI-compatible, Aufnahme 2026-10-16,
+ *            Ollama-Doku + Binary verifiziert) — je eine env-Datei pro
  *            Harness (harness-env/<id>.env), gesourcet vom acpx-Command-
  *            Override plugins.entries.acpx.config.agents.<id>.command/args
- *            (BRIDGE.md §15). Alle ENV-Namen docs-verifiziert (2026-10-11).
- *   C NONE : copilot/cursor und alle übrigen CLI-OAuth-owned Harnesses —
+ *            (BRIDGE.md §15). Alle ENV-Namen docs-verifiziert.
+ *   C NONE : cursor und alle übrigen CLI-OAuth-owned Harnesses —
  *            Skip, das Plugin schreibt für sie nichts.
  *
  * Deployment-Trigger: registerFull (Plugin-Load, idempotent — alle Writer
@@ -89,7 +91,12 @@ function resolveOpenClawStateDir(env?: Record<string, string | undefined>): stri
   if (configDir) return configDir;
   const configPath = typeof e.OPENCLAW_CONFIG_PATH === "string" ? e.OPENCLAW_CONFIG_PATH.trim() : "";
   if (configPath) {
-    const dir = configPath.replace(/\/+$/, "").split("/").slice(0, -1).join("/");
+    // Domain-4-Audit r4 (info): bare filename ohne '/' (z. B. "openclaw.json")
+    // lieferte '' → Arm fiel durch auf XDG/HOME. Konvention: relative Datei
+    // liegt im CWD → '.' als State-Dir, konsistent mit node's path.dirname.
+    const dir = configPath.includes("/")
+      ? configPath.replace(/\/+$/, "").split("/").slice(0, -1).join("/")
+      : ".";
     if (dir) return dir;
   }
   const xdg = typeof e.XDG_CONFIG_HOME === "string" ? e.XDG_CONFIG_HOME.trim() : "";
@@ -147,7 +154,7 @@ export type HarnessMechanism = "file-codex" | "file-opencode" | "env" | "none";
 
 export type HarnessDeployFile = {
   path: string;
-  action: "created" | "updated" | "unchanged" | "note (customized, left intact)";
+  action: "created" | "updated" | "unchanged" | "augmented" | "note (customized, left intact)";
 };
 
 export type HarnessDeployResult = {
@@ -276,22 +283,213 @@ function writeFileIfMissingOrDiffers(
  * der den heutigen NOTE-Zweig sonst einfrieren würde (BRIDGE.md §15.10).
  * Signaturlose Dateien MIT [model_providers.-Block bleiben customized (NOTE).
  */
-function upgradeOrNoteIfMissingOrDiffers(path: string, desired: string): FileAction {
-  if (!existsSync(path)) {
-    atomicWrite(path, desired);
+
+/**
+ * Augment-Semantik (GaRoN 2026-10-16, Design-GO): eine bestehende FREMDE
+ * config.toml (keine Writer-Signatur, kein [model_providers.-Block) wird
+ * NICHT mehr ersetzt — der Ollama-Provider wird als MARKIERTER Abschnitt
+ * angehängt (Operator-Content byte-erhalten). Der Abschnitt trägt NUR
+ * [model_providers.*]/[profiles.*]/[projects.*]-Header — KEINE Top-Level-Keys
+ * (model/model_provider/model_catalog_json): das Model-Routing bleibt
+ * Operator-Entscheidung, damit mit/ohne Plugin wechselbar bleibt.
+ * Kollidierende Operator-Header (gleicher profile/project-Name) werden
+ * übersprungen + Warnung (never guess). Idempotent: der Marker-Rahmen wird
+ * beim Re-Boot in-place refreshed (gleicher Section-Content → unchanged).
+ */
+const AUGMENT_BEGIN_MARKER = "# --- BEGIN harness-config-writer (generated) ---";
+const AUGMENT_END_MARKER = "# --- END harness-config-writer (generated) ---";
+// Final-Audit r2 (glm/deepseek, 2026-10-16): Marker nur als VOLLZEILE matchen —
+// ein Substring-Treffer in Operator-Text (z. B. Kommentar, der den Marker
+// dokumentiert) schnitt sonst Operator-Content mid-line ab (CRITICAL-1) und
+// ein BEGIN ohne END löschte still alles danach (HIGH-1). Refresh bewahrt
+// jetzt auch Operator-Content NACH dem END-Marker (Medium-2).
+const AUGMENT_END_RE = /^# --- END harness-config-writer \(generated\) ---\s*$/m;
+// r2b: LAST-Begin-wins — matchAll braucht das g-Flag; ein Operator-BEGIN
+// mitten im Content vor unserem Block am Dateiende darf beim nächsten Boot
+// nicht die Slice-Grenze bestimmen (sonst frisst der Refresh Operator-Bytes).
+const AUGMENT_BEGIN_RE_G = /^# --- BEGIN harness-config-writer \(generated\) ---\s*$/gm;
+
+/**
+ * Alle TOML-Section-Header ([x.y…] — quoted wie [profiles."id"]) einer Datei,
+ * NORMALISIERT (Final-Audit HIGH-3/F3): quoted Segmente werden ent-quotet und
+ * Whitespace getrimmt — [profiles.m1] und [profiles."m1"] sind dieselbe
+ * logische Table (bare-legal) und MÜSSEN kollidieren, sonst erzeugt das
+ * Augment doppelte Header, die tomllib rejected.
+ */
+function collectTomlSectionHeaders(content: string): Set<string> {
+  const headers = new Set<string>();
+  for (const line of content.split("\n")) {
+    const match = /^\s*\[\[?\s*(.+?)\s*\]?\]\s*$/.exec(line);
+    if (match) {
+      const normalized = match[1]
+        .replace(/"([^"]*)"/g, "$1")
+        .replace(/'([^']*)'/g, "$1")
+        .trim();
+      headers.add(normalized);
+    }
+  }
+  return headers;
+}
+
+/**
+ * Augment-Section aus der Entry: Provider-Block + Profile + Trust-Projekte.
+ * Collisions-Filter: Header, die der Operator schon hat, werden NICHT
+ * emittiert (die Section kann leer ausfallen → Aufrufer behandelt das).
+ */
+export function buildCodexAugmentSection(
+  entry: HarnessConfigEntry,
+  existingHeaders: ReadonlySet<string>,
+  skipped: string[],
+): string {
+  const providerId = deriveProviderId(entry.baseUrl ?? "");
+  const baseUrl = withV1Suffix(entry.baseUrl ?? "");
+  const thinking = nonEmpty(entry.thinking);
+  const lines: string[] = [];
+  // Final-Audit HIGH-3: Kollisionen NORMALISIERT vergleichen — der Set trägt
+  // ent-quotete Bare-Formen, unsere Emission ist quoted ([profiles."id"]);
+  // [profiles.m1] und [profiles."m1"] sind dieselbe logische Table.
+  const collides = (rawHeader: string, bareHeader: string): boolean =>
+    existingHeaders.has(rawHeader) || existingHeaders.has(bareHeader);
+  const providerHeader = `model_providers.${providerId}`;
+  if (!collides(providerHeader, providerHeader)) {
+    lines.push(
+      `[${providerHeader}]`,
+      `name = ${tomlString(`harness-config-writer (${baseUrl})`)}`,
+      `base_url = ${tomlString(baseUrl)}`,
+      `wire_api = "responses"`,
+      `requires_openai_auth = true`,
+      ``,
+    );
+  } else {
+    skipped.push(`model_providers.${providerId} (operator header collision)`);
+  }
+  if (entry.models && entry.models.length > 0) {
+    for (const modelId of dedupeModelIds(entry.models)) {
+      const header = `profiles.${tomlString(modelId)}`;
+      if (collides(header, `profiles.${modelId}`)) {
+        skipped.push(`profiles.${modelId} (operator header collision)`);
+        continue;
+      }
+      lines.push(`[${header}]`, `model = ${tomlString(modelId)}`);
+      if (thinking) lines.push(`model_reasoning_effort = ${tomlString(thinking)}`);
+      lines.push(`model_provider = ${tomlString(providerId)}`, ``);
+    }
+  }
+  const trust = [
+    ...new Set(
+      (entry.trustProjects ?? []).map((p) => {
+        const trimmed = p.trim();
+        const withoutTrailing = trimmed.replace(/\/+$/, "");
+        return withoutTrailing.length > 0 ? withoutTrailing : trimmed;
+      }),
+    ),
+  ].sort();
+  for (const project of trust) {
+    const header = `projects.${tomlString(project)}`;
+    if (collides(header, `projects.${project}`)) {
+      skipped.push(`projects.${project} (operator header collision)`);
+      continue;
+    }
+    lines.push(`[${header}]`, `trust_level = "trusted"`, ``);
+  }
+  // Trailing Blank + Full-Section-Content zurückgeben (ohne BEGIN/END-Marker —
+  // die rahmt der Aufrufer).
+  while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  return `${lines.join("\n")}\n`;
+}
+
+/**
+ * codex config.toml Lebenszyklus (erschöpfend, in Präzedenz-Reihenfolge):
+ *  1. fehlt                     → created (Writer-Vollform mit Signatur)
+ *  2. byte-identisch            → unchanged
+ *  3. Writer-Signatur-Zeile 1   → updated (bytes-sync, wir besitzen die Datei)
+ *  4. fremd + [model_providers. → NOTE (customized, never overwritten)
+ *  5. fremd + AUGMENT-Marker   → Marker-Rahmen refreshed (updated/unchanged)
+ *  6. fremd, sonst             → AUGMENTED (markierter Provider-Abschnitt
+ *     wird angehängt; Operator-Content bleibt byte-erhalten; Section leer
+ *     wegen Kollisionen → NOTE + Warnung)
+ */
+function manageCodexToml(
+  tomlPath: string,
+  desired: string,
+  entry: HarnessConfigEntry,
+  warnings: string[],
+): FileAction {
+  if (!existsSync(tomlPath)) {
+    atomicWrite(tomlPath, desired);
     return "created";
   }
-  const current = tryOr(() => readFileSync(path, "utf-8"), null);
-  if (current === desired) return "unchanged";
-  if (current !== null && current.startsWith(CODEX_SIGNATURE_LINE)) {
-    atomicWrite(path, desired);
-    return "updated";
-  }
-  if (current !== null && current.includes("[model_providers.")) {
+  const current = tryOr(() => readFileSync(tomlPath, "utf-8"), null);
+  if (current === null) {
+    warnings.push(`codex: ${tomlPath} unreadable; leaving intact`);
     return "note (customized, left intact)";
   }
-  atomicWrite(path, desired);
-  return "updated";
+  if (current === desired) return "unchanged";
+  if (current.startsWith(CODEX_SIGNATURE_LINE)) {
+    atomicWrite(tomlPath, desired);
+    return "updated";
+  }
+  // Final-Audit r2: Marker-Scan NUR als Vollzeilen (CRITICAL-1) mit geordneter
+  // BEGIN/END-Validierung (HIGH-1). r2b: der LETZTE Vollzeilen-BEGIN gewinnt —
+  // ein Operator-BEGIN mitten im Content plus unser Block am Dateiende →
+  // unser Block ist der letzte; alles davor ist Operator-Content und bleibt.
+  const beginMatches = Array.from(current.matchAll(AUGMENT_BEGIN_RE_G));
+  const beginMatch = beginMatches.length > 0 ? beginMatches[beginMatches.length - 1] : null;
+  const afterBegin = beginMatch !== null ? current.slice(beginMatch.index + beginMatch[0].length) : null;
+  const endMatch = afterBegin !== null ? AUGMENT_END_RE.exec(afterBegin) : null;
+  const hasManagedBlock = beginMatch !== null && endMatch !== null;
+  if (beginMatch !== null && !hasManagedBlock) {
+    warnings.push(
+      `codex: unterminated writer marker found in ${tomlPath}; treating file as foreign, content preserved`,
+    );
+  }
+  // NOTE nur für FREMDE Dateien ohne validen managed Block — eine augmentierte
+  // Datei enthält [model_providers.*] aus unserem eigenen Abschnitt.
+  if (!hasManagedBlock && current.includes("[model_providers.")) {
+    return "note (customized, left intact)";
+  }
+  // Operator-Teil = alles VOR dem BEGIN-Marker + alles NACH dem END-Marker
+  // (Final-Audit Medium-2: Operator-Edits nach dem Block bleiben erhalten).
+  const endMatchSlice = endMatch;
+  const before = hasManagedBlock
+    ? current.slice(0, beginMatch!.index)
+    : current;
+  const after = endMatchSlice
+    ? afterBegin!.slice(endMatchSlice.index + endMatchSlice[0].length)
+    : "";
+  const isRefresh = hasManagedBlock;
+  const operatorContent = before.replace(/\n+$/, "");
+  const operatorTail = after.replace(/^\n+/, "").replace(/\n+$/, "");
+  // Headers des Operator-Teils (beide Seiten) — NICHT unseres alten Sections-Teils.
+  const existingHeaders = collectTomlSectionHeaders(
+    operatorContent + (operatorTail ? `\n${operatorTail}` : ""),
+  );
+  const skipped: string[] = [];
+  const section = buildCodexAugmentSection(entry, existingHeaders, skipped);
+  for (const s of skipped) warnings.push(`codex: skipped ${s}`);
+  if (section.trim() === "") {
+    if (isRefresh) {
+      // Final-Audit HIGH-2: Refresh mit Total-Kollision → alter managed Block
+      // IST writer-owned und MUSS raus (sonst doppelte Tables + tomllib-Fail,
+      // der nie konvergiert). Operator-Bytes bleiben; nur unser toter Block fliegt.
+      const next = operatorTail
+        ? `${operatorContent}\n\n${operatorTail}\n`
+        : `${operatorContent}\n`;
+      if (next === current) return "unchanged";
+      atomicWrite(tomlPath, next);
+      return "updated";
+    }
+    warnings.push(
+      `codex: augment section empty (all headers collide with operator content); leaving intact`,
+    );
+    return "note (customized, left intact)";
+  }
+  const next =
+    `${operatorContent}\n\n${AUGMENT_BEGIN_MARKER}\n${section}${AUGMENT_END_MARKER}\n` +
+    (operatorTail ? `\n${operatorTail}\n` : "");
+  if (next === current) return "unchanged";
+  atomicWrite(tomlPath, next);
+  return isRefresh ? "updated" : "augmented";
 }
 
 function briefError(error: unknown): string {
@@ -322,7 +520,9 @@ function nonEmpty(value: string | undefined): string | undefined {
  */
 export function withV1Suffix(baseUrl: string): string {
   const trimmed = baseUrl.replace(/\/+$/, "");
-  return /\/v1$/.test(trimmed) ? trimmed : `${trimmed}/v1`;
+  // Final-Audit r2 (glm): case-insensitive wie normalizeBaseUrlForMatch (/\v1$/i) —
+  // konsistente Behandlung pathologischer http://h:1/V1-Eingaben.
+  return /\/v1$/i.test(trimmed) ? trimmed : `${trimmed}/v1`;
 }
 
 /**
@@ -387,17 +587,18 @@ export type ResolvedModels = {
 
 /**
  * Match-Ebene für baseUrl: trailing Slashes + trailing "/v1" neutralisiert,
- * Host lowercased, Pfad erhalten (deriveProviderId-Catch-Pattern für
- * scheme-lose Input). http://Host:PORT/path ↔ https-Varianten matchen bewusst
- * über Host:PORT — der Gateway-Catalog schreibt dieselbe baseUrl wie die
- * Harness-Entry, nur Normalisierung, keine Content-Transformation.
+ * Protokoll GESTRICHEN (http↔https matchen — Domain-4-Audit r3: die Katalog-
+ * Seite schreibt https://, die Harness-Entry http:// → Protocol-Preserving
+ * ließ die Provider nie matchen, Multi-Model blieb stumm weg), Host
+ * lowercased, Pfad erhalten (deriveProviderId-Catch-Pattern für
+ * scheme-lose Input).
  */
 export function normalizeBaseUrlForMatch(baseUrl: string): string {
   const trimmed = baseUrl.trim().replace(/\/+$/, "").replace(/\/v1$/i, "").replace(/\/+$/, "");
   try {
     const url = new URL(trimmed.includes("://") ? trimmed : `http://${trimmed}`);
     const path = url.pathname === "/" ? "" : url.pathname;
-    return `${url.protocol}//${url.host.toLowerCase()}${path}`;
+    return `${url.host.toLowerCase()}${path}`;
   } catch {
     return trimmed.toLowerCase();
   }
@@ -699,6 +900,22 @@ const ENV_MECHANISM: Record<
       ["IFLOW_modelName", nonEmpty(e.model)],
     ]);
   },
+  // copilot BYOK/Ollama (Aufnahme 2026-10-16, GaRoN-GO): ENV-Surface doppelt
+  // docs-verifiziert — Ollama-Integrations-Doku (docs.ollama.com/integrations/
+  // copilot-cli, Manual setup) UND Binary-Help-Text (@github/copilot 1.0.98:
+  // "Use openai for OpenAI-compatible endpoints including Ollama";
+  // "COPILOT_PROVIDER_API_KEY: optional for local providers like Ollama";
+  // "GitHub authentication is not required" beim BYOK-Provider). Wire-API
+  // "responses" ist der dokumentierte Default-Wert für Ollama-Backends.
+  copilot: (e) => {
+    const baseUrl = nonEmpty(e.baseUrl);
+    return envMapping([
+      ["COPILOT_PROVIDER_BASE_URL", baseUrl ? withV1Suffix(baseUrl) : undefined],
+      ["COPILOT_PROVIDER_API_KEY", nonEmpty(e.apiKey)],
+      ["COPILOT_PROVIDER_WIRE_API", baseUrl ? "responses" : undefined],
+      ["COPILOT_MODEL", nonEmpty(e.model)],
+    ]);
+  },
 };
 
 // ---------------------------------------------------------------------------
@@ -917,9 +1134,11 @@ export function deployCodexHarnessFiles(
     modelCatalog && entry.models !== undefined && entry.models.length > 0
       ? buildCodexModelCatalogJson(entry.models, modelCatalog.metaById)
       : null;
-  const action = upgradeOrNoteIfMissingOrDiffers(
+  const action = manageCodexToml(
     tomlPath,
     buildCodexConfigToml(entry, built ? catalogPath : undefined),
+    entry,
+    warnings,
   );
   if (action === "note (customized, left intact)") {
     logger?.info?.(
@@ -935,7 +1154,13 @@ export function deployCodexHarnessFiles(
   //    evtl. verbleibender alter Katalog wird bewusst NICHT gelöscht — von
   //    einer customized toml mit weiterbestehendem Key-Verweis lässt er
   //    sich nicht unterscheiden (never guess, kein destruktiver Write).
-  if (built && modelCatalog && action !== "note (customized, left intact)") {
+  // Final-Audit r2 (Medium-1): Katalog NUR schreiben, wenn das gemanagte
+  // TOML den Key auch wirklich trägt — augmentierte/refreshed Dateien
+  // referenzieren ihn per Design NICHT (kein Top-Level-Routing), ein
+  // geschriebener Katalog wäre ein Orphan mit täuschendem Deploy-Report.
+  const tomlNow = tryOr(() => readFileSync(tomlPath, "utf-8"), "");
+  const catalogReferenced = tomlNow.includes(tomlString(catalogPath));
+  if (built && modelCatalog && action !== "note (customized, left intact)" && catalogReferenced) {
     const catalogFile = writeFileIfMissingOrDiffers(catalogPath, built.content);
     files.push({ path: catalogPath, action: catalogFile });
     logger?.info?.(
@@ -974,11 +1199,15 @@ export function buildOpencodeConfigJsonc(entry: HarnessConfigEntry): string {
   const smallModel = nonEmpty(entry.smallModel) ?? entry.model;
   // Multi-Model γ: mit verfügbarer Modellliste wandern ALLE ids in die
   // provider.models-Map (native Multi-Model-Surface; entry.model zuerst =
-  // Default, smallModel bei Differ ebenfalls). OHNE models bleibt der Output
-  // byte-identisch zum Vor-γ-Stand (single-entry Map, kein smallModel-Entry).
+  // Default, smallModel bei Differ ebenfalls). Domain-4-Audit r3: OHNE models
+  // bleibt smallModel eine dangling Reference (small_model zeigt auf eine
+  // id, die in der Map nicht existiert) — daher wird smallModel bei
+  // Differenz zu entry.model IMMER mitgenommen, auch ohne models-Liste.
   let modelIds: string[];
   if (entry.models && entry.models.length > 0) {
     modelIds = dedupeModelIds([entry.model, ...entry.models, smallModel]);
+  } else if (smallModel !== entry.model) {
+    modelIds = [entry.model, smallModel];
   } else {
     modelIds = [entry.model];
   }
@@ -1009,6 +1238,173 @@ export const OPENCODE_LEGACY_PLACEHOLDER =
   "# neben dieser Datei — generiert vom harness-config-writer Plugin (Phase 3, Repo-Split A2).\n";
 
 /**
+ * opencode.jsonc Lebenszyklus (Augment-Design, GaRoN 2026-10-16 GO):
+ *  1. fehlt → created (Writer-Vollform, 0600)
+ *  2. byte-identisch → unchanged
+ *  3. Writer-eigene Datei (exakt unser Vollform-Shape: nur unsere Keys +
+ *     $schema) → updated (bytes-sync)
+ *  4. fremd, valides plain JSON → MERGE: unser provider-Block wandert in
+ *     `provider`, alle Operator-Keys (theme, andere provider, model-Wahl)
+ *     bleiben erhalten; model/small_model NICHT angetastet (Operator-
+ *     Entscheidung, mit/ohne Plugin wechselbar). 0600 erzwungen (apiKey).
+ *  5. fremd mit Kommentaren/unkonventionell → NOTE (never destroy
+ *     formatting; adopt manuell).
+ */
+function manageOpencodeJsonc(
+  path: string,
+  desired: string,
+  entry: HarnessConfigEntry,
+  warnings: string[],
+): FileAction {
+  const exists = existsSync(path);
+  const current = exists ? tryOr(() => readFileSync(path, "utf-8"), null) : null;
+  if (!exists) {
+    atomicWrite(path, desired, 0o600, warnings);
+    return "created";
+  }
+  if (current === desired) {
+    // r3: Mode-Heilung auch bei byte-identischem Bestand (0600-Pflicht, apiKey).
+    try {
+      if ((statSync(path).mode & 0o777) !== 0o600) chmodSync(path, 0o600);
+    } catch (error) {
+      warnings.push(`could not chmod ${path}: ${briefError(error)}`);
+    }
+    return "unchanged";
+  }
+  if (current === null) {
+    warnings.push(`opencode: ${path} unreadable; leaving intact`);
+    return "note (customized, left intact)";
+  }
+  // Writer-eigene Datei? Unser Vollform-Shape parsen und mit dem gewünschten
+  // Objekt vergleichen (Keys-identisch → updated via bytes-sync).
+  const desiredObj = tryOr(() => JSON.parse(desired) as Record<string, unknown>, null);
+  const currentObj = tryOr(() => JSON.parse(current) as Record<string, unknown>, null);
+  if (desiredObj === null || currentObj === null) {
+    // current ist kein plain JSON (JSONC mit Kommentaren o.ä.) → never destroy.
+    warnings.push(
+      `opencode: ${path} is customized (non-JSON or commented JSONC); leaving intact — ` +
+        `adopt the provider block manually if wanted`,
+    );
+    return "note (customized, left intact)";
+  }
+  // Final-Audit r2 (HIGH-4/F1): Writer-Erkennung muss POSITIV sein, nicht
+  // Key-Subset — {"model": …} oder ein fremder einzelner Provider sind
+  // legitime Operator-Dateien und dürfen NIEMALS still ersetzt werden.
+  // Writer-owned = $schema passt UND provider enthält GENAU unsere derived
+  // ProviderId mit deepEquals-identischem Block UND alle übrigen Keys sind
+  // aus {$schema, model, small_model} mit Werten gleich dem Desired-Stand.
+  const providerId = deriveProviderId(entry.baseUrl ?? "");
+  const currentProviderObj =
+    typeof currentObj.provider === "object" && currentObj.provider !== null &&
+      !Array.isArray(currentObj.provider)
+      ? (currentObj.provider as Record<string, unknown>)
+      : null;
+  const desiredProviderObj2 =
+    typeof desiredObj?.provider === "object" && desiredObj.provider !== null &&
+      !Array.isArray(desiredObj.provider)
+      ? (desiredObj.provider as Record<string, unknown>)
+      : null;
+  // r2-final: Struktur-Marker (npm/name) statt reiner Key-Präsenz — ein
+  // Fremd-Block mit UNSERER derived providerId, aber anderem Inhalt, geht
+  // in den Merge-Pfad (dort operator-wins-NOTE), nie in den Writer-Replace.
+  // Die Marker sind sync-on-diff-stabil (npm/name ändern sich bei Modell-
+  // Listen-Änderungen nicht).
+  const providerIdInDesired =
+    currentProviderObj !== null && desiredProviderObj2 !== null &&
+    Object.keys(currentProviderObj).length === 1 &&
+    providerId in currentProviderObj &&
+    deepLooksGenerated(currentProviderObj[providerId]);
+  // Struktur-Marker statt Content-Gleichheit (r2-Fix der r2-Fixes): der
+  // Sync-on-Diff-Refresh lebt davon, dass Bestand ≠ Desired ist — Writer-
+  // Owned wird an der GENERIERTEN BLOCKFORM erkannt (npm/name-Marker), nicht
+  // am aktuellen Content. Ein fremder Block mit unserer providerId geht in
+  // den Merge-Pfad (dort operator-wins-NOTE bei abweichendem Content).
+  const isWriterOwned =
+    typeof currentObj === "object" && currentObj !== null && desiredObj !== null &&
+    currentObj.$schema === desiredObj.$schema &&
+    providerIdInDesired &&
+    Object.keys(currentObj).every((key) => {
+      // $schema/provider sind oben geprüft; model/small_model sind Writer-
+      // Keys, deren CONTENT sich beim Sync-on-Diff legitim ändert — daher
+      // hier NUR Key-Set-Prüfung, keine Content-Gleichheit (r2-Fix).
+      return key === "$schema" || key === "provider" || key === "model" || key === "small_model";
+    });
+  if (isWriterOwned) {
+    atomicWrite(path, desired, 0o600, warnings);
+    return "updated";
+  }
+  // MERGE: Operator-Keys erhalten; nur unser provider-Block wandert rein.
+  const desiredProviderObj =
+    typeof desiredObj?.provider === "object" && desiredObj.provider !== null &&
+      !Array.isArray(desiredObj.provider)
+      ? (desiredObj.provider as Record<string, unknown>)
+      : {};
+  const desiredProvider = desiredProviderObj[providerId];
+  const merged: Record<string, unknown> = { ...currentObj };
+  // Final-Audit r2 (F2): provider als non-object (opencode Shorthand
+  // `provider: "ollama"`) ist eine Operator-Entscheidung — niemals spread-en
+  // (sonst Index-Key-Korruption); operator wins → NOTE.
+  if (desiredProvider !== undefined && merged.provider !== undefined &&
+      (typeof merged.provider !== "object" || merged.provider === null || Array.isArray(merged.provider))) {
+    warnings.push(
+      `opencode: 'provider' in ${path} is not an object (operator shorthand); leaving intact — ` +
+        `adopt the provider block manually if wanted`,
+    );
+    return "note (customized, left intact)";
+  }
+  const mergedProvider: Record<string, unknown> = {
+    ...((merged.provider as Record<string, unknown> | undefined) ?? {}),
+  };
+  if (desiredProvider !== undefined) {
+    if (providerId in mergedProvider && !deepEqualsWriter(mergedProvider[providerId], desiredProvider)) {
+      warnings.push(
+        `opencode: provider '${providerId}' already present in ${path} with different content; ` +
+          `operator wins, not overwriting — adopt manually if wanted`,
+      );
+      return "note (customized, left intact)";
+    }
+    mergedProvider[providerId] = desiredProvider;
+  }
+  merged.provider = mergedProvider;
+  const next = `${JSON.stringify(merged, null, 2)}\n`;
+  if (next === current) return "unchanged";
+  atomicWrite(path, next, 0o600, warnings);
+  return "augmented";
+}
+
+/** Struktur-Gleichheit für Merge-Konflikt-Erkennung (JSON-Werte). */
+/**
+ * Struktur-Erkennung für Writer-generierte opencode-Provider-Blöcke
+ * (Final-Audit r2): der Block ist an seiner generierten Form erkennbar —
+ * npm "@ai-sdk/openai-compatible" UND name-Präfix "harness-config-writer (".
+ * Robust gegen Content-Änderungen (Sync-on-Diff-Refresh!) und gegen
+ * Fremd-Blöcke (openrouter o.ä. matchen nicht).
+ */
+function deepLooksGenerated(block: unknown): boolean {
+  if (typeof block !== "object" || block === null || Array.isArray(block)) return false;
+  const b = block as Record<string, unknown>;
+  return (
+    b.npm === "@ai-sdk/openai-compatible" &&
+    typeof b.name === "string" &&
+    b.name.startsWith("harness-config-writer (")
+  );
+}
+
+function deepEqualsWriter(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (typeof a !== "object" || a === null || typeof b !== "object" || b === null) return false;
+  const ka = Object.keys(a as Record<string, unknown>).sort();
+  const kb = Object.keys(b as Record<string, unknown>).sort();
+  if (ka.length !== kb.length || ka.some((k, i) => k !== kb[i])) return false;
+  return ka.every((k) =>
+    deepEqualsWriter(
+      (a as Record<string, unknown>)[k],
+      (b as Record<string, unknown>)[k],
+    ),
+  );
+}
+
+/**
  * Deploy in BEIDE Dirs wie der Helper (opencode-home der ACPX_DIR + global
  * /config/opencode), bytes-sync; das legacy config.toml (comment-only) wird
  * in opencode-home neutralisiert (Helper copy-on-diff verbatim).
@@ -1026,17 +1422,33 @@ export function deployOpencodeHarnessFiles(
     const path = join(targetDir, "opencode.jsonc");
     // M3-Fix (2026-10-14): die Datei trägt den apiKey in Klartext → 0600
     // (Helper-Standard; Mode geht in atomicWrite — kein Exposé-Fenster).
-    const action = writeFileIfMissingOrDiffers(path, desired, 0o600, warnings);
+    const action = manageOpencodeJsonc(path, desired, entry, warnings);
     if (action !== "unchanged") {
-      logger?.info?.(`[${harnessId}] Updated ${path} (provider config)`);
+      logger?.info?.(`[${harnessId}] ${action} ${path} (provider config)`);
     }
     files.push({ path, action });
   }
-  // Legacy TOML-Placeholder neutralisieren (Helper-Semantik: copy wenn abweichend).
+  // Legacy TOML neutralisieren — NUR wenn sie fehlt oder bereits der
+  // comment-only Placeholder ist (Augment-Design: echte Operator-Configs
+  // mit TOML-Inhalt werden NICHT mehr übeschrieben → NOTE + Warnung).
   const legacy = join(paths.acpxDir, "opencode-home", "config.toml");
-  const legacyAction = writeFileIfMissingOrDiffers(legacy, OPENCODE_LEGACY_PLACEHOLDER);
-  if (legacyAction !== "unchanged") {
-    logger?.info?.(`[${harnessId}] Replaced legacy opencode config.toml placeholder`);
+  let legacyAction: FileAction;
+  if (existsSync(legacy)) {
+    const legacyCurrent = tryOr(() => readFileSync(legacy, "utf-8"), null);
+    if (legacyCurrent === OPENCODE_LEGACY_PLACEHOLDER) {
+      legacyAction = "unchanged";
+    } else {
+      warnings.push(
+        `opencode: legacy ${legacy} has real operator content; leaving intact — ` +
+          `the provider config lives in opencode.jsonc alongside it`,
+      );
+      legacyAction = "note (customized, left intact)";
+    }
+  } else {
+    legacyAction = writeFileIfMissingOrDiffers(legacy, OPENCODE_LEGACY_PLACEHOLDER);
+    if (legacyAction !== "unchanged") {
+      logger?.info?.(`[${harnessId}] Placed legacy opencode config.toml placeholder`);
+    }
   }
   files.push({ path: legacy, action: legacyAction });
   return { warnings, files };
@@ -1143,6 +1555,12 @@ export function deployHarnessConfigs(
   }
   const results: HarnessDeployResult[] = [];
   for (const harnessId of Object.keys(harnesses).sort()) {
+    // Domain-4-Audit r3: per-Harness fail-soft — ein atomicWrite-Throw
+    // (EACCES/ENOSPC/EROFS o. ä.) kollabierte vormals die GESAMTE Loop über
+    // den top-level register try/catch in eine "deployment failed"-Zeile.
+    // Jetzt: jede Iteration einzeln try/catch → ein kaputtes Ziel skipt nur
+    // sich selbst mit Warning, alle anderen Harnesses deployen weiter.
+    try {
     const entry = harnesses[harnessId];
     if (!isValidEntry(entry)) {
       results.push({
@@ -1219,7 +1637,17 @@ export function deployHarnessConfigs(
       continue;
     }
     // Mechanismus C: NONE — CLI-OAuth-owned.
-    results.push({ harnessId, mechanism: "none", warnings: [], files: [] });
+      results.push({ harnessId, mechanism: "none", warnings: [], files: [] });
+    } catch (error) {
+      results.push({
+        harnessId,
+        mechanism: "none",
+        warnings: [
+          `deploy fehlgeschlagen (fail-soft, andere Harnesses laufen weiter): ${briefError(error)}`,
+        ],
+        files: [],
+      });
+    }
   }
   return { results, skipped: false };
 }

@@ -62,10 +62,12 @@ qoder, qwen, trae, zeroclaw`.
 | **B ENV** | `kimi` | `KIMI_MODEL_API_KEY`, `KIMI_MODEL_BASE_URL` (baseUrl+/v1), `KIMI_MODEL_NAME` — Kimi Code liest Provider-Credentials NICHT via Shell-Env; die `KIMI_MODEL_*`-Familie ist die einzige Shell-Surface (docs 2026-10-11) |
 | **B ENV** | `kiro` | `KIRO_API_KEY` (kein Base-URL-Env → Warnung wenn baseUrl gesetzt) |
 | **B ENV** | `iflow` | `IFLOW_API_KEY`, `IFLOW_BASE_URL` (baseUrl+/v1), `IFLOW_modelName` (camelCase-Konvention der iflow-docs) |
-| **C NONE** | `copilot`, `cursor` + alle übrigen/ungekatalogisierten ids | Skip — CLI-OAuth-owned, Plugin schreibt nichts; bewusst STUMM (kein Warn-Noise) |
+| **B ENV** | `copilot` | `COPILOT_PROVIDER_BASE_URL` (baseUrl+/v1), `COPILOT_PROVIDER_API_KEY`, `COPILOT_PROVIDER_WIRE_API="responses"`, `COPILOT_MODEL` — BYOK/OpenAI-compatible Surface (Aufnahme 2026-10-16, GaRoN-GO; doppelt verifiziert: Ollama-Integrations-Doku docs.ollama.com/integrations/copilot-cli Manual setup UND Binary-Help-Text @github/copilot 1.0.98: "Use openai for OpenAI-compatible endpoints including Ollama", "optional for local providers like Ollama", "GitHub authentication is not required"; WIRE_API nur bei baseUrl — key-only ist die GitHub-Token-Route, kein BYOK-Routing) |
+| **C NONE** | `cursor` + alle übrigen/ungekatalogisierten ids | Skip — CLI-OAuth-owned bzw. ohne docs-verifiziertes Provider-Surface, Plugin schreibt nichts; bewusst STUMM (kein Warn-Noise). cursor-Sondierung 2026-10-16: standalone-Ollama via verstecktes agent-cli-local-Paket möglich (empirisch bewiesen), ACP/acpx-Pfad aber ohne localAgentRuntime-Wiring (Build 2026.10.16-e3cb207) → bleibt NONE bis Cursor es offiziell liefert |
 
 Alle ENV-Namen docs-verifiziert am 2026-10-11 (kimi.com kimi-code env-vars,
 kiro.dev authentication, iflow-ai settings.md, qwen-code OPENAI_*).
+copilot ergänzt am 2026-10-16 (docs.ollama.com/integrations/copilot-cli Manual setup + Binary-Help-Text @github/copilot 1.0.98, statisch verifiziert).
 `deriveProviderId(baseUrl)`: deterministisch aus dem Host
 (`http://localhost:11434` → `binding_localhost_11434`) — multi-Backend-safe,
 reine `[a-z0-9_]`-ids sind als TOML-Header unquoted safe.

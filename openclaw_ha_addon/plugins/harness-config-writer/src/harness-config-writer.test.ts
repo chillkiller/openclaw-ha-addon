@@ -13,6 +13,7 @@ import {
   statSync,
   writeFileSync,
   mkdirSync,
+  chmodSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -143,16 +144,240 @@ describe("codex writer", () => {
     expect((toml.match(/trust_level = "trusted"/g) ?? []).length).toBe(2);
   });
 
-  it("upgrade: existing file WITHOUT [model_providers. block is upgraded", () => {
+  it("augment: foreign file WITHOUT [model_providers. block → marked provider section APPENDED, operator content preserved (GaRoN 2026-10-16)", () => {
+    const p = paths();
+    const tomlPath = join(p.codexSourceHome, "config.toml");
+    mkdirSync(join(root, "config", ".codex"), { recursive: true });
+    const foreign = 'model = "gpt-5"\n';
+    writeFileSync(tomlPath, foreign, "utf-8");
+    const report = DEPLOY({ harnesses: { codex: OLLAMA } }, p);
+    // AUGMENT statt Replace: Operator-Content bleibt, markierter Abschnitt kommt dazu.
+    expect(
+      report.results[0].files.some((f) => f.path === tomlPath && f.action === "augmented"),
+    ).toBe(true);
+    const after = readText(tomlPath);
+    expect(after.startsWith(foreign.replace(/\n$/, ""))).toBe(true);
+    expect(after).toContain("--- BEGIN harness-config-writer (generated) ---");
+    expect(after).toContain("--- END harness-config-writer (generated) ---");
+    // KEIN Writer-Routing in fremden Dateien (Model-Wahl = Operator).
+    expect(after).not.toMatch(/^model_provider = /m);
+    expect(after).not.toMatch(/^model_catalog_json = /m);
+    expect(after).toContain("[model_providers.binding_localhost_11434]");
+    // Operator-Key model = "gpt-5" unverändert (kein Überschreiben).
+    expect(after).toContain('model = "gpt-5"');
+  });
+
+  it("augment idempotent: re-deploy on already-augmented file → unchanged", () => {
     const p = paths();
     const tomlPath = join(p.codexSourceHome, "config.toml");
     mkdirSync(join(root, "config", ".codex"), { recursive: true });
     writeFileSync(tomlPath, 'model = "gpt-5"\n', "utf-8");
+    DEPLOY({ harnesses: { codex: OLLAMA } }, p);
+    const afterFirst = readText(tomlPath);
     const report = DEPLOY({ harnesses: { codex: OLLAMA } }, p);
-    expect(report.results[0].files.some((f) => f.path === tomlPath && f.action === "updated")).toBe(
-      true,
+    expect(
+      report.results[0].files.some((f) => f.path === tomlPath && f.action === "unchanged"),
+    ).toBe(true);
+    expect(readText(tomlPath)).toBe(afterFirst);
+  });
+
+  it("augment refresh: baseUrl change re-writes ONLY the marked section, operator content untouched", () => {
+    const p = paths();
+    const tomlPath = join(p.codexSourceHome, "config.toml");
+    mkdirSync(join(root, "config", ".codex"), { recursive: true });
+    writeFileSync(tomlPath, 'model = "gpt-5"\n', "utf-8");
+    DEPLOY({ harnesses: { codex: OLLAMA } }, p);
+    const report = DEPLOY(
+      { harnesses: { codex: { ...OLLAMA, baseUrl: "http://elsewhere:9" } } },
+      p,
     );
-    expect(readText(tomlPath)).toContain('model = "kimi-k2.7-code:cloud"');
+    expect(
+      report.results[0].files.some((f) => f.path === tomlPath && f.action === "updated"),
+    ).toBe(true);
+    const after = readText(tomlPath);
+    expect(after).toContain('model = "gpt-5"'); // Operator-Zeile unangetastet
+    expect(after).not.toContain("[model_providers.binding_localhost_11434]"); // alte Section weg
+    expect(after).toContain("[model_providers.binding_elsewhere_9]"); // neue Section da
+  });
+
+  // ---- Final-Audit r2 Regression: jede behobene Critical/High/Medium-Lücke ----
+
+  it("r2 CRITICAL-1: marker substring in operator COMMENT does not truncate operator content", () => {
+    const p = paths();
+    const tomlPath = join(p.codexSourceHome, "config.toml");
+    mkdirSync(join(root, "config", ".codex"), { recursive: true });
+    const foreign = '# managed blocks look like: # --- BEGIN harness-config-writer (generated) ---\nmodel = "gpt-5"\n';
+    writeFileSync(tomlPath, foreign, "utf-8");
+    const report = DEPLOY({ harnesses: { codex: OLLAMA } }, p);
+    const after = readText(tomlPath);
+    // Operator-Zeile model = "gpt-5" muss vollständig bleiben (kein Mid-Line-Slice)
+    expect(after).toContain('model = "gpt-5"');
+    // Der Kommentar-Dokumentarion des Markers bleibt unangetastet
+    expect(after).toContain("# managed blocks look like:");
+  });
+
+  it("r2 HIGH-1: BEGIN marker without END is treated as foreign — content after BEGIN preserved", () => {
+    const p = paths();
+    const tomlPath = join(p.codexSourceHome, "config.toml");
+    mkdirSync(join(root, "config", ".codex"), { recursive: true });
+    const foreign =
+      'model = "gpt-5"\n# --- BEGIN harness-config-writer (generated) ---\n[projects."/op-thing"]\ntrust_level = "trusted"\n';
+    writeFileSync(tomlPath, foreign, "utf-8");
+    const report = DEPLOY({ harnesses: { codex: OLLAMA } }, p);
+    const after = readText(tomlPath);
+    // Operator-Content NACH dem unterminierten BEGIN bleibt erhalten
+    expect(after).toContain('[projects."/op-thing"]');
+    expect(after).toContain('model = "gpt-5"');
+    // Warnung über den unterminierten Marker
+    const codex = report.results.find((r) => r.harnessId === "codex");
+    expect(codex?.warnings.join(" ")).toContain("unterminated writer marker");
+  });
+
+  it("r2 HIGH-2: refresh with total collision strips our dead managed block (converges, valid TOML)", () => {
+    const p = paths();
+    const tomlPath = join(p.codexSourceHome, "config.toml");
+    mkdirSync(join(root, "config", ".codex"), { recursive: true });
+    writeFileSync(tomlPath, 'model = "gpt-5"\n', "utf-8");
+    DEPLOY({ harnesses: { codex: { ...OLLAMA, models: ["m1"] } } }, p);
+    // Operator adoptiert den Provider-Header oberhalb des Blocks (Total-Kollision)
+    const before = readText(tomlPath);
+    const withOperatorHeader = '[model_providers.binding_localhost_11434]\nbase_url = "x"\n\n' + before;
+    writeFileSync(tomlPath, withOperatorHeader, "utf-8");
+    const report = DEPLOY({ harnesses: { codex: { ...OLLAMA, models: [] } } }, p);
+    const after = readText(tomlPath);
+    // Unser alter toter Block ist RAUS (kein doppelter Header, Konvergenz)
+    expect(after).not.toContain("--- BEGIN harness-config-writer");
+    expect(after).not.toContain("[profiles.");
+    // Operator-Header bleibt
+    expect((after.match(/\[model_providers\.binding_localhost_11434\]/g) ?? []).length).toBe(1);
+    expect(
+      report.results[0].files.some((f) => f.path === tomlPath && f.action === "updated"),
+    ).toBe(true);
+  });
+
+  it("r2 HIGH-3: bare operator header aliases our quoted header — no duplicate tables", () => {
+
+
+    const p = paths();
+    const tomlPath = join(p.codexSourceHome, "config.toml");
+    mkdirSync(join(root, "config", ".codex"), { recursive: true });
+    writeFileSync(tomlPath, 'model = "gpt-5"\n[profiles.m1]\nmodel = "m1"\n', "utf-8");
+    const report = DEPLOY({ harnesses: { codex: { ...OLLAMA, models: ["m1"] } } }, p);
+    const after = readText(tomlPath);
+    // [profiles.m1] (bare) und [profiles."m1"] (quoted) sind dieselbe logische Table:
+    // unser Writer MUSS kollidieren → der Profil-Header existiert genau EINMAL
+    // (der Operator-Bare-Header; wir emittieren KEINEN zweiten quoted-Alias).
+    expect((after.match(/\[profiles\.m1\]/g) ?? []).length).toBe(1);
+    expect(after).not.toContain('[profiles."m1"]');
+    const codex = report.results.find((r) => r.harnessId === "codex");
+    expect(codex?.warnings.join(" ")).toContain("profiles.m1 (operator header collision)");
+  });
+
+  it("r2 Medium-2: operator edits AFTER the END marker survive refresh", () => {
+    const p = paths();
+    const tomlPath = join(p.codexSourceHome, "config.toml");
+    mkdirSync(join(root, "config", ".codex"), { recursive: true });
+    writeFileSync(tomlPath, 'model = "gpt-5"\n', "utf-8");
+    DEPLOY({ harnesses: { codex: OLLAMA } }, p);
+    // Operator fügt NACH unserem END-Marker eigenen Content hinzu
+    const before = readText(tomlPath);
+    writeFileSync(tomlPath, before + '\n[projects."/operator-after"]\ntrust_level = "trusted"\n', "utf-8");
+    DEPLOY({ harnesses: { codex: OLLAMA } }, p);
+    const after = readText(tomlPath);
+    expect(after).toContain('[projects."/operator-after"]');
+  });
+
+  it("r2 opencode HIGH-4: operator {model: …} file is NEVER fully replaced (merge, not overwrite)", () => {
+    const p = paths();
+    const target = join(p.acpxDir, "opencode-home", "opencode.jsonc");
+    mkdirSync(join(p.acpxDir, "opencode-home"), { recursive: true });
+    writeFileSync(target, '{\n  "model": "ollama/op-choice"\n}\n', "utf-8");
+    const report = DEPLOY({ harnesses: { opencode: OLLAMA } }, p);
+    const after = readText(target);
+    // Operator-Model-Wahl bleibt (merge statt stiller Replace)
+    expect(after).toContain('"model": "ollama/op-choice"');
+    // Unser Provider-Block ist ergänzt
+    expect(after).toContain("binding_localhost_11434");
+    const opencode = report.results.find((r) => r.harnessId === "opencode");
+    expect(opencode?.files.some((f) => f.path === target && f.action !== "updated")).toBe(true);
+  });
+
+  it("r2 opencode F2: provider string shorthand (operator decision) — NOTE, no corruption", () => {
+    const p = paths();
+    const target = join(p.acpxDir, "opencode-home", "opencode.jsonc");
+    mkdirSync(join(p.acpxDir, "opencode-home"), { recursive: true });
+    writeFileSync(target, '{\n  "theme": "dark",\n  "provider": "ollama"\n}\n', "utf-8");
+    const report = DEPLOY({ harnesses: { opencode: OLLAMA } }, p);
+    const after = readText(target);
+    // Keine Index-Key-Korruption {"0":"o","1":"l",…}
+    expect(after).not.toContain('"0"');
+    expect(after).toContain('"provider": "ollama"');
+    const opencode = report.results.find((r) => r.harnessId === "opencode");
+    expect(opencode?.files.some((f) => f.path === target && f.action === "note (customized, left intact)")).toBe(true);
+  });
+
+  it("r2 branch: first-augment with total collision → NOTE, operator file untouched", () => {
+    const p = paths();
+    const tomlPath = join(p.codexSourceHome, "config.toml");
+    mkdirSync(join(root, "config", ".codex"), { recursive: true });
+    // Operator hat bereits Provider+Profil unter unseren exakten Header-Namen
+    const foreign =
+      '[model_providers.binding_localhost_11434]\nbase_url = "x"\n[profiles."m1"]\nmodel = "m1"\n[profiles.m1b]\nmodel = "m1b"\n';
+    writeFileSync(tomlPath, foreign, "utf-8");
+    const report = DEPLOY({ harnesses: { codex: { ...OLLAMA, models: ["m1"] } } }, p);
+    const after = readText(tomlPath);
+    // Fremd-Datei (kein [model_providers.-freier Fall): NOTE-Zweig greift schon beim
+    // providers-Vorkommen — dieser Fall testet die providers-freie Total-Kollision.
+    expect(
+      report.results[0].files.find((f) => f.path === tomlPath)?.action,
+    ).toBe("note (customized, left intact)");
+    expect(after).toBe(foreign); // byte-erhalten
+  });
+
+  it("r2 branch: opencode unreadable file → NOTE with warning, never crash", () => {
+    const p = paths();
+    const target = join(p.acpxDir, "opencode-home", "opencode.jsonc");
+    mkdirSync(join(p.acpxDir, "opencode-home"), { recursive: true });
+    writeFileSync(target, "garbage", "utf-8");
+    chmodSync(target, 0o000); // unlesbar machen
+    const report = DEPLOY({ harnesses: { opencode: OLLAMA } }, p);
+    const opencode = report.results.find((r) => r.harnessId === "opencode");
+    const homeFile = opencode?.files.find((f) => f.path === target);
+    expect(homeFile?.action).toBe("note (customized, left intact)");
+    expect(opencode?.warnings.join(" ")).toContain("unreadable");
+    chmodSync(target, 0o600); // für afterEach-Cleanup
+  });
+
+  it("r2 branch: commented JSONC (operator formatting) → NOTE, never destroyed", () => {
+    const p = paths();
+    const target = join(p.acpxDir, "opencode-home", "opencode.jsonc");
+    mkdirSync(join(p.acpxDir, "opencode-home"), { recursive: true });
+    const commented = '{\n  // my curated provider setup\n  "model": "x"\n}\n';
+    writeFileSync(target, commented, "utf-8");
+    const report = DEPLOY({ harnesses: { opencode: OLLAMA } }, p);
+    expect(readText(target)).toBe(commented); // Kommentar-Formatierung bleibt
+    const opencode = report.results.find((r) => r.harnessId === "opencode");
+    expect(opencode?.files.find((f) => f.path === target)?.action).toBe("note (customized, left intact)");
+  });
+
+  it("r2 Medium-1: augmented config.toml never references model_catalog_json — no orphan catalog file", () => {
+    const p = paths();
+    mkdirSync(join(root, "config", ".codex"), { recursive: true });
+    writeFileSync(join(p.codexSourceHome, "config.toml"), 'model = "gpt-5"\n', "utf-8");
+    const localCatalog = buildModelCatalog(
+      { models: { providers: { ollama: { baseUrl: OLLAMA.baseUrl, models: [{ id: "gemma4", contextWindow: 128000 }] } } } },
+      [],
+    );
+    const report = deployHarnessConfigs(
+      { harnesses: { codex: { ...OLLAMA, models: ["gemma4"] } } },
+      p,
+      SILENT,
+      localCatalog,
+    );
+    expect(
+      report.results[0].files.find((f) => f.path.endsWith("config.toml"))?.action,
+    ).toBe("augmented");
+    expect(existsSync(join(p.codexSourceHome, "model-catalog.json"))).toBe(false);
   });
 
   it("customized file WITH [model_providers. block is NEVER overwritten (NOTE)", () => {
@@ -341,7 +566,7 @@ describe("env writer", () => {
     expect(statSync(join(paths().acpxDir, "harness-env", "claude.env")).mode & 0o777).toBe(0o600);
   });
 
-  it("gemini / droid / qwen / kimi / kiro / iflow map per-CLI (docs-verifiziert)", () => {
+  it("gemini / droid / qwen / kimi / kiro / iflow / copilot map per-CLI (docs-verifiziert)", () => {
     const p = paths();
     DEPLOY(
       {
@@ -352,6 +577,7 @@ describe("env writer", () => {
           kimi: { model: "k", baseUrl: "http://kb:3", apiKey: "kk" },
           kiro: { model: "r", baseUrl: "http://rb:4", apiKey: "rk" },
           iflow: { model: "i", baseUrl: "http://ib:5", apiKey: "ik" },
+          copilot: { model: "cp", baseUrl: "http://cb:6", apiKey: "ck" },
         },
       },
       p,
@@ -370,6 +596,25 @@ describe("env writer", () => {
     expect(env("iflow")).toContain("IFLOW_API_KEY='ik'");
     expect(env("iflow")).toContain("IFLOW_BASE_URL='http://ib:5/v1'");
     expect(env("iflow")).toContain("IFLOW_modelName='i'");
+    expect(env("copilot")).toContain("COPILOT_PROVIDER_BASE_URL='http://cb:6/v1'");
+    expect(env("copilot")).toContain("COPILOT_PROVIDER_API_KEY='ck'");
+    expect(env("copilot")).toContain("COPILOT_PROVIDER_WIRE_API='responses'");
+    expect(env("copilot")).toContain("COPILOT_MODEL='cp'");
+  });
+
+  it("copilot without baseUrl: key+model only, no provider routing envs (GitHub-token route, not BYOK)", () => {
+    const p = paths();
+    const report = DEPLOY(
+      { harnesses: { copilot: { model: "cp", apiKey: "ck" } } },
+      p,
+    );
+    const result = report.results.find((r) => r.harnessId === "copilot");
+    expect(result?.mechanism).toBe("env");
+    const env = readText(join(p.acpxDir, "harness-env", "copilot.env"));
+    expect(env).toContain("COPILOT_PROVIDER_API_KEY='ck'");
+    expect(env).toContain("COPILOT_MODEL='cp'");
+    expect(env).not.toContain("BASE_URL");
+    expect(env).not.toContain("WIRE_API");
   });
 
   it("droid/kiro warn (no Base-URL env surface) but still deploy the key", () => {
@@ -414,16 +659,16 @@ describe("additive guarantee", () => {
     expect(existsSync(p.acpxDir)).toBe(false);
   });
 
-  it("absent harness leaves sibling harnesses deployed — copilot/cursor NEVER touched", () => {
+  it("absent harness leaves sibling harnesses deployed — cursor/kilocode NEVER touched", () => {
     const p = paths();
     const report = DEPLOY(
-      { harnesses: { codex: OLLAMA, copilot: { model: "x" }, cursor: { model: "x" }, kilocode: { model: "x" } } },
+      { harnesses: { codex: OLLAMA, cursor: { model: "x" }, kilocode: { model: "x" } } },
       p,
     );
     const none = report.results.filter((r) => r.mechanism === "none");
-    expect(none.map((r) => r.harnessId)).toEqual(["copilot", "cursor", "kilocode"]);
+    expect(none.map((r) => r.harnessId)).toEqual(["cursor", "kilocode"]);
     expect(none.flatMap((r) => r.files)).toEqual([]);
-    // Nur codex-Artefakte existieren — keine copilot/cursor Files.
+    // Nur codex-Artefakte existieren — keine cursor/kilocode Files.
     expect(existsSync(join(p.codexSourceHome, "config.toml"))).toBe(true);
     expect(existsSync(join(p.acpxDir, "harness-env"))).toBe(false);
   });
@@ -457,13 +702,18 @@ const CATALOG = buildModelCatalog(
 );
 
 describe("normalizeBaseUrlForMatch", () => {
-  it("strips trailing slashes + /v1, lowercases host, preserves path", () => {
-    expect(normalizeBaseUrlForMatch("http://localhost:11434")).toBe("http://localhost:11434");
-    expect(normalizeBaseUrlForMatch("http://localhost:11434/")).toBe("http://localhost:11434");
-    expect(normalizeBaseUrlForMatch("http://localhost:11434/v1")).toBe("http://localhost:11434");
-    expect(normalizeBaseUrlForMatch("http://localhost:11434/v1/")).toBe("http://localhost:11434");
-    expect(normalizeBaseUrlForMatch("HTTP://LOCALHOST:11434")).toBe("http://localhost:11434");
-    expect(normalizeBaseUrlForMatch("http://h:1/v1/x")).toBe("http://h:1/v1/x");
+  it("strips trailing slashes + /v1 + PROTOCOL, lowercases host, preserves path", () => {
+    expect(normalizeBaseUrlForMatch("http://localhost:11434")).toBe("localhost:11434");
+    expect(normalizeBaseUrlForMatch("http://localhost:11434/")).toBe("localhost:11434");
+    expect(normalizeBaseUrlForMatch("http://localhost:11434/v1")).toBe("localhost:11434");
+    expect(normalizeBaseUrlForMatch("http://localhost:11434/v1/")).toBe("localhost:11434");
+    expect(normalizeBaseUrlForMatch("HTTP://LOCALHOST:11434")).toBe("localhost:11434");
+    expect(normalizeBaseUrlForMatch("http://h:1/v1/x")).toBe("h:1/v1/x");
+    // Domain-4-Audit r3: http↔https müssen matchen — der Katalog schreibt
+    // ggf. https://, die Entry http:// → gleicher host:port-Key.
+    expect(normalizeBaseUrlForMatch("https://localhost:11434")).toBe(
+      normalizeBaseUrlForMatch("http://localhost:11434"),
+    );
   });
 });
 

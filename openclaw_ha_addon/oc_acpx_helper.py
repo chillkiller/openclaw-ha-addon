@@ -597,7 +597,9 @@ def _harness_writer_backup_dir() -> Path:
 # openclaw_ha_addon/plugins/harness-config-writer/src/harness-config-writer.ts.
 # Extra *.env files in harness-env/ are additionally backed up when they
 # already exist, but only canonical ids are ever DELETED on restore.
-HARNESS_WRITER_ENV_IDS = ("claude", "droid", "gemini", "iflow", "kimi", "kiro", "qwen")
+# copilot added 2026-10-16 (BYOK/OpenAI-compatible surface, Ollama-Doku +
+# binary-verified; sync with ENV_MECHANISM in harness-config-writer.ts).
+HARNESS_WRITER_ENV_IDS = ("claude", "copilot", "droid", "gemini", "iflow", "kimi", "kiro", "qwen")
 HARNESS_WRITER_BACKUP_VERSION = 1
 
 
@@ -821,7 +823,7 @@ def _writer_managed_defaults_file() -> Path:
 # plugins/harness-config-writer/src/harness-config-writer.ts — beide Listen
 # synchron halten).
 KNOWN_WRITER_HARNESS_IDS = (
-    "codex", "opencode", "claude", "droid", "gemini", "iflow", "kimi", "kiro", "qwen",
+    "codex", "opencode", "claude", "copilot", "droid", "gemini", "iflow", "kimi", "kiro", "qwen",
 )
 
 

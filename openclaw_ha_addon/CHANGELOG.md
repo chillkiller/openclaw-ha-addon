@@ -1,3 +1,11 @@
+## [0.7.13.34] - 2026-10-17
+
+### Fixed
+- **harness-config-writer hardening (audit-fix batch + augment/merge + marker hardening).** Match key is scheme-free (http↔https catalog match — the multi-model auto-match was silently dead); `smallModel` always present in the opencode models map when differing; per-harness fail-soft (one bad file no longer collapses the deployment loop); bare-filename `OPENCLAW_CONFIG_PATH` → `.`. Foreign operator configs are AUGMENTED/MERGED instead of replaced (marker-framed codex section, operator content byte-preserved, collision-skip + warning; opencode JSON merge with operator keys preserved; NOTE for shorthand/commented files and real-content legacy config.toml). Marker lifecycle hardened: full-line matching, unterminated-BEGIN protection, dead-section strip on empty refresh (converges), bare≡quoted header aliasing, positive writer-owned detection (no silent replacement of `{"model":…}` operator files). Each fix carries a regression test (95/95 vitest, tsc strict 0).
+
+### Added
+- **copilot BYOK/Ollama ENV mechanism:** `COPILOT_PROVIDER_BASE_URL` (+/v1), `COPILOT_PROVIDER_API_KEY`, `COPILOT_PROVIDER_WIRE_API="responses"` (only with baseUrl — key-only is the GitHub-token route), `COPILOT_MODEL`. Docs+binary dual-verified (docs.ollama.com/integrations/copilot-cli; @github/copilot 1.0.98 help text). Helper lists synced (`HARNESS_WRITER_ENV_IDS`, `KNOWN_WRITER_HARNESS_IDS`); `cursor` stays NONE (ACP local-provider wiring missing in the current Cursor build — documented, re-evaluate upstream).
+
 ## [0.7.13.33] - 2026-10-16
 
 ### Fixed
