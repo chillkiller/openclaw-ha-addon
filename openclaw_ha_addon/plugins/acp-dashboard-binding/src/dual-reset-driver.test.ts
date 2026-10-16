@@ -2,9 +2,11 @@
  * §25 dual-reset driver tests (GaRoN 2026-10-16, "Befehle in der
  * Verbindungs-Session"). The driver must (a) claim ONLY plugin-owned binding
  * keys while the builtin acp reset leg exists, (b) delegate the work-session
- * reset verbatim to the builtin, and (c) add the origin-conversation reset
- * through the trusted gateway surface best-effort — never degrading the work
- * result. Registry mechanics (insertion-order precedence over the builtin's
+ * reset verbatim to the builtin, and (c) add the origin-conversation reset as
+ * a SECOND builtin delegation with the conversation key (the plugin gateway
+ * RPC path is blocked by the plugin-ownership gate for owner-less host-created
+ * rows — LIVE-verified) — best-effort, never degrading the work result.
+ * Registry mechanics (insertion-order precedence over the builtin's
  * key-shape fallback) are covered by the registration ordering test.
  */
 import { describe, expect, it, vi } from "vitest";
@@ -66,7 +68,6 @@ function makeServices(overrides?: Partial<DualResetDriverServices>): DualResetDr
     resolveDriverRegistry: () => registry,
     getAdapter: () => adapterFor(WORK_KEY, CONVERSATION_KEY),
     hasSessionEntry: vi.fn(async () => true),
-    gatewayRequest: vi.fn(async () => ({ ok: true, entry: { sessionId: "con-new" } })),
     logger: {
       debug: vi.fn(),
       info: vi.fn(),
@@ -125,6 +126,17 @@ describe("§25 dual-reset driver — resolveTargetBySessionKey", () => {
     ).toBeNull();
   });
 
+  it("defers on an agent-mismatched conversation key (Codex F6 cross-session guard)", async () => {
+    const driver = createDualResetDriver(
+      makeServices({
+        getAdapter: () => adapterFor(WORK_KEY, "agent:codex:dashboard:df380d1f-3109-424e-8ec7-6474c0f4e40b"),
+      }),
+    );
+    expect(
+      await driver.resolveTargetBySessionKey!({ cfg: {}, sessionKey: WORK_KEY }),
+    ).toBeNull();
+  });
+
   it("defers on a degenerate self-target (conversation key equals work key)", async () => {
     const driver = createDualResetDriver(
       makeServices({ getAdapter: () => adapterFor(WORK_KEY, WORK_KEY) }),
@@ -136,20 +148,20 @@ describe("§25 dual-reset driver — resolveTargetBySessionKey", () => {
 });
 
 describe("§25 dual-reset driver — resetInPlace", () => {
-  it("delegates the work reset verbatim and resets the conversation via gateway RPC", async () => {
-    const builtinReset = vi.fn(async () => ({
+  it("delegates BOTH legs to the builtin: work verbatim + conversation with its own key", async () => {
+    // Leg 2 must be a host-side builtin delegation, NOT a plugin gateway RPC:
+    // the trusted-plugin dispatch stamps authorizedPluginId and the
+    // plugin-ownership gate rejects owner-less host-created conversation
+    // rows ("did not create it") — LIVE-verified 2026-10-16.
+    const builtinReset = vi.fn(async (call: { sessionKey?: string }) => ({
       ok: true,
-      sessionKey: WORK_KEY,
-      sessionId: "f45463c4-new",
+      sessionKey: call.sessionKey,
+      sessionId: call.sessionKey === CONVERSATION_KEY ? "con-new" : "work-new",
     }));
     const registry: DriverRegistryMap = new Map([
       ["acp", builtinDriver({ resetInPlace: builtinReset })],
     ]);
-    const gatewayRequest = vi.fn(async () => ({ ok: true, entry: { sessionId: "con-new" } }));
-    const services = makeServices({
-      resolveDriverRegistry: () => registry,
-      gatewayRequest: gatewayRequest as unknown as DualResetDriverServices["gatewayRequest"],
-    });
+    const services = makeServices({ resolveDriverRegistry: () => registry });
     const driver = createDualResetDriver(services);
     const result = await driver.resetInPlace!({
       cfg: {},
@@ -166,20 +178,54 @@ describe("§25 dual-reset driver — resetInPlace", () => {
       },
     });
     expect(result.ok).toBe(true);
-    expect(builtinReset).toHaveBeenCalledWith(
+    expect(result.sessionId).toBe("work-new"); // leg-1 result stands
+    expect(services.hasSessionEntry).toHaveBeenCalledWith(CONVERSATION_KEY, "claude");
+    expect(builtinReset).toHaveBeenCalledTimes(2);
+    expect(builtinReset).toHaveBeenNthCalledWith(
+      1,
       expect.objectContaining({ sessionKey: WORK_KEY, reason: "reset" }),
     );
-    expect(services.hasSessionEntry).toHaveBeenCalledWith(CONVERSATION_KEY);
-    expect(gatewayRequest).toHaveBeenCalledWith(
-      "sessions.reset",
-      { key: CONVERSATION_KEY, agentId: "claude", reason: "reset" },
-      { scopes: ["operator.admin"] },
+    expect(builtinReset).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        sessionKey: CONVERSATION_KEY,
+        agentId: "claude",
+        reason: "reset",
+        commandSource: "test:surface:conversation-leg",
+        bindingTarget: expect.objectContaining({
+          sessionKey: CONVERSATION_KEY,
+          driverId: "acp",
+          agentId: "claude",
+        }),
+      }),
+    );
+  });
+
+  it("maps the /new command to the conversation leg as well", async () => {
+    const builtinReset = vi.fn(async (call: { sessionKey?: string }) => ({ ok: true, sessionKey: call.sessionKey }));
+    const registry: DriverRegistryMap = new Map([
+      ["acp", builtinDriver({ resetInPlace: builtinReset })],
+    ]);
+    const services = makeServices({ resolveDriverRegistry: () => registry });
+    const driver = createDualResetDriver(services);
+    await driver.resetInPlace!({
+      cfg: {},
+      sessionKey: WORK_KEY,
+      reason: "new",
+      bindingTarget: { sessionKey: WORK_KEY, conversationSessionKey: CONVERSATION_KEY },
+    });
+    expect(builtinReset).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({ sessionKey: CONVERSATION_KEY, reason: "new" }),
     );
   });
 
   it("skips the conversation leg when the origin entry does not exist (stray-guard)", async () => {
-    const gatewayRequest = vi.fn();
-    const services = makeServices({ gatewayRequest: gatewayRequest as never });
+    const builtinReset = vi.fn(async () => ({ ok: true, sessionKey: WORK_KEY, sessionId: "work-new" }));
+    const registry: DriverRegistryMap = new Map([
+      ["acp", builtinDriver({ resetInPlace: builtinReset })],
+    ]);
+    const services = makeServices({ resolveDriverRegistry: () => registry });
     services.hasSessionEntry = vi.fn(async () => false);
     const driver = createDualResetDriver(services);
     const result = await driver.resetInPlace!({
@@ -193,15 +239,18 @@ describe("§25 dual-reset driver — resetInPlace", () => {
     });
     expect(result.ok).toBe(true);
     expect(services.hasSessionEntry).toHaveBeenCalled();
-    expect(gatewayRequest).not.toHaveBeenCalled();
+    expect(builtinReset).toHaveBeenCalledTimes(1);
   });
 
-  it("keeps the work result when the gateway request throws", async () => {
-    const services = makeServices({
-      gatewayRequest: vi.fn(async () => {
-        throw new Error("plugin was not trusted");
-      }),
+  it("keeps the work result when the conversation-leg builtin call throws", async () => {
+    const builtinReset = vi.fn(async (call: { sessionKey?: string }) => {
+      if (call.sessionKey === CONVERSATION_KEY) throw new Error("worker died");
+      return { ok: true, sessionKey: call.sessionKey, sessionId: "work-new" };
     });
+    const registry: DriverRegistryMap = new Map([
+      ["acp", builtinDriver({ resetInPlace: builtinReset })],
+    ]);
+    const services = makeServices({ resolveDriverRegistry: () => registry });
     const driver = createDualResetDriver(services);
     const result = await driver.resetInPlace!({
       cfg: {},
@@ -216,10 +265,15 @@ describe("§25 dual-reset driver — resetInPlace", () => {
     expect(services.logger.warn).toHaveBeenCalledWith(expect.stringContaining("origin conversation reset failed"));
   });
 
-  it("keeps the work result when the gateway reply is not ok (graceful warn)", async () => {
-    const services = makeServices({
-      gatewayRequest: vi.fn(async () => ({ ok: false })),
+  it("logs the builtin's refusal of the conversation leg as a warn and keeps the work result", async () => {
+    const builtinReset = vi.fn(async (call: { sessionKey?: string }) => {
+      if (call.sessionKey === CONVERSATION_KEY) return { ok: false, error: "refused" };
+      return { ok: true, sessionKey: call.sessionKey, sessionId: "work-new" };
     });
+    const registry: DriverRegistryMap = new Map([
+      ["acp", builtinDriver({ resetInPlace: builtinReset })],
+    ]);
+    const services = makeServices({ resolveDriverRegistry: () => registry });
     const driver = createDualResetDriver(services);
     const result = await driver.resetInPlace!({
       cfg: {},
@@ -231,7 +285,7 @@ describe("§25 dual-reset driver — resetInPlace", () => {
     });
     expect(result.ok).toBe(true);
     expect(services.logger.warn).toHaveBeenCalledWith(
-      expect.stringContaining("did not commit"),
+      expect.stringContaining("did not commit (builtin refused: refused)"),
     );
   });
 
@@ -243,11 +297,7 @@ describe("§25 dual-reset driver — resetInPlace", () => {
     const registry: DriverRegistryMap = new Map([
       ["acp", builtinDriver({ resetInPlace: builtinReset })],
     ]);
-    const gatewayRequest = vi.fn();
-    const services = makeServices({
-      resolveDriverRegistry: () => registry,
-      gatewayRequest: gatewayRequest as never,
-    });
+    const services = makeServices({ resolveDriverRegistry: () => registry });
     const driver = createDualResetDriver(services);
     const result = await driver.resetInPlace!({
       cfg: {},
@@ -255,12 +305,15 @@ describe("§25 dual-reset driver — resetInPlace", () => {
       bindingTarget: { sessionKey: WORK_KEY, conversationSessionKey: CONVERSATION_KEY },
     });
     expect(result).toEqual({ ok: false, error: "store not ready" });
-    expect(gatewayRequest).not.toHaveBeenCalled();
+    expect(services.logger.warn).not.toHaveBeenCalled();
   });
 
   it("skips the conversation leg when the binding target carries no conversation key", async () => {
-    const gatewayRequest = vi.fn();
-    const services = makeServices({ gatewayRequest: gatewayRequest as never });
+    const builtinReset = vi.fn(async () => ({ ok: true, sessionKey: WORK_KEY, sessionId: "work-new" }));
+    const registry: DriverRegistryMap = new Map([
+      ["acp", builtinDriver({ resetInPlace: builtinReset })],
+    ]);
+    const services = makeServices({ resolveDriverRegistry: () => registry });
     const driver = createDualResetDriver(services);
     const result = await driver.resetInPlace!({
       cfg: {},
@@ -269,7 +322,7 @@ describe("§25 dual-reset driver — resetInPlace", () => {
     });
     expect(result.ok).toBe(true);
     expect(services.hasSessionEntry).not.toHaveBeenCalled();
-    expect(gatewayRequest).not.toHaveBeenCalled();
+    expect(builtinReset).toHaveBeenCalledTimes(1);
   });
 });
 
@@ -307,6 +360,32 @@ describe("§25 dual-reset driver — registration ordering", () => {
     } finally {
       delete store[STATEFUL_TARGET_DRIVERS_SYMBOL as symbol];
     }
+  });
+
+  it("uninstalls the driver when lifecycle registration throws (Codex F13)", () => {
+    const registry: DriverRegistryMap = new Map();
+    const services = makeServices({
+      resolveDriverRegistry: () => registry,
+      logger: {
+        debug: vi.fn(),
+        info: vi.fn(),
+        warn: vi.fn(),
+      } as never,
+    });
+    (services.logger.warn as ReturnType<typeof vi.fn>).mockImplementation(() => {});
+    const result = registerDualResetDriver(services, {
+      lifecycle: {
+        registerRuntimeLifecycle: () => {
+          throw new Error("lifecycle registry closed");
+        },
+      },
+    });
+    expect(result.registered).toBe(false);
+    expect(result.reason).toBe("lifecycle-registration-failed");
+    expect(registry.has(DUAL_RESET_DRIVER_ID)).toBe(false);
+    expect(services.logger.warn).toHaveBeenCalledWith(
+      expect.stringContaining("uninstalled after failed lifecycle registration"),
+    );
   });
 
   it("lifecycle dispose removes exactly our driver entry", () => {
@@ -365,7 +444,6 @@ describe("§25 integration — driver claims through the REAL binding adapter", 
       resolveDriverRegistry: () => new Map([["acp", builtinDriver()]]),
       getAdapter: () => adapter,
       hasSessionEntry: async () => true,
-      gatewayRequest: async () => ({ ok: true, entry: { sessionId: "x" } }),
       logger: { debug: () => {}, info: () => {}, warn: () => {} },
     });
     const target = await driver.resolveTargetBySessionKey!({ cfg: CFG, sessionKey: workKey });
@@ -386,7 +464,6 @@ describe("§25 integration — driver claims through the REAL binding adapter", 
       resolveDriverRegistry: () => new Map([["acp", builtinDriver()]]),
       getAdapter: () => adapter,
       hasSessionEntry: async () => true,
-      gatewayRequest: async () => ({ ok: true, entry: { sessionId: "x" } }),
       logger: { debug: () => {}, info: () => {}, warn: () => {} },
     });
     expect(await driver.resolveTargetBySessionKey!({ cfg: CFG, sessionKey: workKey })).toBeNull();

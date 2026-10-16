@@ -1579,15 +1579,23 @@ bleibt stehen, by design des Hosts.
 - **Leg 2 (Verbindungs-Session):** das Binding-Record-Feld
   `conversation.conversationId` IST der Origin-Session-Key-Text
   (`agent:<id>:dashboard:<uuid>` / `agent:<id>:main`; Claim-Path spiegelt
-  Transkripte genau auf diesen Key). Reset über die OFFIZIELLE plugin-Gateway-
-  Oberfläche: `api.runtime.gateway.request("sessions.reset",
-  {key, agentId, reason}, {scopes: ["operator.admin"]})` — RuntimeGateway-
-  RequestOptions honors scopes NUR für bundled/trusted-official Plugins
-  (unser Plugin ist seit v0.7.13.18 bundled-root deployed). Handler = Host-
-  sessionMutation „sessions.reset" → performGatewaySessionReset auf der
-  CONVERSATION. Plugin-Ownership sperrt nicht: host-erstellte Conversation-
-  Entries haben keinen `pluginOwnerId` (resolvePluginSessionOwnershipError
-  erlaubt genau das).
+  Transkripte genau auf diesen Key). Reset = ZWEITER `builtin.resetInPlace`-
+  Aufruf mit dem CONVERSATION-Key (host-seitiges
+  `performGatewaySessionReset`, System-Operator; derselbePrimitive, mit
+  dem der Host jeden ungebundenen `/reset` ausführt).
+  **§25.2a Live-Lektion (v0.7.13.32, 2026-10-16 05:41):** die erste
+  Variante ging über die plugin-Gateway-Oberfläche
+  (`api.runtime.gateway.request("sessions.reset", …, operator.admin)`)
+  und wurde LIVE vom **Plugin-Ownership-Gate** abgelehnt: trusted-Plugin-
+  Dispatch stempelt `authorizedPluginId`, und
+  `resolvePluginSessionOwnershipError` (session-plugin-ownership) besteht
+  NUR bei EXAKTEM Owner-Match — owner-lose host-erzeugte Conversation-Rows
+  (createdVia operator) sind über den RPC NIE resettbar
+  („Plugin \"acp-dashboard-binding\" cannot reset session … because it
+  did not create it"). Der Work-Key geht, weil der Builtin HOST-seitig
+  resettt (authorizedPluginId bleibt undefiniert → Gate ruht). Leg 2 über
+  denselben host-seitigen Pfad = exakt die Semantik eines normalen
+  Conversations-`/reset`.
 - **Best-effort, existence-guarded:** Leg 2 feuert NUR wenn der Conversation-
   Entry aktuell existiert (Reset-RPC auf fehlendem Key würde
   authorizeGatewaySessionCreation eine STREUNE Session zeugen). Jeder Leg-2-
@@ -1599,14 +1607,25 @@ bleibt stehen, by design des Hosts.
 
 ### §25.3 Verifikation
 
-- Neue Suite dual-reset-driver.test.ts (+14): Claim/Defer-Matrix, Delegate-
-  Pass-through, Leg-2-Skips (kein Entry, kein conversationKey), Fehlerpfade
-  (Gateway-Throw/-ok:false → Work-Result steht), Registrierungs-Ordering
-  (re-append builtin, globalThis-Default-Resolver, Lifecycle-Dispose).
-- Suite 248/248 (+14 auf 234), tsc strict 0.
-- **Live-Verifikation (ausstehend):** Deploy + Owner-tippt `/reset` in einer
-  gebundenen Test-Conversation → Log-Linie „dual reset: origin conversation …
-  reset committed" + Conversation-Transkript tatsächlich geleert + Work-Session
-  neu. Gateway-Trust-Gate („bundled") ist der einzige nicht statisch
-  verifizierbare Punkt — Fall es scheitert, loggt Leg 2 warn, sonst-Verhalten
-  unverändert.
+- Suite dual-reset-driver.test.ts (17): Claim/Defer-Matrix, Delegate-
+  Pass-through, TWO-LEG-Builtin-Delegation (2 builtin-Aufrufe: Work verbatim +
+  Conversation-Key, /new-Mapping), Leg-2-Skips (kein Entry, kein
+  conversationKey), Fehlerpfade (Conversation-Leg-Throw/builtin-refused →
+  Work-Result steht, Leg-1-Fail passthrough), Registrierungs-Ordering
+  (re-append builtin, globalThis-Default-Resolver, Lifecycle-Dispose) +
+  Integrationstests echter Adapter→Driver-Claim (derive→note→claim mit
+  Live-Hash 22afb5c2cb951156; defer bei leerem Cache).
+- suite 252/252, tsc strict 0.
+- **§25.3a LIVE-FEHLERKETTE (v0.7.13.32, .32-Fix 068f77f):**
+  1. .31-Live-Test ca7fde5b: Leg 2 feuerte NIE — Root-Cause:
+     `listBySession` sah nur explicit-Binds; bridged/derived Records (jede
+     nativ-dispatchte Dashboard-Conversation) wurden nie gespeichert →
+     Driver deferierte an den Builtin → Status quo. Fix = Reverse-Lookup-
+     Cache `derivedByTarget` (bounded 512) über ALLE Cascade-Legs
+     (068f77f).
+  2. .32-Live-Test 9a89172d (05:41): Leg 2 FEUERTE (Claim ✅), wurde aber
+     vom Plugin-Ownership-Gate abgelehnt (s. §25.2a) → Leg 2 auf
+     Builtin-Delegation umgestellt. Third try erwartet "reset committed".
+- **Live-Verifikation (ausstehend):** Deploy + `/reset` in gebundener
+  Test-Conversation → Log-Linie „dual reset: origin conversation … reset
+  committed" + Conversation geleert + Work-Session neu.

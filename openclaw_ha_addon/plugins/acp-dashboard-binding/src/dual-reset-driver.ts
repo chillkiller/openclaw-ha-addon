@@ -38,22 +38,22 @@
  *   divergence from today's ✅ behavior.
  * - LEG 2 (connector conversation): the binding record's `conversation.
  *   conversationId` IS the origin session-key text (the claim path already
- *   writes transcript mirrors by it). The reset runs through the OFFICIAL
- *   plugin gateway surface — `api.runtime.gateway.request("sessions.reset",
- *   …, { scopes: ["operator.admin"] })` (RuntimeGatewayRequestOptions,
- *   "Honored only for bundled or trusted official plugins"; our plugin is
- *   bundled-root deployed since v0.7.13.18, gateway-chat client uses the same
- *   RPC) → sessions-mutations handler → `performGatewaySessionReset` on the
- *   CONVERSATION key. Plugin-ownership does not block it: host-created
- *   conversation entries carry no `pluginOwnerId`
- *   (resolvePluginSessionOwnershipError allows rows the caller did not create
- *   when no owner is stamped).
+ *   writes transcript mirrors by it). The reset delegates to the BUILTIN
+ *   "acp" driver's `resetInPlace` with the CONVERSATION key — that runs
+ *   `performGatewaySessionReset` host-side at system-actor level, i.e. the
+ *   exact primitive the host's own /reset flow uses for unbound conversation
+ *   sessions. The plugin gateway RPC surface ("sessions.reset" with
+ *   operator.admin) was tried first and is NOT usable here: the trusted-plugin
+ *   dispatch stamps `authorizedPluginId`, and the plugin-ownership gate
+ *   (session-plugin-ownership) only passes rows whose `pluginOwnerId` EQUALS
+ *   the caller — owner-less host-created conversation rows are rejected with
+ *   "did not create it" (LIVE-verified 2026-10-16, .32).
  * - LEG 2 is BEST-EFFORT and existence-guarded: the leg only fires when the
- *   conversation entry currently exists (a reset RPC on a key without an
- *   entry would `authorizeGatewaySessionCreation` and materialize a STRAY
- *   session row instead of resetting anything). Any leg-2 failure is logged
- *   and never degrades the overall result — worst case the plugin degrades to
- *   exactly today's behavior (work-session reset only).
+ *   conversation entry currently exists (a reset on a key without an entry
+ *   would authorizeGatewaySessionCreation and materialize a STRAY session row
+ *   instead of resetting anything). Any leg-2 failure is logged and never
+ *   degrades the overall result — worst case the plugin degrades to exactly
+ *   today's behavior (work-session reset only).
  */
 
 const BUILTIN_ACP_DRIVER_ID = "acp";
@@ -135,12 +135,7 @@ type DualResetDriverServices = {
   getAdapter: () =>
     Promise<DashboardBindingAdapterLike | undefined> | DashboardBindingAdapterLike | undefined;
   /** True when the conversation session entry currently exists (stray-guard). */
-  hasSessionEntry: (sessionKey: string) => Promise<boolean>;
-  gatewayRequest: <T = unknown>(
-    method: string,
-    params?: Record<string, unknown>,
-    options?: { scopes?: string[]; timeoutMs?: number },
-  ) => Promise<T>;
+  hasSessionEntry: (sessionKey: string, agentId?: string) => Promise<boolean>;
   logger: DriverLogger;
 };
 
@@ -200,6 +195,16 @@ export function createDualResetDriver(
       // Degenerate self-target guard: never "reset the conversation" with the
       // conversation key that IS the work key under resolution.
       if (conversationSessionKey === sessionKey) return null;
+      // Cross-session guard (Codex audit F6): the conversation key must speak
+      // for the SAME agent as the work key — derived records guarantee this
+      // structurally, but an explicit bind could map a work key to a foreign
+      // agent's conversation. A mismatch defers to the builtin (status quo).
+      if (agentIdFromSessionKey(conversationSessionKey) !== agentIdFromSessionKey(sessionKey)) {
+        services.logger.warn(
+          `[acp-dashboard-binding] dual reset: agent mismatch between binding ${sessionKey} and conversation ${conversationSessionKey} — deferring`,
+        );
+        return null;
+      }
       const agentId = agentIdFromSessionKey(sessionKey);
       return {
         kind: "stateful",
@@ -226,39 +231,58 @@ export function createDualResetDriver(
         bindingTarget: params.bindingTarget,
       });
       if (!work?.ok) return work;
-      // LEG 2 — connector conversation (§25, GaRoN). Best-effort: every
-      // failure path below keeps the work result (never a ⚠️ for a leg the
-      // status quo never performed).
+      // LEG 2 — connector conversation (§25, GaRoN). Delegated to the SAME
+      // builtin driver with the conversation key: host-side reset primitive,
+      // no plugin-ownership gate (the RPC path is gated; see file header).
+      // Best-effort: every failure path below keeps the work result (never a
+      // ⚠️ for a leg the status quo never performed).
       const conversationKey = params.bindingTarget?.conversationSessionKey;
       if (!conversationKey) return work;
       try {
-        const exists = await services.hasSessionEntry(conversationKey);
+        const exists = await services.hasSessionEntry(
+          conversationKey,
+          // Codex-audit F11: agentId from the WORK key as fallback for keys
+          // that don't carry one in their shape.
+          agentIdFromSessionKey(params.sessionKey) ?? undefined,
+        );
         if (!exists) {
           services.logger.debug?.(
             `[acp-dashboard-binding] dual reset: origin conversation reset skipped (no session entry for ${conversationKey})`,
           );
           return work;
         }
-        const conversationAgentId = agentIdFromSessionKey(conversationKey);
-        const result = (await services.gatewayRequest(
-          "sessions.reset",
-          {
-            key: conversationKey,
-            ...(conversationAgentId ? { agentId: conversationAgentId } : {}),
-            ...(params.reason === "new" ? { reason: "new" } : { reason: "reset" }),
+        const conversationAgentId =
+          agentIdFromSessionKey(conversationKey) ??
+          (typeof params.bindingTarget?.agentId === "string"
+            ? params.bindingTarget.agentId
+            : undefined);
+        const conversation = await builtin.resetInPlace({
+          ...params,
+          sessionKey: conversationKey,
+          agentId: conversationAgentId,
+          // Codex-audit F5: pass unknown reasons through verbatim (the host
+          // schema today carries only "new" | "reset" — don't collapse future
+          // reasons into "reset").
+          reason: params.reason === "new" ? "new" : params.reason?.trim() || "reset",
+          // Codex-audit F4: mark the conversation leg for host-log forensics.
+          commandSource: `${params.commandSource ?? "stateful-target:acp-reset-in-place"}:conversation-leg`,
+          // The conversation-leg call belongs to the builtin driver: its id
+          // must own the bindingTarget the host would attribute this reset to
+          // (Codex-audit F14).
+          bindingTarget: {
+            kind: "stateful",
+            driverId: BUILTIN_ACP_DRIVER_ID,
+            sessionKey: conversationKey,
+            agentId: conversationAgentId,
           },
-          // §25: operator.admin is the scope the sessions.reset policy row
-          // demands; honored only for bundled/trusted plugins (ours is bundled-
-          // root deployed) — see RuntimeGatewayRequestOptions docs.
-          { scopes: ["operator.admin"] },
-        )) as { ok?: boolean; entry?: { sessionId?: string } } | undefined;
-        if (result?.ok) {
+        });
+        if (conversation?.ok) {
           services.logger.info(
-            `[acp-dashboard-binding] dual reset: origin conversation ${conversationKey} reset committed (session ${result.entry?.sessionId ?? "?"}) — /reset now clears work session AND connector conversation`,
+            `[acp-dashboard-binding] dual reset: origin conversation ${conversationKey} reset committed (session ${conversation.sessionId ?? "?"}) — /reset now clears work session AND connector conversation`,
           );
         } else {
           services.logger.warn(
-            `[acp-dashboard-binding] dual reset: origin conversation ${conversationKey} reset did not commit (gateway did not confirm ok)`,
+            `[acp-dashboard-binding] dual reset: origin conversation ${conversationKey} reset did not commit (builtin refused: ${conversation?.error ?? "unknown"})`,
           );
         }
       } catch (error) {
@@ -317,6 +341,7 @@ export function registerDualResetDriver(
     map.delete(BUILTIN_ACP_DRIVER_ID);
     map.set(BUILTIN_ACP_DRIVER_ID, builtin);
   }
+  let lifecycleRegistered = false;
   try {
     options?.lifecycle?.registerRuntimeLifecycle?.({
       id: DUAL_RESET_DRIVER_LIFECYCLE_ID,
@@ -326,40 +351,34 @@ export function registerDualResetDriver(
         if (map.get(DUAL_RESET_DRIVER_ID) === driver) map.delete(DUAL_RESET_DRIVER_ID);
       },
     });
+    lifecycleRegistered = true;
   } catch (error) {
-    // Registration itself already happened — never throw past registerFull
-    // for a lifecycle nicety (other seams log identically).
+    // Codex-audit F13: a driver without a lifecycle handle would LEAK in the
+    // host registry across disposals — uninstall instead of staying
+    // registered under a half-registered state.
+    map.delete(DUAL_RESET_DRIVER_ID);
     services.logger.warn(
-      `[acp-dashboard-binding] failed to register dual reset lifecycle — ${
+      `[acp-dashboard-binding] dual reset driver uninstalled after failed lifecycle registration — ${
         error instanceof Error ? error.message : String(error)
       }`,
     );
   }
   services.logger.debug?.(
-    `[acp-dashboard-binding] dual reset driver registered (${DUAL_RESET_DRIVER_ID}, ordering ${builtin ? "after-existing-builtin" : "builtin-pending"})`,
+    `[acp-dashboard-binding] dual reset driver registered (${DUAL_RESET_DRIVER_ID}, ordering ${builtin ? "after-existing-builtin" : "builtin-pending"}, lifecycle ${lifecycleRegistered ? "ok" : "FAILED-driver-uninstalled"})`,
   );
-  return { registered: true };
+  return { registered: lifecycleRegistered, ...(lifecycleRegistered ? {} : { reason: "lifecycle-registration-failed" }) };
 }
 
 /**
- * Real wiring: the plugin-api projection used by registerFull. The sdk seams
- * stay behind dynamic imports so the module's static import graph (and every
- * unit test of it) never pulls the pinned dist SDK.
+ * Real wiring: the plugin-api projection used by registerFull. The sdk seam
+ * (session-store entry check) stays behind a dynamic import so the module's
+ * static import graph (and every unit test of it) never pulls the pinned
+ * dist SDK.
  */
 export function createDualResetDriverServicesFromApi(api: {
   config: unknown;
   logger: DriverLogger;
-  /** The full plugin runtime arrives untyped — the gateway.request seam is
-   * the only field consumed here (cast inside keeps this boundary SDK-free). */
-  runtime?: unknown;
 }): DualResetDriverServices {
-  const gatewayRequest =
-    (
-      (api.runtime as { gateway?: { request?: unknown } } | undefined)?.gateway
-        ?.request as unknown as DualResetDriverServices["gatewayRequest"] | undefined
-    ) ??
-    ((..._args: unknown[]) =>
-      Promise.reject(new Error("plugin gateway runtime unavailable")));
   return {
     resolveDriverRegistry: defaultResolveDriverRegistry,
     getAdapter: () => {
@@ -375,13 +394,13 @@ export function createDualResetDriverServicesFromApi(api: {
         )
         .catch(() => undefined);
     },
-    hasSessionEntry: async (sessionKey) => {
+    hasSessionEntry: async (sessionKey, agentIdFallback) => {
       try {
         const sdk = (await import("openclaw/plugin-sdk/session-store-runtime")) as {
           getSessionEntry?: (ref: unknown) => unknown;
         };
         if (typeof sdk?.getSessionEntry !== "function") return false;
-        const agentId = agentIdFromSessionKey(sessionKey) ?? undefined;
+        const agentId = agentIdFromSessionKey(sessionKey) ?? agentIdFallback;
         const entry = sdk.getSessionEntry({
           sessionKey,
           ...(agentId ? { agentId } : {}),
@@ -391,7 +410,6 @@ export function createDualResetDriverServicesFromApi(api: {
         return false;
       }
     },
-    gatewayRequest,
     logger: api.logger,
   };
 }

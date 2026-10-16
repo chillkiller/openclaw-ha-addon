@@ -289,9 +289,11 @@ function createClaimReplyMirror(
  * shows no effect" story). This registers the plugin's dual-reset stateful
  * binding target driver into the HOST registry
  * (globalThis[Symbol.for("openclaw.statefulBindingTargetDrivers")]): for
- * plugin-owned binding keys it delegates the work reset to the builtin "acp"
- * driver verbatim and additionally resets the origin conversation through the
- * trusted plugin gateway surface ("sessions.reset", operator.admin scope).
+ * plugin-owned binding keys it delegates BOTH reset legs to the builtin "acp"
+ * driver: the work reset verbatim, and the origin conversation reset with the
+ * conversation key (host-side reset primitive — the plugin gateway RPC path
+ * "sessions.reset" is blocked by the plugin-ownership gate for owner-less
+ * host-created conversation rows, LIVE-verified 2026-10-16).
  * Best-effort second leg — failures log, the work reset result stands.
  * Rationale + registry mechanics: src/dual-reset-driver.ts header + BRIDGE.md
  * §25.
@@ -305,7 +307,6 @@ function registerDualResetDriverSeam(api: OpenClawPluginApi): void {
         info: (message: string) => api.logger.info(message),
         warn: (message: string) => api.logger.warn(message),
       },
-      runtime: api.runtime,
     }),
     { lifecycle: api.lifecycle },
   );
