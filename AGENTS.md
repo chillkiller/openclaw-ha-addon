@@ -155,3 +155,25 @@ This is a starting point. Add your own conventions, style, and rules as you figu
 - [Default AGENTS.md](/reference/AGENTS.default)
 - [Automations vs heartbeat](/automation#automations-vs-heartbeat)
 - [Heartbeat](/gateway/heartbeat)
+
+
+## HCW Session Workspace (Branch hcw-plugin — GaRoN 2026-10-17)
+
+This checkout is the dedicated worktree of the `hcw-plugin` branch: the
+development site for the **harness-config-writer** plugin ONLY (care,
+maintenance, AND development — nothing else; ADB/state/other plugins are
+separate worktrees/branches). Before any work here, read (if present):
+
+1. `agents/hcw-session/KNOWLEDGE.md` — the full plugin wiki: mechanisms
+   (A FILE/B ENV/C NONE incl. copilot BYOK), augment/merge semantics,
+   marker lifecycle, model-catalog match keys, helper sync rules, test
+   workshop (SMB-safe commands), release flow, branch model.
+2. `agents/hcw-session/STATUS.md` — living state: current branch stand,
+   merge main first if it is ahead (`git log --oneline hcw-plugin..origin/main`),
+   open items.
+
+These files are gitignored (`/agents/`) — they live only in this worktree,
+never in commits or pushes. Commit discipline: HCW sessions touch ONLY
+harness-config-writer files (plus shared release files when shipping);
+never edit or delete foreign plugin directories (acp-dashboard-binding etc.)
+— main is the merge target for multiple branches.
