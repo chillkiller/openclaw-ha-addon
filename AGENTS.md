@@ -156,3 +156,26 @@ This is a starting point. Add your own conventions, style, and rules as you figu
 - [Automations vs heartbeat](/automation#automations-vs-heartbeat)
 - [Heartbeat](/gateway/heartbeat)
 
+
+
+## HCW Session Workspace (Branch hcw-plugin — GaRoN 2026-10-17)
+
+This worktree is the persistent checkout of the `hcw-plugin` branch — the
+development site for the **harness-config-writer** plugin ONLY (care,
+maintenance, AND development). Sessions starting here work DIRECTLY on the
+branch (not on a fork copy — managed "Neuer Worktree" always creates a new
+`openclaw/<name>` branch, owner-verified).
+
+Before any work, read the session wiki — it lives BRANCH-INDEPENDENT in the
+main checkout (gitignored, never committed):
+1. `/mnt/192.168.178.68/share/projekte/github/openclaw-ha-addon/agents/hcw-session/KNOWLEDGE.md`
+   — full plugin wiki (mechanisms A FILE/B ENV/C NONE incl. copilot BYOK,
+   augment/merge semantics, marker lifecycle, model-catalog match keys,
+   helper sync rules, test workshop, release flow, branch model).
+2. `.../agents/hcw-session/STATUS.md` — living state: current stand, open items.
+
+Commit discipline: HCW commits touch ONLY harness-config-writer files (plus
+shared release files when shipping); never edit or delete foreign plugin
+directories (acp-dashboard-binding etc.) — main is the merge target for
+multiple branches (development, hcw-plugin, adb-plugin, …), so foreign trees
+stay untouched in this branch's history.
