@@ -1,3 +1,12 @@
+## [0.7.13.35] - 2026-10-18
+
+### Fixed
+- **plugins.allow never created by the helper** (Phase 2.20): absence = nothing blocked; union into a PRE-EXISTING list only (exclusive-gate silent-block bug from pre-onboarding ACP activation). 3 regression tests.
+- **harness-config-writer:** `ANTHROPIC_SMALL_FAST_MODEL` falls back to `model` (never dangling); copilot `WIRE_API` documented; BRIDGE §15.2 claude row completed; stale dispatcher docstring fixed.
+
+### Changed
+- **run.sh shutdown escalation (joint round, QEMU repair session):** TERM → 3 s poll → KILL → re-check so run.sh exits before Docker's stop budget with cleanup done; `oc-gateway stop/doctor` gain port-owner TERM/KILL + orphan sweep.
+
 ## [0.7.13.34] - 2026-10-17
 
 ### Fixed

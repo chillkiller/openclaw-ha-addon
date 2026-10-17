@@ -798,11 +798,24 @@ shutdown() {
     kill -TERM "${GW_PID}" >/dev/null 2>&1 || true
     # wait reaps child PIDs; for non-child (re-tracked) PIDs it fails instantly,
     # so fall back to a timed kill -0 poll to let the gateway finish cleanly.
+    # v0.7.13.35 escalation: a live-locked/busy daemon never reaps on TERM and
+    # Docker's 10 s stop budget then SIGKILLs it mid-write (the recurring
+    # "addon stops with an error" report). Escalate inside our own budget
+    # instead: 3 s poll → KILL → 1 s re-check, so run.sh exits well before
+    # Docker's deadline with all cleanup (relay, pid files, locks) done.
     if ! wait "${GW_PID}" 2>/dev/null; then
-      for _i in 1 2 3 4 5; do
+      for _i in 1 2 3; do
         kill -0 "${GW_PID}" 2>/dev/null || break
         sleep 1
       done
+      if kill -0 "${GW_PID}" 2>/dev/null; then
+        echo "WARN: gateway did not exit on SIGTERM; escalating to KILL (shutdown budget)."
+        kill -KILL "${GW_PID}" 2>/dev/null || true
+        for _i in 1 2 3; do
+          kill -0 "${GW_PID}" 2>/dev/null || break
+          sleep 1
+        done
+      fi
     fi
   fi
 
@@ -1916,7 +1929,13 @@ oc-gateway — gateway lifecycle from the web terminal.
   oc-gateway health      quick health check
   oc-gateway stop        touch the maintenance latch, stop the gateway, HOLD it
                          down (supervision loop will not respawn) — use for
-                         `openclaw doctor` / repairs / config surgery
+                         `openclaw doctor` / repairs / config surgery. If the
+                         drain outwaits the window, the port-owner PIDs are
+                         TERM'd, then KILLed; orphaned openclaw-owned leftover
+                         processes are swept so they cannot hold the state DB.
+  oc-gateway doctor      one-shot repair: stop (latch) → 'openclaw doctor --fix
+                         --non-interactive --yes' → resume. Auto-resumes on
+                         close/interrupt; can take 10-60 min on a Pi.
   oc-gateway resume      remove the latch; gateway respawns within ~5 s
   oc-gateway restart     restart the whole add-on (HA Supervisor API — this is
                          what also brings the gateway back, fresh)
@@ -1939,6 +1958,46 @@ wait_port_free() {
   return 1
 }
 
+# Escalation ladder (verified live 2026-10-17 night on this addon): the SIGTERM
+# drain can outwait the helper while agent DBs / spawned harness children are
+# busy; pre-.35 the helper then left a half-stopped gateway plus an orphaned
+# openclaw CLI process (PPID 1) holding the state database, and the follow-up
+# 'openclaw doctor --fix' died with GatewayStateOwnerContentionError in that
+# window. .35 escalates on VERIFIED port-owner PIDs (never a blind pkill -f)
+# and sweeps orphaned openclaw-owned leftovers before reporting the hold.
+port_owner_pids() {
+  ss -tlnp 2>/dev/null \
+    | grep -F ":${PORT} " \
+    | sed -n 's/.*pid=\([0-9]*\).*/\1/p' \
+    | sort -u
+}
+sweep_openclaw_leftovers() {
+  # Kill remaining openclaw-owned processes (daemon stragglers, spawn-broker /
+  # harness children, orphans of the CLI itself) that would hold the state DB.
+  # Skips: our own process tree, and the in-flight 'openclaw gateway stop' CLI
+  # child. Matched by exact surface (/usr/bin/openclaw, openclaw-gateway,
+  # node_modules/openclaw, /.openclaw/npm/) — NOT by any substring, so benign
+  # commands like "tail -f .../.openclaw/logs/x" are never touched.
+  local f pid cmd ptree parent
+  ptree=" $$ "
+  parent=$PPID
+  while [ -n "$parent" ] && [ "$parent" != "1" ]; do
+    ptree="${ptree}${parent} "
+    parent=$(awk '{print $4}' "/proc/${parent}/stat" 2>/dev/null)
+    [ -n "$parent" ] || break
+  done
+  for f in /proc/[0-9]*/cmdline; do
+    pid="${f#/proc/}"; pid="${pid%/cmdline}"
+    case " ${ptree}" in *" ${pid} "*) continue ;; esac
+    cmd=$(tr '\0' ' ' < "$f" 2>/dev/null) || continue
+    case "$cmd" in
+      *"openclaw gateway stop"*) continue ;;
+      *openclaw-gateway*|*"/usr/bin/openclaw"*|*"node_modules/openclaw"*|*"/.openclaw/npm/"*|"openclaw"|"openclaw "*)
+        kill -9 "${pid}" 2>/dev/null || true ;;
+    esac
+  done
+}
+
 case "${1:-}" in
   status)
     exec timeout 20 openclaw gateway status --timeout 10000
@@ -1954,19 +2013,68 @@ case "${1:-}" in
     if command -v openclaw >/dev/null 2>&1; then
       # Non-interactive shells refuse a plain stop (operator-service guard);
       # --force is the documented intent signal for exactly this case.
-      timeout 90 openclaw gateway stop --force \
-        || pkill -TERM -f "openclaw-gateway" 2>/dev/null || true
+      timeout 90 openclaw gateway stop --force 2>/dev/null || true
     else
       pkill -TERM -f "openclaw-gateway" 2>/dev/null || true
     fi
+    # Escalation: a busy drain can outwait the TERM window. TERM, then KILL the
+    # verified port-owner PIDs (ss -tlnp; never a blind pkill -f).
+    owners=$(port_owner_pids)
+    if [ -n "$owners" ]; then
+      echo "INFO: gateway still bound (${owners}) after the drain window; escalating."
+      for p in $owners; do kill -TERM "${p}" 2>/dev/null || true; done
+      # ~5 s TERM grace: funds the gateway's own final-write window (docs:
+      # up to 10 s reserve; 5 s keeps the whole stop well inside any sane
+      # operator tolerance while KILL still guarantees the exit).
+      for _i in 1 2 3 4 5; do
+        [ -z "$(port_owner_pids)" ] && break
+        sleep 1
+      done
+      owners=$(port_owner_pids)
+      for p in $owners; do
+        echo "INFO: kill -9 verified port owner pid ${p}"
+        kill -9 "${p}" 2>/dev/null || true
+      done
+    fi
+    sweep_openclaw_leftovers
     if wait_port_free; then
       echo "Gateway stopped and HELD down. nginx + web terminal stay up."
-      echo "Run your maintenance now (e.g. 'openclaw doctor' / 'openclaw doctor --fix')."
+      echo "Run your maintenance now (e.g. 'openclaw doctor --fix')."
       echo "Resume afterwards with: oc-gateway resume"
     else
       echo "WARN: gateway port ${PORT} still occupied after 15 s; the supervision"
       echo "      loop already holds the gateway down — leaving the daemon alone."
     fi
+    ;;
+  doctor)
+    drflag="${OC_GATEWAY_DOCTOR_FLAG:-/tmp/.oc-gateway-doctor-running}"
+    : > "$drflag"
+    docleanup() {
+      rc=$?
+      if [ -f "$drflag" ]; then
+        rm -f "$drflag"
+        echo "=== doctor ended (rc=${rc}); resuming gateway ==="
+        "$0" resume >/dev/null 2>&1 || true
+      fi
+      exit "$rc"
+    }
+    trap 'docleanup' EXIT INT TERM HUP
+    echo "One-shot repair: stop (latch) → 'openclaw doctor --fix --non-interactive --yes' → resume."
+    echo "On a Pi with many agent DBs this can take 10-60 min. Keep this terminal open —"
+    echo "if it closes or you Ctrl-C, the gateway auto-resumes. For a manual hold use"
+    echo "'oc-gateway stop' + 'oc-gateway resume' instead."
+    "$0" stop
+    shift
+    echo "=== doctor --fix (maintenance window, gateway HELD DOWN) ==="
+    if command -v openclaw >/dev/null 2>&1; then
+      openclaw doctor --fix --non-interactive --yes "$@"
+      drc=$?
+    else
+      echo "ERROR: openclaw CLI not found; skipping the fix run."
+      drc=127
+    fi
+    echo "=== doctor finished (rc=${drc}); resuming via EXIT trap ==="
+    exit "${drc}"
     ;;
   resume)
     if [ -f "$FLAG" ]; then
