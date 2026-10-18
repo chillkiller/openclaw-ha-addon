@@ -42,7 +42,7 @@ configuration:
         description: Opcional - Token de larga duración de Home Assistant para scripts/herramientas de API local
       http_proxy:
         name: Proxy HTTP de salida
-        description: Opcional - URL de proxy para solicitudes HTTP/HTTPS salientes (ejemplo - http://192.168.2.1:3128)
+        description: Opcional - URL de proxy para solicitudes HTTP/HTTPS salientes (ejemplo - http://192.0.2.2:3128)
       enable_openai_api:
         name: Activar API OpenAI
         description: Activar endpoint de Chat Completions compatible con OpenAI. Permite usar OpenClaw como agente de conversación
@@ -78,7 +78,7 @@ configuration:
       harness_base_url:
         name: URL base de Harness
         description: Endpoint backend para TODOS los harnesses locales (cualquier API compatible con OpenAI — no solo Ollama),
-          ej. http://192.168.178.34:11434. También es el ACTIVADOR del harness-config-writer - vacío no genera nada (los
+          ej. http://198.51.100.20:11434. También es el ACTIVADOR del harness-config-writer - vacío no genera nada (los
           registros del operador quedan intactos). Sin valor se usa el fallback integrado http://localhost:11434.
       harness_api_key:
         name: Clave API de Harness
@@ -125,14 +125,14 @@ configuration:
       gateway_public_url:
         name: URL pública del Gateway
         description: URL base pública para abrir la interfaz web del Gateway en una nueva pestaña (no integrada). Ejemplo
-          - https://ejemplo.duckdns.org:12345 o http://192.168.1.10:18789
+          - https://ejemplo.duckdns.org:12345 o http://192.0.2.10:18789
       gateway_remote_url:
         name: URL del Gateway Remoto
-        description: URL WebSocket del gateway remoto utilizada cuando Gateway Mode es Remote (ejemplo - ws://192.168.1.20:18789
+        description: URL WebSocket del gateway remoto utilizada cuando Gateway Mode es Remote (ejemplo - ws://198.51.100.21:18789
           o wss://gateway.example.com:443)
       gateway_trusted_proxies:
         name: Proxys de confianza del Gateway
-        description: Lista de IPs/CIDR de proxys de confianza separados por comas para el modo trusted-proxy (ejemplo - 127.0.0.1,192.168.88.0/24).
+        description: Lista de IPs/CIDR de proxys de confianza separados por comas para el modo trusted-proxy (ejemplo - 127.0.0.1,198.51.100.0/24).
       gateway_additional_allowed_origins:
         name: Orígenes permitidos adicionales
         description: Orígenes extra de Control UI separados por comas que se combinan en gateway.controlUi.allowedOrigins
@@ -217,7 +217,7 @@ configuration:
       blocked_hostnames:
         name: Nombres de host bloqueados
         description: Lista separada por comas de nombres de host bloqueados para el acceso de red saliente. Dejar vacío para
-          permitir todos. Ejemplo - router.lan,192.168.178.1
+          permitir todos. Ejemplo - router.lan,192.0.2.1
   legacy:
     name: Legacy
     description: Retired options kept for compatibility

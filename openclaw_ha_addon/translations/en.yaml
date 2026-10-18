@@ -46,7 +46,7 @@ configuration:
         description: Optional - Home Assistant long-lived token for local HA API scripts/tools
       http_proxy:
         name: Outbound HTTP Proxy
-        description: Optional - Proxy URL for outbound HTTP/HTTPS requests (example - http://192.168.2.1:3128)
+        description: Optional - Proxy URL for outbound HTTP/HTTPS requests (example - http://192.0.2.2:3128)
       enable_openai_api:
         name: Enable OpenAI-compatible API
         description: Expose the OpenAI-compatible Chat Completions API endpoint (for the HA Assist pipeline).
@@ -80,7 +80,7 @@ configuration:
       harness_base_url:
         name: Harness Base URL
         description: Backend endpoint for ALL local-provider harnesses (any OpenAI-compatible API — not just Ollama), e.g.
-          http://192.168.178.34:11434. Doubles as the ACTIVATOR for the harness-config-writer - empty generates nothing (operator
+          http://198.51.100.20:11434. Doubles as the ACTIVATOR for the harness-config-writer - empty generates nothing (operator
           entries stay untouched). When unset the built-in fallback http://localhost:11434 applies.
       harness_api_key:
         name: Harness API Key
@@ -128,10 +128,10 @@ configuration:
           or https://my-device.tailnet.ts.net.
       gateway_remote_url:
         name: Remote Gateway URL
-        description: Remote gateway WebSocket URL used when Gateway Mode is Remote (example - ws://192.168.1.20:18789 or wss://gateway.example.com:443)
+        description: Remote gateway WebSocket URL used when Gateway Mode is Remote (example - ws://198.51.100.21:18789 or wss://gateway.example.com:443)
       gateway_trusted_proxies:
         name: Gateway Trusted Proxies
-        description: Comma-separated trusted proxy IP/CIDR list, used only in Reverse Proxy network mode (example - 127.0.0.1,192.168.88.0/24).
+        description: Comma-separated trusted proxy IP/CIDR list, used only in Reverse Proxy network mode (example - 127.0.0.1,198.51.100.0/24).
       gateway_additional_allowed_origins:
         name: Additional Allowed Origins
         description: Comma-separated extra Control UI origins to merge into gateway.controlUi.allowedOrigins in lan_https
@@ -209,7 +209,7 @@ configuration:
       blocked_hostnames:
         name: Blocked Hostnames
         description: Comma-separated list of hostnames blocked from outbound network access. Leave empty to allow all hostnames.
-          Example - router.lan,192.168.178.1
+          Example - router.lan,192.0.2.1
   legacy:
     name: Legacy
     description: Retired options kept for compatibility

@@ -42,7 +42,7 @@ configuration:
         description: Опционално - дълготраен токен на Home Assistant за локални API скриптове/инструменти
       http_proxy:
         name: Изходящ HTTP прокси
-        description: Опционално - URL на прокси за изходящи HTTP/HTTPS заявки (пример - http://192.168.2.1:3128)
+        description: Опционално - URL на прокси за изходящи HTTP/HTTPS заявки (пример - http://192.0.2.2:3128)
       enable_openai_api:
         name: Активиране на OpenAI API
         description: Активиране на OpenAI-съвместим Chat Completions ендпойнт. Позволява използването на OpenClaw като разговорен
@@ -77,7 +77,7 @@ configuration:
     fields:
       harness_base_url:
         name: Базов URL на Harness
-        description: Бекенд ендпойнт за ВСИЧКИ локални harnesses (всеки OpenAI-съвместим API — не само Ollama), напр. http://192.168.178.34:11434.
+        description: Бекенд ендпойнт за ВСИЧКИ локални harnesses (всеки OpenAI-съвместим API — не само Ollama), напр. http://198.51.100.20:11434.
           Обслужва и като АКТИВАТОР на harness-config-writer - празно не генерира нищо (записите на оператора остават недокоснати).
           Без стойност важи вграденият fallback http://localhost:11434.
       harness_api_key:
@@ -125,14 +125,14 @@ configuration:
       gateway_public_url:
         name: Публичен URL на Gateway
         description: Публичен базов URL за отваряне на Gateway уеб интерфейса в нов таб (не вграден). Пример - https://example.duckdns.org:12345
-          или http://192.168.1.10:18789
+          или http://192.0.2.10:18789
       gateway_remote_url:
         name: URL на отдалечен Gateway
-        description: WebSocket URL на отдалечения gateway, използван когато Gateway Mode е remote (пример - ws://192.168.1.20:18789
+        description: WebSocket URL на отдалечения gateway, използван когато Gateway Mode е remote (пример - ws://198.51.100.21:18789
           или wss://gateway.example.com:443)
       gateway_trusted_proxies:
         name: Доверени прокси на Gateway
-        description: Списък с доверени прокси IP/CIDR, разделени със запетая, за trusted-proxy режим (пример - 127.0.0.1,192.168.88.0/24).
+        description: Списък с доверени прокси IP/CIDR, разделени със запетая, за trusted-proxy режим (пример - 127.0.0.1,198.51.100.0/24).
       gateway_additional_allowed_origins:
         name: Допълнителни разрешени origins
         description: Допълнителни origins за Control UI, разделени със запетая; сливат се в gateway.controlUi.allowedOrigins
@@ -216,7 +216,7 @@ configuration:
       blocked_hostnames:
         name: Блокирани имена на хостове
         description: Списък, разделен със запетаи, на блокирани имена на хостове за изходящ мрежов достъп. Оставете празно,
-          за да разрешите всички. Пример - router.lan,192.168.178.1
+          за да разрешите всички. Пример - router.lan,192.0.2.1
   legacy:
     name: Legacy
     description: Retired options kept for compatibility

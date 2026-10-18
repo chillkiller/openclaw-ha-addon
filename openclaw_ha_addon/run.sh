@@ -308,7 +308,7 @@ case "$NETWORK_MODE" in
     GATEWAY_TLS_ENABLED="false"
     if [ -z "$GATEWAY_TRUSTED_PROXIES" ]; then
       echo "ERROR: network_mode=reverse_proxy requires gateway_trusted_proxies."
-      echo "ERROR: Set it to your reverse proxy's IP/CIDR (e.g. 127.0.0.1,192.168.88.0/24)."
+      echo "ERROR: Set it to your reverse proxy's IP/CIDR (e.g. 127.0.0.1,198.51.100.0/24)."
       exit 1
     fi
     echo "INFO: Network mode: reverse_proxy (loopback + trusted-proxy)"
@@ -1442,7 +1442,7 @@ start_openclaw_runtime() {
     REMOTE_URL="$GATEWAY_REMOTE_URL"
     if [ -z "$REMOTE_URL" ]; then
       echo "ERROR: gateway_mode=remote but gateway_remote_url is not set in app options"
-      echo "ERROR: Set gateway_remote_url in app Configuration (e.g. ws://192.168.1.10:18789), then restart"
+      echo "ERROR: Set gateway_remote_url in app Configuration (e.g. ws://192.0.2.10:18789), then restart"
       return 1
     fi
 
