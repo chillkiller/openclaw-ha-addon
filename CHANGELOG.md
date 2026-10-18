@@ -549,6 +549,27 @@ Each entry summarizes user-visible changes. Full engineering notes:
 
 ---
 
+## [0.7.10.27]
+
+### Fixed
+
+- **Dockerfile alignment**: Actually install `openclaw@2026.9.2` (the 0.7.10.26 release only updated `config.yaml` version metadata). Bumped add-on version to 0.7.10.27 so Home Assistant rebuilds the image.
+
+---
+
+## [0.7.10.26]
+
+### Changed
+
+- **OpenClaw**: Intended update to `2026.9.2`.
+
+### Notes
+
+- This release did not update the Dockerfile install line, so the built image still contained OpenClaw 2026.9.1. Superseded by 0.7.10.27 and 0.7.10.28.
+- Compatibility note: preserves active settings, enabled skills, and default-agent ownership across Gateway restarts triggered by HA add-on updates.
+
+---
+
 ## [0.7.10.25]
 
 - No changes; placeholder release.
@@ -578,5 +599,208 @@ Each entry summarizes user-visible changes. Full engineering notes:
 
 - **TUI startup:** `openclaw tui` now starts with `--session agent:coding-main:main` to satisfy OpenClaw 2026.8.2 multi-agent requirement.
 - **Ingress base-path injection:** nginx `sub_filter` now injects the HA Ingress base path for both terminal enabled states.
+
+---
+
+## [0.7.9.28] — 2026-10-09
+
+### Fixed
+
+- **Homebrew installation on Node 24:** the installer path is robust against the Homebrew layout used by OpenClaw 2026.8.2.
+
+---
+
+## [0.7.9.27]
+
+### Changed
+
+- **OpenClaw**: Update to `2026.8.2`.
+- **Node.js**: Update from NodeSource `node_22.x` to `node_24.x`.
+- **mcporter**: Add global install `mcporter@0.12.3` for MCP server auto-configuration.
+- **node-llama-cpp**: Keep at `3.20.0` as requested.
+
+### Notes
+
+- This release follows the upstream 2026.8.x line. The 2026.8.x OpenClaw release migrates sessions/transcripts to SQLite; a full `/config` backup is required before first start after update.
+
+---
+
+## [0.7.9.26]
+
+### Changed
+
+- **Landing page titlebar redesign**: Home Assistant Material Design 3 styling with corrected colors; the tab structure stays.
+- **UX**: removed the HTTPS/secure-context warning banner inside the ingress.
+
+### Fixed
+
+- **Tab visibility**: tabs are shown/hidden correctly based on app configuration and iframe context.
+
+---
+
+## [0.7.9.24]
+
+### Changed
+
+- **Landing page redesign**: Home Assistant Material Design 3 style with cards, chips and tile navigation.
+- **Security**: `__GATEWAY_TOKEN__` is escaped with `html.escape()` in `render_nginx.py`.
+- **Features restored**: CA cert download (only `lan_https`) and disk usage display in the footer.
+
+---
+
+## [0.7.9.23]
+
+### Fixed
+
+- **Ingress Gateway Health Sensor (HA iframe path)**: Changed health fetch from absolute `/api/health` to relative `./api/health` in landing page, TUI and docs, so requests resolve correctly inside the HA Ingress iframe context.
+
+---
+
+## [0.7.9.22]
+
+### Fixed
+
+- **Ingress Gateway Health Sensor**: `/api/health` now proxies to the actual OpenClaw Gateway `/health` endpoint instead of returning a static nginx 200 OK.
+- landing, TUI and docs pages parse JSON response and check `data.ok`.
+
+---
+
+## [0.7.9.21]
+
+### Fixed
+
+- **Codex ACP Wrapper auth race**: `resolveProviderEnv()` is now called before checking/writing `auth.json`, ensuring the Ollama fallback key is correctly visible to the wrapper.
+
+---
+
+## [0.7.9.20]
+
+### Fixed
+
+- **Plugin API version compatibility**: `run.sh` now exports a plain semver string for `OPENCLAW_VERSION` so the plugin API compatibility check (`>=2026.7.1`) passes and ACPX loads.
+
+---
+
+## [0.7.9.19]
+
+### Fixed
+
+- Quote ACPX_ENABLED jq selector in run.sh.
+
+---
+
+## [0.7.9.18]
+
+### Fixed
+
+- Line-ending normalization in `run.sh` so HA picks up the file correctly.
+
+---
+
+## [0.7.9.11] — 2026-10-09
+
+### Added
+
+- **ACPX harness auto-initialization** for Claude Code, Codex and OpenCode.
+
+---
+
+## [0.7.9.4] — 2026-10-09
+
+### Added
+
+- **Dedicated TUI terminal** via ttyd running `openclaw tui`.
+
+---
+
+## [0.7.9.3] — 2026-10-09
+
+### Added
+
+- **Ingress iframe auto-login**, terminal fixes and a CSP override for the embedded Control UI.
+
+---
+
+## [0.7.9.2] — 2026-10-09
+
+### Changed
+
+- **OpenClaw 2026.7.1-2** and `node-llama-cpp` 3.20.0.
+
+---
+
+## [0.7.9.1] — 2026-10-09
+
+### Fixed
+
+- **Ingress UI refactor:** tab-based Ingress UI, health-check URL and nginx stream handling corrected.
+
+---
+
+## [0.7.7.7] — 2026-10-09
+
+### Fixed
+
+- **D-Bus and Avahi startup:** system paths are pinned, stale PIDs are cleaned and the daemon starts in the background.
+
+---
+
+## [0.7.7.6] — 2026-10-09
+
+### Changed
+
+- **OpenClaw 2026.6.11** and `node-llama-cpp` 3.19.0.
+
+### Fixed
+
+- **D-Bus/Avahi after Homebrew installs:** system paths pinned and stale PIDs cleaned.
+
+---
+
+## [0.7.7.1] — 2026-10-09
+
+### Fixed
+
+- **Audit findings:** ten required changes applied; the builder stage was removed and `build-essential` purged from the runtime image.
+
+---
+
+## [0.7.7.0] — 2026-10-08
+
+### Changed
+
+- **OpenClaw 2026.6.8**, CUPS/Scanner support, `crawl4ai` integration, Go 1.24.1 toolchain and the D-Bus/Avahi stack.
+
+### Fixed
+
+- **Browser and memory bootstrap**, Node.js heap limit (4096 MB) and the base image moved from Debian Trixie to Bookworm.
+
+---
+
+## [0.7.5.3] — 2026-10-08
+
+### Fixed
+
+- **D-Bus production configuration** and the Avahi service patch for reliable mDNS discovery.
+
+---
+
+## [0.7.5.2] — 2026-10-08
+
+### Added
+
+- **Exclusive mDNS mode selection** (`off`, `minimal`, `full`, `avahi`) and the `trace_log_to_console` / `gateway_log_level` options.
+
+### Fixed
+
+- **D-Bus startup on Debian Trixie**, missing `dbus` package for Avahi, the mDNS host name default and the missing `avahi` entry in all six translations. Obsolete `build.yaml` removed.
+
+---
+
+## [0.7.5.1] — 2026-10-08
+
+### Added
+
+- **First production release:** professional project structure, complete documentation and the Home Assistant app metadata.
 
 ---
