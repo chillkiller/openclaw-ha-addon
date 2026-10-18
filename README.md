@@ -74,11 +74,11 @@ For everything beyond the defaults — network modes, tokens, Assist, MCP — re
 | `tailnet_funnel` | Tailscale funnel HTTPS | Public reachability with password auth |
 | `reverse_proxy` | Loopback + trusted-proxy auth | Nginx Proxy Manager, Traefik, Caddy in front |
 
-Set the mode under **Settings → Apps → OpenClaw Assistant → Configuration**. Details: [DOCS.md § Accessing the Gateway Web UI](DOCS.md#4-accessing-the-gateway-web-ui).
+Set the mode under **Settings → Apps → OpenClaw Assistant → Configuration**. Details: [DOCS.md — Accessing the Gateway Web UI](DOCS.md#4-accessing-the-gateway-web-ui).
 
 ## 🔌 Home Assistant Integration
 
-- **Assist pipeline** — enable `enable_openai_api` and use the OpenAI-compatible endpoint (`/v1/chat/completions`, gateway port `18789`) as a conversation agent. Step-by-step: [DOCS.md § Assist](DOCS.md#6c-assist-pipeline-integration-openai-api)
+- **Assist pipeline** — enable `enable_openai_api` and use the OpenAI-compatible endpoint (`/v1/chat/completions`, gateway port `18789`) as a conversation agent. Step-by-step: [DOCS.md — Assist](DOCS.md#6c-assist-pipeline-integration-openai-api)
 - **Native integration** — the third-party [OpenClaw Home Assistant integration](https://github.com/techartdev/OpenClawHomeAssistantIntegration) adds auto-discovery, a chat card, and voice mode. It is a separate project; install it from its own repository.
 - **MCP** — with a long-lived HA token, set `auto_configure_mcp` to register Home Assistant as an MCP server, giving OpenClaw direct entity control
 

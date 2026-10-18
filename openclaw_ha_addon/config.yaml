@@ -1,8 +1,8 @@
-# OpenClaw Home Assistant App v0.7.13.34 Configuration
+# OpenClaw Home Assistant App v0.7.13.35 Configuration
 # Full OpenClaw runtime with Ingress Web UI, web terminal, Assist pipeline
 # and MCP integration. Option reference lives in DOCS.md ("Configuration").
 name: OpenClaw Assistant
-version: "0.7.13.34"
+version: "0.7.13.35"
 slug: openclaw_ha_addon
 description: Agentic AI assistant for Home Assistant — full OpenClaw runtime with Ingress Web UI, web terminal, Assist pipeline and MCP integration
 url: https://github.com/chillkiller/openclaw-ha-addon
@@ -87,7 +87,7 @@ options:
     # Optional: Home Assistant long-lived token (for local HA API scripts/tools)
     homeassistant_token: ""
     # Optional: outbound HTTP/HTTPS proxy for OpenClaw network access.
-    # Example: "http://192.168.2.1:3128"
+    # Example: "http://192.0.2.2:3128"
     http_proxy: ""
     # Enable OpenAI-compatible Chat Completions API endpoint (for HA Assist pipeline)
     enable_openai_api: false
@@ -189,7 +189,7 @@ options:
   gateway_ext:
     # Public base URL for opening the Gateway Web UI in a new tab (not embedded).
     # Recommended: NO trailing slash.
-    # Example: "https://example.duckdns.org:12345" or "http://192.168.1.10:18789"
+    # Example: "https://example.duckdns.org:12345" or "http://192.0.2.10:18789"
     gateway_public_url: ""
     # Optional: only used when network_mode == remote
     gateway_remote_url: ""
@@ -255,7 +255,7 @@ options:
     # Example: "/share/scripts/my-init.sh"
     custom_init_script: ""
     # Comma-separated list of hostnames blocked from outbound SSRP (OpenClaw 2026.9.1).
-    # Leave empty to allow all hostnames. Example: "router.lan,192.168.178.1"
+    # Leave empty to allow all hostnames. Example: "router.lan,192.0.2.1"
     blocked_hostnames: ""
 
   legacy:

@@ -846,7 +846,14 @@ const ENV_MECHANISM: Record<
       ["ANTHROPIC_MODEL", nonEmpty(e.model)],
       ["ANTHROPIC_BASE_URL", nonEmpty(e.baseUrl)],
       ["ANTHROPIC_AUTH_TOKEN", nonEmpty(e.apiKey)],
-      ["ANTHROPIC_SMALL_FAST_MODEL", nonEmpty(e.smallModel)],
+      // Jagd-F1 (2026-10-17): Fallback auf model — asymmetrisch zum opencode-
+      // r3-Fix behoben (dangling small_model-Referenz-Klasse): ohne Fallback
+      // läuft die Claude-Fast-Route auf den Anthropic-Default (Haiku-Klasse)
+      // gegen die Ollama-URL und scheitert mit model-not-found.
+      [
+        "ANTHROPIC_SMALL_FAST_MODEL",
+        nonEmpty(e.smallModel) ?? nonEmpty(e.model),
+      ],
       // Multi-Model γ (dist-belegt): availableModels-Env — nur gesetzt bei
       // non-empty Liste; ANTHROPIC_MODEL ist/PRIORITÄT-1 bleibt der Default.
       [
@@ -912,6 +919,10 @@ const ENV_MECHANISM: Record<
     return envMapping([
       ["COPILOT_PROVIDER_BASE_URL", baseUrl ? withV1Suffix(baseUrl) : undefined],
       ["COPILOT_PROVIDER_API_KEY", nonEmpty(e.apiKey)],
+      // Jagd-F2 (2026-10-17): WIRE_API bewusst "responses" — der Ollama-
+      // Backend-Endpunkt ist /v1/responses; die Copilot-CLI-Doku nennt
+      // "completions" als Default, das Ollama-Gateway implementiert aber
+      // die Responses-API. Dokumentation statt Config-Flip
       ["COPILOT_PROVIDER_WIRE_API", baseUrl ? "responses" : undefined],
       ["COPILOT_MODEL", nonEmpty(e.model)],
     ]);
@@ -1530,7 +1541,7 @@ export function deployHarnessEnvFile(
 /**
  * deployHarnessConfigs — TRIGGER-Surface (registerFull, idempotent). Liest
  * `config.harnesses`, dispatcht je Harness auf Mechanismus A/B; sonst Mechanismus
- * C (NONE, Additiv-Garantie: copilot/cursor + alle nicht katalogisierten ids
+ * C (NONE, Additiv-Garantie: cursor + alle nicht katalogisierten ids
  * bewusst STUMM — kein Warn-Noise für den normalen acpx-Default-Fall).
  *
  * Multi-Model γ: `modelCatalog` (aus der vollen Gateway-Config, index.ts ist

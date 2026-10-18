@@ -26,11 +26,29 @@ You wake up fresh each session. These files are your continuity:
 
 ## Language Policy (non-negotiable)
 
-All repository-facing written content is **English**: release notes, changelogs (root `CHANGELOG.md` and `openclaw_ha_addon/CHANGELOG.md`), commit messages, PR titles/bodies, issues, documentation, and code comments. GitHub is an international surface; contributors and external users read these texts.
+All repository-facing written content is **English**: release notes, changelogs, commit messages, PR titles/bodies, issues, documentation, and code comments. GitHub is an international surface; contributors and external users read these texts.
 
 Exceptions (keep their target language): UI translation files and `README.de.md`.
 
 This applies to every agent and human contributor working in this repository. Agent-internal memory files outside the repo are out of scope.
+
+### Documentation and Release Note Rules
+
+**Standard:** [Keep a Changelog](https://keepachangelog.com/en/2.0.0/) — format, categories, and guiding principles. Every release gets a proper `## [version] — YYYY-MM-DD` header with `### Added`, `### Fixed`, `### Changed`, `### Security`, `### Removed` sections. Write for the reader: what changed from their perspective, not the developer's implementation history.
+
+**Commit messages:** follow [Conventional Commits](https://www.conventionalcommits.org/en/v1.0.0/) — `type(scope): description` (e.g. `fix(binding): reset command for derived bindings`).
+
+**Release note content rules:**
+
+1. **No internal names, handles, or project-private labels** — do not write `GaRoN`, `Owner`, `Forge`, team handles, internal session names, or ticket references in publicfacing text. Exceptions: GitHub issue/PR numbers that are part of the public record.
+2. **No German text in public-facing documents** — all changelogs, release notes, documentation, and commit messages are English. German stays in `README.de.md` and translation files only.
+3. **No paragraph/§/Leg/section symbols in public-facing documents** — these are internal navigation aids. Public changelogs use plain English descriptions. If a reference is needed, write it out (e.g. "Section 25" not "§25").
+4. **No implementation archaeology** — do not describe "Path B was investigated", "the old approach", "we considered", "as discovered in session X". Describe only what the user needs to know: what changed, what it fixes, what they need to do.
+5. **No discussion of alternative approaches in the changelog** — a changelog is not a design document. "Method A vs. method B" belongs in internal notes, not in release notes.
+6. **No names of individual contributors in changelog entries** — the changelog records what changed, not who changed it. Credit belongs in commit messages and Git history.
+7. **Scannable one-liner first** — every release starts with a single concise line that answers "what is this release about?" in one sentence. Details follow below.
+8. **Verification numbers are optional** — test counts (e.g. "254 binding tests pass") may be included in detailed engineering notes but should not clutter the public changelog summary.
+9. **Root cause in past tense, fix in present tense** — "was fixed", "no longer crashes", "silently blocked" — not "we discovered", "we investigated", "it turned out".
 
 Capture what matters: decisions, context, things to remember. Skip secrets unless asked to keep them.
 
@@ -157,25 +175,24 @@ This is a starting point. Add your own conventions, style, and rules as you figu
 - [Heartbeat](/gateway/heartbeat)
 
 
+## HCW Session Workspace (harness-config-writer — GaRoN 2026-10-17)
 
-## HCW Session Workspace (Branch hcw-plugin — GaRoN 2026-10-17)
+This checkout hosts the HCW session workspace: the development site for the
+**harness-config-writer** plugin ONLY (care, maintenance, AND development —
+nothing else; ADB/state/other plugins are separate worktrees/branches).
 
-This worktree is the persistent checkout of the `hcw-plugin` branch — the
-development site for the **harness-config-writer** plugin ONLY (care,
-maintenance, AND development). Sessions starting here work DIRECTLY on the
-branch (not on a fork copy — managed "Neuer Worktree" always creates a new
-`openclaw/<name>` branch, owner-verified).
+Before any work, read (gitignored, lives only in this checkout):
+1. `agents/hcw-session/KNOWLEDGE.md` — full plugin wiki: mechanisms
+   (A FILE/B ENV/C NONE incl. copilot BYOK), augment/merge semantics, marker
+   lifecycle, model-catalog match keys, helper sync rules, test workshop
+   (SMB-safe commands), release flow, branch model.
+2. `agents/hcw-session/STATUS.md` — living state: current stand, open items.
 
-Before any work, read the session wiki — it lives BRANCH-INDEPENDENT in the
-main checkout (gitignored, never committed):
-1. `/mnt/192.168.178.68/share/projekte/github/openclaw-ha-addon/agents/hcw-session/KNOWLEDGE.md`
-   — full plugin wiki (mechanisms A FILE/B ENV/C NONE incl. copilot BYOK,
-   augment/merge semantics, marker lifecycle, model-catalog match keys,
-   helper sync rules, test workshop, release flow, branch model).
-2. `.../agents/hcw-session/STATUS.md` — living state: current stand, open items.
-
-Commit discipline: HCW commits touch ONLY harness-config-writer files (plus
-shared release files when shipping); never edit or delete foreign plugin
-directories (acp-dashboard-binding etc.) — main is the merge target for
-multiple branches (development, hcw-plugin, adb-plugin, …), so foreign trees
-stay untouched in this branch's history.
+Branch sessions: HCW work happens on the `hcw-plugin` branch — either directly
+in the worktree `../openclaw-ha-addon-hcw` (persistent checkout on hcw-plugin)
+or via a managed worktree with base ref `hcw-plugin` (New Session > Checkout >
+Neuer Worktree — all branches are listed by the base-branch picker, verified
+via `worktrees.branches`). Commit discipline: HCW commits touch ONLY
+harness-config-writer files (plus shared release files when shipping); never
+edit or delete foreign plugin directories (acp-dashboard-binding etc.) —
+main is the merge target for multiple branches.

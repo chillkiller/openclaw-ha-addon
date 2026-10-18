@@ -41,7 +41,7 @@ configuration:
         description: Opcjonalnie - długoterminowy token Home Assistant dla lokalnych skryptów/narzędzi API HA
       http_proxy:
         name: Wychodzący proxy HTTP
-        description: Opcjonalnie - URL proxy dla wychodzących żądań HTTP/HTTPS (przykład - http://192.168.2.1:3128)
+        description: Opcjonalnie - URL proxy dla wychodzących żądań HTTP/HTTPS (przykład - http://192.0.2.2:3128)
       enable_openai_api:
         name: Włącz API OpenAI
         description: Włącz endpoint Chat Completions kompatybilny z OpenAI. Pozwala używać OpenClaw jako agenta konwersacji
@@ -76,7 +76,7 @@ configuration:
       harness_base_url:
         name: Bazowy URL Harness
         description: Endpoint backendu dla WSZYSTKICH lokalnych harnessów (dowolne API kompatybilne z OpenAI — nie tylko Ollama),
-          np. http://192.168.178.34:11434. Pełni też rolę AKTYWATORA harness-config-writer - puste niczego nie generuje (wpisy
+          np. http://198.51.100.20:11434. Pełni też rolę AKTYWATORA harness-config-writer - puste niczego nie generuje (wpisy
           operatora pozostają nietknięte). Bez wartości obowiązuje wbudowany fallback http://localhost:11434.
       harness_api_key:
         name: Klucz API Harness
@@ -123,14 +123,14 @@ configuration:
       gateway_public_url:
         name: Publiczny URL Gateway
         description: Publiczny bazowy URL do otwierania Web UI Gateway w nowej karcie (nie osadzone). Przykład - https://przyklad.duckdns.org:12345
-          lub http://192.168.1.10:18789
+          lub http://192.0.2.10:18789
       gateway_remote_url:
         name: URL zdalnego Gateway
-        description: Adres WebSocket zdalnego gateway używany gdy Gateway Mode = Remote (przykład - ws://192.168.1.20:18789
+        description: Adres WebSocket zdalnego gateway używany gdy Gateway Mode = Remote (przykład - ws://198.51.100.21:18789
           lub wss://gateway.example.com:443)
       gateway_trusted_proxies:
         name: Zaufane proxy Gateway
-        description: Lista zaufanych IP/CIDR proxy rozdzielona przecinkami dla trybu trusted-proxy (przykład - 127.0.0.1,192.168.88.0/24).
+        description: Lista zaufanych IP/CIDR proxy rozdzielona przecinkami dla trybu trusted-proxy (przykład - 127.0.0.1,198.51.100.0/24).
       gateway_additional_allowed_origins:
         name: Dodatkowe dozwolone origins
         description: Dodatkowe origins Control UI rozdzielone przecinkami; łączone z gateway.controlUi.allowedOrigins w trybie
@@ -215,7 +215,7 @@ configuration:
       blocked_hostnames:
         name: Zablokowane nazwy hostów
         description: Lista oddzielona przecinkami zablokowanych nazw hostów dla wychodzącego dostępu sieciowego. Pozostaw
-          puste, aby zezwolić na wszystkie. Przykład - router.lan,192.168.178.1
+          puste, aby zezwolić na wszystkie. Przykład - router.lan,192.0.2.1
   legacy:
     name: Legacy
     description: Retired options kept for compatibility

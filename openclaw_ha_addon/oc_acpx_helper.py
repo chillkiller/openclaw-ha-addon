@@ -473,12 +473,19 @@ def _register_plugin_entry(plugin_name: str, force_enable: bool = False) -> bool
             log(f"Added plugins.load.paths entry: {plugins_root}")
 
         # Phase 2.19 (proof 08:26 live): plugins.allow is the 4th discovery
-        # gate — an allowlist present but missing the plugin id yields
-        # "plugin disabled (not in allowlist)" and the config-validation
-        # runs against a schema-less stub. Union the id (user removals of
-        # OTHER ids preserved; operator can still disable via entries).
-        allow_list = plugins.setdefault("allow", [])
-        if not isinstance(allow_list, list):
+        # gate — an allowlist PRESENT but missing the plugin id yields
+        # "plugin disabled (not in allowlist)". 
+        # Phase 2.20 fix (GaRoN 2026-10-17, config-bug report): setdefault
+        # CREATES the list when absent — and an allowlist, once created,
+        # is EXCLUSIVE (plugins loaded only if their id is in it), so a
+        # fresh list silently blocked every other plugin including all
+        # provider plugins. Absence of plugins.allow means nothing is
+        # blocked — never create it; only union into a PRE-EXISTING list
+        # (operator/other-tool authored, removals of other ids preserved).
+        allow_list = plugins.get("allow")
+        if allow_list is None:
+            log(f"INFO: plugins.allow not set (nothing blocked); not creating an allowlist")
+        elif not isinstance(allow_list, list):
             log(f"WARN: plugins.allow is not a list; not patching allowlist")
         elif plugin_name not in allow_list:
             allow_list.append(plugin_name)

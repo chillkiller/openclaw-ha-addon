@@ -4,6 +4,7 @@
 
 | App Version | OpenClaw Version | Release Date |
 |--------------|------------------|---------------|
+| 0.7.13.35 | 2026.10.2 | 2026-10-18 |
 | 0.7.13.34 | 2026.10.2 | 2026-10-17 |
 | 0.7.13.33 | 2026.10.2 | 2026-10-16 |
 | 0.7.13.32 | 2026.10.2 | 2026-10-16 |
@@ -11,14 +12,14 @@
 | 0.7.13.30 | 2026.10.2 | 2026-10-15 |
 | 0.7.13.29 | 2026.10.2 | 2026-10-14 |
 | 0.7.13.28 | 2026.10.2 | 2026-10-14 |
-> **Hinweis (0.7.13.28):** isolierter Rollback auf den `v0.7.13.25`-Codebestand (GaRoN-GO). Image-Rebuild nötig.
+> **Note (0.7.13.28):** isolated rollback to the `v0.7.13.25` code state. Image rebuild required.
 | 0.7.13.27 | 2026.10.2 | 2026-10-13 |
 | 0.7.13.26 | 2026.10.2 | 2026-10-13 |
 | 0.7.13.25 | 2026.10.2 | 2026-10-13 |
 | 0.7.13.24 | 2026.10.2 | 2026-10-13 |
 > **Note (0.7.13.24):** live-boot follow-up on 0.7.13.23 — the boot sweep must ride `api.on("gateway_start", …)` (typed hook runner); a registry-named `registerHook` for that event is legal but never dispatched. Image rebuild required as usual.
 | 0.7.13.23 | 2026.10.2 | 2026-10-13 |
-> **Note (0.7.13.23):** roll-forward repair of the 0.7.13.22 register crash ("hook registration missing name", forensics §1-§10). The interim .23/.24 hotfix chain was rolled back and re-landed as this fully audited fix; requires an add-on image rebuild to reach the container.
+> **Note (0.7.13.23):** roll-forward repair of the 0.7.13.22 register crash ("hook registration missing name"). The interim .23/.24 hotfix chain was rolled back and re-landed as this fully audited fix; requires an add-on image rebuild to reach the container.
 | 0.7.13.22 | 2026.10.2 | 2026-10-13 |
 | 0.7.13.21 | 2026.10.2 | 2026-10-12 |
 | 0.7.13.8 | 2026.9.9 | 2026-10-10 |
@@ -84,7 +85,7 @@ Main contributors: OpenClaw runtime + npm packages, Playwright Chromium, Python 
 
 ## Options sections migration (one-time, required for the collapsible config UI)
 
-Since the config schema groups options into sections (see DOCS.md §5), the
+Since the config schema groups options into sections (see DOCS.md Section 5), the
 Supervisor **validates the stored options against the installed schema and
 rewrites `options.json` from its own stored copy on every app start**
 (`apps/app.py: write_options()` inside `App.start()`). Two consequences,

@@ -47,7 +47,7 @@ configuration:
         description: Optional - Langlebiger Home Assistant Token für lokale API-Skripte/Tools
       http_proxy:
         name: Ausgehender HTTP-Proxy
-        description: Optional - Proxy-URL für ausgehende HTTP/HTTPS-Anfragen (Beispiel - http://192.168.2.1:3128)
+        description: Optional - Proxy-URL für ausgehende HTTP/HTTPS-Anfragen (Beispiel - http://192.0.2.2:3128)
       enable_openai_api:
         name: OpenAI-kompatible API aktivieren
         description: OpenAI-kompatiblen Chat-Completions-Endpunkt freigeben (für die HA-Assist-Pipeline).
@@ -81,7 +81,7 @@ configuration:
       harness_base_url:
         name: Harness-Basis-URL
         description: Backend-Endpunkt für ALLE lokal betriebenen Harnesses (jede OpenAI-kompatible API — nicht nur Ollama),
-          z.B. http://192.168.178.34:11434. Ist zugleich der AKTIVATOR für den harness-config-writer - leer erzeugt nichts
+          z.B. http://198.51.100.20:11434. Ist zugleich der AKTIVATOR für den harness-config-writer - leer erzeugt nichts
           (bestehende Operator-Einträge bleiben unangetastet). Ohne Wert fällt die eingebaute Fallback-URL http://localhost:11434
           zurück.
       harness_api_key:
@@ -132,12 +132,12 @@ configuration:
           oder https://mein-gerät.tailnet.ts.net.'
       gateway_remote_url:
         name: Remote Gateway-URL
-        description: Remote-Gateway-WebSocket-URL, verwendet wenn Gateway-Modus auf Remote steht (Beispiel - ws://192.168.1.20:18789
+        description: Remote-Gateway-WebSocket-URL, verwendet wenn Gateway-Modus auf Remote steht (Beispiel - ws://198.51.100.21:18789
           oder wss://gateway.example.com:443)
       gateway_trusted_proxies:
         name: Vertrauenswürdige Gateway-Proxys
         description: Komma-getrennte Liste vertrauenswürdiger Proxy-IPs/CIDRs, nur im Netzwerkmodus "Reverse Proxy" (Beispiel
-          - 127.0.0.1,192.168.88.0/24).
+          - 127.0.0.1,198.51.100.0/24).
       gateway_additional_allowed_origins:
         name: Zusätzliche erlaubte Origins
         description: Kommagetrennte zusätzliche Control-UI-Origins, die bei lan_https in gateway.controlUi.allowedOrigins
@@ -215,7 +215,7 @@ configuration:
       blocked_hostnames:
         name: Blockierte Hostnamen
         description: Kommagetrennte Liste von Hostnamen, die für ausgehende Netzwerkzugriffe blockiert sind. Leer lassen,
-          um alle zu erlauben. Beispiel - router.lan,192.168.178.1
+          um alle zu erlauben. Beispiel - router.lan,192.0.2.1
   legacy:
     name: Legacy
     description: Nicht mehr genutzte oder ersetzte Optionen

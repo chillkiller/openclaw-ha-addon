@@ -170,6 +170,43 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
         self.assertIs(cfg["plugins"]["entries"][helper.PLUGIN_NAME]["enabled"], False)
         self.assertNotIn(helper.PLUGIN_NAME, cfg.get("channels", {}))
 
+    # --- plugins.allow allowlist (Phase 2.20, GaRoN 2026-10-17) -------------
+
+    def test_allowlist_absent_is_never_created(self) -> None:
+        """Phase 2.20: _register_plugin_entry must NOT create plugins.allow
+        when absent — an allowlist, once created, is an EXCLUSIVE gate that
+        silently blocked every other plugin (config-bug report 2026-10-17:
+        provider plugins blocked after ACP activation pre-onboarding)."""
+        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "true"
+        self.assertTrue(helper.deploy_plugins())
+        cfg = json.loads((self.config_dir / "openclaw.json").read_text())
+        self.assertIsNone(cfg["plugins"].get("allow"),
+                          "allowlist must not spring into existence")
+        # the plugin is still fully registered (entries + load paths)
+        self.assertTrue(self.read_entry().get("enabled") is True)
+        self.assertIn(str(self.config_dir / "plugins"),
+                      cfg["plugins"]["load"]["paths"])
+
+    def test_allowlist_existing_gets_id_unioned(self) -> None:
+        """Phase 2.19 semantics kept: a PRE-EXISTING allowlist (operator or
+        other tool authored) gets our id unioned, other ids preserved."""
+        self.write_config({"plugins": {"allow": ["ollama", "telegram"]}})
+        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "true"
+        self.assertTrue(helper.deploy_plugins())
+        cfg = json.loads((self.config_dir / "openclaw.json").read_text())
+        allow = cfg["plugins"]["allow"]
+        self.assertIn(helper.PLUGIN_NAME, allow)
+        self.assertIn("ollama", allow, "other ids preserved")
+        self.assertIn("telegram", allow, "other ids preserved")
+
+    def test_allowlist_idempotent(self) -> None:
+        self.write_config({"plugins": {"allow": ["ollama", helper.PLUGIN_NAME]}})
+        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "true"
+        self.assertTrue(helper.deploy_plugins())
+        self.assertTrue(helper.deploy_plugins())
+        cfg = json.loads((self.config_dir / "openclaw.json").read_text())
+        self.assertEqual(cfg["plugins"]["allow"].count(helper.PLUGIN_NAME), 1)
+
     def test_option_true_deploys_and_registers(self) -> None:
         os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "true"
         self.assertTrue(helper.deploy_plugins())
