@@ -14,7 +14,7 @@ For a release-facing summary, see the root [CHANGELOG.md](../CHANGELOG.md).
 ### Fixed
 
 - **Helper never creates an empty `plugins.allow` list:** the plugin registration helper called `setdefault("allow", [])` on every boot. Once created, an allow-list acts as an exclusive gate and silently blocked every other plugin — including all provider plugins activated before onboarding. Fix: absence of `plugins.allow` now means nothing is blocked; the helper never creates the key. Union-into-existing only. 3 regression tests added.
-- **harness-config-writer small-model fallback:** `ANTHROPIC_SMALL_FAST_MODEL` now falls back to `model` when `smallModel` is absent (no dangling reference). Copilot `WIRE_API="responses"` documented. BRIDGE.md claude row completed with operator hint to pick a small non-thinking model. Stale dispatcher docstring corrected.
+- **harness-config-writer small-model fallback:** `ANTHROPIC_SMALL_FAST_MODEL` now falls back to `model` when `smallModel` is absent (no dangling reference). Copilot `WIRE_API="responses"` documented. Claude harness documentation completed with an operator hint to pick a small non-thinking model. Stale dispatcher docstring corrected.
 
 ### Changed
 
