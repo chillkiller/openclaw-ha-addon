@@ -14,7 +14,7 @@ For detailed engineering notes, see [openclaw_ha_addon/CHANGELOG.md](openclaw_ha
 ### Fixed
 
 - **Helper never creates an empty `plugins.allow` list:** the plugin registration helper called `setdefault("allow", [])` on every boot. Once created, an allow-list acts as an exclusive gate and silently blocks every other plugin — including all provider plugins activated before onboarding. Fix: absence of `plugins.allow` now means nothing is blocked; the helper never creates the key. Union-into-existing only. 3 regression tests added.
-- **harness-config-writer small-model fallback:** `ANTHROPIC_SMALL_FAST_MODEL` now falls back to `model` when `smallModel` is absent (no dangling reference). Copilot `WIRE_API="responses"` documented. BRIDGE.md §15.2 claude row completed with operator hint to pick a small non-thinking model. Stale dispatcher docstring corrected.
+- **harness-config-writer small-model fallback:** `ANTHROPIC_SMALL_FAST_MODEL` now falls back to `model` when `smallModel` is absent (no dangling reference). Copilot `WIRE_API="responses"` documented. BRIDGE.md claude row completed with operator hint to pick a small non-thinking model. Stale dispatcher docstring corrected.
 
 ### Changed
 
@@ -70,7 +70,7 @@ For detailed engineering notes, see [openclaw_ha_addon/CHANGELOG.md](openclaw_ha
 
 ### Added
 
-- **Dual-reset driver:** `/reset` in an ACP-bound session now resets both the work session and the dashboard conversation. Implemented as a stateful binding target driver registered alongside the built-in ACP driver. Best-effort: if the conversation reset fails, it logs a warning but never degrades the work result. Docs: BRIDGE.md §25.
+- **Dual-reset driver:** `/reset` in an ACP-bound session now resets both the work session and the dashboard conversation. Implemented as a stateful binding target driver registered alongside the built-in ACP driver. Best-effort: if the conversation reset fails, it logs a warning but never degrades the work result.
 - **OpenClaw 2026.10.4** (stability patch over 2026.10.3; relevant fixes: gateway shutdown/restart no longer hangs on transcript workers, no more writer-claim errors on plugin-launched turns, gateway stays responsive during long reply streams).
 
 ---
