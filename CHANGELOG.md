@@ -1,11 +1,12 @@
 # Changelog — OpenClaw Assistant (Home Assistant App)
 
-All notable changes to this project are documented here.
+All notable changes to this project are documented here. Newest release first.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/2.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-For detailed engineering notes, see [openclaw_ha_addon/CHANGELOG.md](openclaw_ha_addon/CHANGELOG.md).
+Each entry summarizes user-visible changes. Full engineering notes:
+[openclaw_ha_addon/CHANGELOG.md](openclaw_ha_addon/CHANGELOG.md).
 
 ---
 
@@ -13,12 +14,12 @@ For detailed engineering notes, see [openclaw_ha_addon/CHANGELOG.md](openclaw_ha
 
 ### Fixed
 
-- **Helper never creates an empty `plugins.allow` list:** the plugin registration helper called `setdefault("allow", [])` on every boot. Once created, an allow-list acts as an exclusive gate and silently blocks every other plugin — including all provider plugins activated before onboarding. Fix: absence of `plugins.allow` now means nothing is blocked; the helper never creates the key. Union-into-existing only. 3 regression tests added.
+- **Helper never creates an empty `plugins.allow` list:** the plugin registration helper called `setdefault("allow", [])` on every boot. Once created, an allow-list acts as an exclusive gate and silently blocked every other plugin — including all provider plugins activated before onboarding. Fix: absence of `plugins.allow` now means nothing is blocked; the helper never creates the key. Union-into-existing only. 3 regression tests added.
 - **harness-config-writer small-model fallback:** `ANTHROPIC_SMALL_FAST_MODEL` now falls back to `model` when `smallModel` is absent (no dangling reference). Copilot `WIRE_API="responses"` documented. BRIDGE.md claude row completed with operator hint to pick a small non-thinking model. Stale dispatcher docstring corrected.
 
 ### Changed
 
-- **Container shutdown escalation (joint round with QEMU repair):** shutdown sequence improved: SIGTERM → 3 s poll → SIGKILL → re-check, so run.sh exits before Docker's stop budget with cleanup complete. `oc-gateway stop` and `oc-gateway doctor` now use port-owner aware SIGTERM/SIGKILL with orphan sweep.
+- **Container shutdown escalation:** shutdown sequence improved: SIGTERM → 3 s poll → SIGKILL → re-check, so run.sh exits before Docker's stop budget with cleanup complete. `oc-gateway stop` and `oc-gateway doctor` now use port-owner aware SIGTERM/SIGKILL with orphan sweep.
 
 ---
 
@@ -75,26 +76,19 @@ For detailed engineering notes, see [openclaw_ha_addon/CHANGELOG.md](openclaw_ha
 
 ---
 
-## [0.7.13.30] — 2026-10-14
+## [0.7.13.30] — 2026-10-15
 
 ### Fixed
 
 - **mDNS advertisement inactive:** the native OpenClaw Bonjour plugin was silently disabled because the container-detection logic in OpenClaw was not recognizing the Home Assistant environment. Fixed by exporting `OPENCLAW_DISABLE_BONJOUR` from run.sh matching the `mdns_mode` option.
 - **harness-config-writer was a silent no-op:** the plugin was reading from `api.config.harnesses` (always undefined — that's the full OpenClaw config, not the plugin config) instead of `api.pluginConfig`. Fixed. Legacy key under `acp-dashboard-binding` now logs a visible warning instead of failing silently.
-- **Review-fix batch (5 fixes):** catalog key only written when a catalog is actually built (no dangling file reference); secret file modes written atomically before rename (no exposure window); `maxTokens` collection removed (no consuming surface); "SKIP → picker loss (REPLACE-ALL)" documented; double-warning on invalid `models` fixed; `modelsSource:"optout"` correctly distinguished from an empty operator `models: []`.
+- **Review-fix batch (5 fixes):** catalog key only written when a catalog is actually built (no dangling file reference); secret file modes written atomically before rename (no exposure window); `maxTokens` collection removed (no consuming surface); "SKIP → picker loss" documented; double-warning on invalid `models` fixed; `modelsSource:"optout"` correctly distinguished from an empty operator `models: []`.
 - **Audit round 2 fixes:** target file mode is applied even when content is byte-identical (heals wrong modes on every boot); chmod failures surface in warning logs; catalog skip log now distinguishes "no models" from "no contextWindow metadata."
 
 ### Added
 
 - **Multi-model support:** all models from the `openclaw.json` provider list are now distributed across all harness surfaces (codex profiles, opencode models map, claude `CLAUDE_MODEL_CONFIG`, environment variable comment lists). The add-on model remains the default. Generated configs are refreshable by signature.
 - **codex model catalog:** `contextWindow` metadata from `openclaw.json` is written to `/config/.codex/model-catalog.json` so the codex CLI can resolve model metadata for direct users.
-- **Binding pack merged:** native dispatch mode (archive stamps never written in native mode); boot heal clears `spawnedBy` over-hiding stamps on clone sessions (5 sessions were incorrectly hidden as subagents); init race bounded with a 10 s join on all async ingress boundaries.
-- **Options UI restructured:** collapsible sections; `ha_integration` group moved first; `acpx_enabled` and `harness_config_writer_enabled` are now top-level standalone switches above the `harness` group. Provider keys are harness-scoped, not Ollama-scoped. `enable_terminal` retired — the web terminal is always on via Ingress; only `terminal_port` is configurable.
-
-### Changed
-
-- **`acpx_enabled` is the master gate:** with it off, no writer or binding deploy or config transfer happens, whatever their individual switches say. With it on, writer and binding act independently of each other.
-- **Option renames:** `ollama_base_url` → `harness_base_url`, `ollama_acp_*_model` → `harness_*_model`, `acp_additional_allowed_agents` → `additional_agents`. Migration tool rebuilt.
 
 ---
 
@@ -111,6 +105,32 @@ For detailed engineering notes, see [openclaw_ha_addon/CHANGELOG.md](openclaw_ha
 ### Changed
 
 - **Rollback to v0.7.13.25 code:** all code reverted to the 0.7.13.25 state. Reason: stability regressions in login, Ingress, and add-on reliability since 0.7.13.26. Slow-boot issue tracked separately.
+
+---
+
+## [0.7.13.27] — 2026-10-13
+
+### Fixed
+
+- **Reply loss on clone archive:** the archive step now runs five minutes after a turn completes, outside the commit window, with re-checks at fire time. Replies are no longer lost to `Terminal write owner changed before commit`.
+- **Real sessions incorrectly hidden:** the provenance stamp now refuses any session outside the clone key grammar. Eighteen real harness sessions that had been hidden as subagents were restored and can no longer be re-stamped.
+- **Boot sweep gating and idle grace:** the archive step is disabled in native dispatch mode (prevents permanently archived binding targets after a mode flip) and waits for 15 minutes of inactivity, so recently active clones are no longer archived at boot.
+
+### Verification
+
+- 220 binding tests pass, strict TypeScript build clean.
+
+---
+
+## [0.7.13.26] — 2026-10-13
+
+### Fixed
+
+- **Benign wait cancellation:** a cancelled wait observation during a UI reload or reconnect is now handled as a normal client disconnect — info-level log and a "still running" notice instead of an error. The harness run itself is never cancelled by the wait; the settle and mirror paths are unchanged.
+
+### Verification
+
+- 215 binding tests pass (new case for the cancelled observation), strict TypeScript build clean.
 
 ---
 
@@ -256,18 +276,70 @@ For detailed engineering notes, see [openclaw_ha_addon/CHANGELOG.md](openclaw_ha
 
 ---
 
-## [0.7.13.4] — 2026-10-09
+## [0.7.13.11] — 2026-10-10
+
+### Fixed
+
+- **Turn-1 binding race:** the async bridge start left the config roster null on the first turn, so `harnessSessions` was ignored and chat send died with `ACP_TURN_FAILED`. Fix: both delegation calls now pass the config roster directly, race-free by construction.
+
+---
+
+## [0.7.13.10] — 2026-10-10
+
+### Added
+
+- **`harnessSessions` config option:** dashboard conversations bind to a real, explicitly spawned persistent ACP session per harness instead of synthetic binding keys that die with `ACP_SESSION_INIT_FAILED`. The manifest `configSchema` now declares `boundAgents`, `excludedAgents`, `harnessSessions`.
+
+---
+
+## [0.7.13.9] — 2026-10-10
+
+### Changed
+
+- **Binding selection priority:** replaced the hard orchestrator block with a prioritized gate — `boundAgents` (explicit allowlist) > `excludedAgents` (replacement for the default exclusion) > safe-default exclusion. No ban without an escape hatch.
+
+---
+
+## [0.7.13.8] — 2026-10-10
+
+### Fixed
+
+- **Plugin always re-enabled on boot:** the ACPX helper was overwriting an operator's explicit `enabled: false` with `true` on every boot. Now respects explicit opt-out; the flag is never flipped back and plugin registration is skipped while disabled.
+
+---
+
+## [0.7.13.7] — 2026-10-10
+
+### Fixed
+
+- **Plugin discovery path:** `deploy_plugin()` now also ensures `plugins.load.paths` contains the user-plugins root. Without this, the plugin was deployed and registered but never appeared in the gateway's boot list.
+
+---
+
+## [0.7.13.6] — 2026-10-10
+
+### Fixed
+
+- **Plugin never deployed:** the Dockerfile had no `COPY plugins` step — `deploy_plugin()` early-returned and the plugin was absent at boot. Fixed.
+
+---
+
+## [0.7.13.5] — 2026-10-10
+
+### Added
+
+- **Custom ACP harness support:** new options `ollama_acp_codex_model` / `ollama_acp_opencode_model` and `acp_additional_allowed_agents`. New bundled plugin `acp-dashboard-binding`: a webchat `SessionBindingAdapter` that routes Control UI dashboard sessions at configured ACP harness agents automatically.
+
+---
+
+## [0.7.13.4] — 2026-10-10
 
 ### Security
 
 - **Removed shell injection in `gateway_remote_url`:** the remote-URL parser used `eval`'d shell code; shell metacharacters in user-controlled URLs executed as root at boot. Replaced with plain-data hand-off and character-validated hostnames.
-- **Removed hardcoded gateway token:** the ACPX helper bootstrapped a missing `openclaw.json` with a known placeholder token, which the nginx proxy then injected as bearer auth pre-onboarding. The duplicate bootstrap was removed; run.sh generates a random per-install token instead.
-
-### Fixed
-
+- **Removed hardcoded gateway token:** the ACPX helper bootstrapped a missing `openclaw.json` with a known placeholder token. The duplicate bootstrap was removed; run.sh generates a random per-install token instead.
 - **Corrupt `openclaw.json` is quarantined, never overwritten:** parse failures previously fell back to an empty config, so a later write-back could destroy the entire configuration. Corrupt files are now renamed to `openclaw.json.corrupt` and the boot fails closed. All JSON writes are atomic.
-- **Watchdog restart loop in tailnet modes:** healthcheck failed against the HTTPS-terminating gateway; probe now honors `gateway.tls.enabled`.
-- **`gateway_env_vars` validation hardened:** may no longer override app-validated runtime variables. Port validation tightened (ASCII digits only).
+- **`gateway_env_vars` validation hardened:** may no longer override app-validated runtime variables. Port validation tightened.
 - **Helper failures exit honestly:** the ACPX helper now propagates real failures in its exit code.
 
 ---
@@ -280,20 +352,231 @@ For detailed engineering notes, see [openclaw_ha_addon/CHANGELOG.md](openclaw_ha
 
 ---
 
-## [0.7.13.8] — 2026-10-10
+## [0.7.13.2] — 2026-10-09
 
-### Fixed
-
-- **Plugin always re-enabled on boot:** the ACPX helper was overwriting an operator's explicit `enabled: false` with `true` on every boot. Now respects explicit opt-out; the flag is never flipped back and plugin registration is skipped while disabled.
-
----
-
-## [0.7.13.2]
+### Changed
 
 - **ACP harness modernization:** removed all custom ACP wrappers — acpx passthrough wrappers with ambient env routing instead. Claude Code, Codex and OpenCode reach the local Ollama backend with zero wrapper files.
 
 ---
 
-## [0.7.13.1]
+## [0.7.13.1] — 2026-10-09
 
-- **Boot exit 3 on safety-net options:** option reads used `|number` which is not a jq builtin, causing compilation failure on every start. Fixed with `tonumber` and explicit null guard.
+### Fixed
+
+- **Boot exit-3 on safety-net options:** option reads used `|number` which is not a jq builtin, causing compilation failure on every start. Fixed with `tonumber` and explicit null guard.
+
+---
+
+## [0.7.13] — 2026-10-09
+
+### Changed
+
+- **OpenClaw 2026.9.9** (from 2026.9.8): upstream stability improvements for restart recovery, Docker upgrade-loop fix, doctor session-archive repairs, quarantined-database respect, memory-checkpoint timeout fix.
+
+### Added
+
+- **Pre-upgrade state backup gate:** on any detected version change, the app archives `openclaw.json` + `state/` + `agents/` to `/config/.openclaw/upgrade-backups/` before the gateway starts. Configurable via `abort_on_upgrade_backup_failure` (default true) and `upgrade_backup_keep` (default 3).
+- **Automatic doctor repair:** after 2 consecutive failed starts, runs `openclaw doctor --fix --non-interactive --yes` automatically. Budget controlled via `gateway_doctor_repair_max` (default 3).
+- **Exponential restart backoff:** replaces the flat 2-second restart loop with a doubling backoff (2s → 60s cap).
+
+### Security
+
+- **Both 0.7.12.7 security controls re-verified** against the 2026.9.9 dist. The undefined-rejection shim remains required (upstream has not shipped an equivalent).
+
+---
+
+## [0.7.12.7] — 2026-10-09
+
+### Security
+
+- **OWASP LLM01 Control #5 — invisible unicode stripping:** OpenClaw 2026.9.8's naive character-class strip broke valid ZWJ emoji and left variation selectors untouched. Fixed with a build-time patch (`unicode-guard/`) that applies context-sensitive stripping at every external-content ingest boundary.
+
+### Fixed
+
+- **Healthcheck kill on clean Pi boot:** HEALTHCHECK start-period extended from 120s to 420s, retries from 3 to 4. Homebrew sync and skill copy can take >4 minutes on the Pi; the old window expired before the gateway answered `/startupz`.
+- **External WebUI button URL:** now uses a same-origin relative URL instead of a statically rendered LAN IP, so it works from both local and external access.
+
+### Added
+
+- **`sshpass` baked into the image:** previously a runtime install only, now part of the base image.
+
+---
+
+## [0.7.12.6] — 2026-10-09
+
+### Fixed
+
+- **Dangling Chromium symlinks on arm64:** Playwright installs arm64 Chromium in a different directory layout than x64. The symlink resolver is now layout-agnostic. Build self-heal added for every boot.
+- **crawl4ai browser-revision drift:** both Playwright and Patchright Chromium revisions are now synced on every build.
+
+---
+
+## [0.7.12.4] — 2026-10-09
+
+### Performance
+
+- **RAM-adaptive Node.js heap:** the heap is now sized from host RAM at boot (≥24 GB → 8192 MB, ≥12 GB → 6144 MB, ≥8 GB → 4096 MB, below → 2048 MB). Fixes `sessions.list` stalling for 5+ seconds on high-RAM hosts.
+
+### Fixed
+
+- **Server TLS certificate generation restored:** the v0.7.10.0 refactor accidentally dropped server-cert generation. Fresh `lan_https` installs had no server certificate. Restored and hardened with X.509v3 extensions.
+- **Boolean option reads:** explicit `false` options were silently reverted to defaults by jq's `//` operator. All boolean reads now use `if has(...)`.
+- **502 during startup:** the landing page now intercepts 502 errors and shows a loading page with a terminal hint.
+
+---
+
+## [0.7.12.3] — 2026-10-09
+
+### Changed
+
+- **Terminology: Add-ons → Apps:** all user-facing strings updated to match Home Assistant 2026.2's official rename.
+
+---
+
+## [0.7.12.2] — 2026-10-09
+
+### Performance
+
+- **Ingress asset compression restored:** static ControlUI assets now serve brotli/gzip (measured: 468 KB → 138 KB for the largest bundle, 3.4× less transfer per cold load).
+
+### Fixed
+
+- **CSP synced with upstream 2026.9.6:** added `frame-src`, `img-src https:`, `connect-src data:`; replaced over-broad `script-src 'unsafe-eval'` with `'wasm-unsafe-eval'` (bundle-verified: zero eval across all ControlUI bundles).
+
+---
+
+## [0.7.12.1] — 2026-10-09
+
+### Security
+
+- **Ingress lockdown:** nginx now only accepts loopback and the HA Supervisor network. Direct LAN access to the terminal and landing page is rejected with 403.
+- **nginx.conf permissions:** rendered config is written with `0600` instead of `0644`.
+
+### Changed
+
+- **Boot order inverted:** nginx and terminal start before the gateway. The Ingress panel is reachable during slow gateway startup.
+- **TUI removed:** the `openclaw tui` iframe tab is gone — bash Terminal is the only fallback surface.
+
+---
+
+## [0.7.12.0] — 2026-10-09
+
+### Changed
+
+- **OpenClaw 2026.9.6:** restart recovery for unfinished conversations, slow-startup detection (exit 2 = starting, not failed), `openclaw doctor --session-sqlite recover`, lossless history/storage compaction, WebChat reconnect resilience.
+
+---
+
+## [0.7.11.15.3] — 2026-10-09
+
+### Fixed
+
+- **Nabu Casa reconnect failure:** WebSocket clients never follow HTTP redirects, so after idle disconnects the Control UI tried to reconnect to a redirect URL and died. Fixed by proxying `/webui` directly without redirect.
+
+---
+
+## [0.7.11.15.2] — 2026-10-09
+
+### Fixed
+
+- **Ingress ControlUI asset 404s:** HA Supervisor sends `X-Ingress-Path` without the `/webui` suffix, causing asset URLs to resolve incorrectly. Fixed with a normalization map.
+- **Stale gateway URL in localStorage:** cleanup script now removes any stored URL that does not match the current ingress base path, forcing re-derivation.
+
+---
+
+## [0.7.11.15.1] — 2026-10-09
+
+### Fixed
+
+- **Ingress WebSocket through HA/Nabu Casa:** added unauthenticated nginx locations for static assets and forced loopback `Host` header so OpenClaw treats HA Ingress traffic as local.
+
+---
+
+## [0.7.11.11] — 2026-10-09
+
+### Changed
+
+- **Rollback to v0.7.11.3:** the nginx/Ingress changes from v0.7.11.4–v0.7.11.10 broke the ControlUI WebSocket through Nabu Casa. Reverted to the last working state.
+
+---
+
+## [0.7.11.3] — 2026-10-09
+
+### Fixed
+
+- **OpenAI-compatible endpoint for HA Assist pipeline:** the `/v1/chat/completions` endpoint was returning `500` because `buildAgentCommandInput` did not pass the resolved `agentId`. Patched at build time.
+
+---
+
+## [0.7.11.2] — 2026-10-09
+
+### Fixed
+
+- **Docs/Info tab showing placeholders:** version, gateway status, and ingress status were unrendered in the landing page. Fixed.
+
+---
+
+## [0.7.10.31]
+
+### Fixed
+
+- **Ingress base-path fallback for Companion App iframe:** when HA Supervisor does not pass `X-Ingress-Path`, the ControlUI now reads the base path from the browser URL instead of falling back to `127.0.0.1:18789`.
+
+---
+
+## [0.7.10.30]
+
+### Fixed
+
+- **Ingress base-path injection for OpenClaw 2026.9.4:** nginx now explicitly injects `data-openclaw-control-ui-base-path` on the `<html>` tag when missing. Fixes "Gateway not reachable" in the HA Ingress iframe.
+
+---
+
+## [0.7.10.29]
+
+### Changed
+
+- **OpenClaw 2026.9.4.**
+
+---
+
+## [0.7.10.28]
+
+### Changed
+
+- **OpenClaw 2026.9.3** and Node 24.20.0.
+
+---
+
+## [0.7.10.25]
+
+- No changes; placeholder release.
+
+---
+
+## [0.7.10.17]
+
+### Fixed
+
+- **Ingress WebUI assets with OpenClaw 2026.8.2:** `<base href="/">` caused assets to resolve against the HA origin instead of the Ingress path. nginx now rewrites it to the Ingress base path.
+
+---
+
+## [0.7.10.2] — 2026-10-09
+
+### Fixed
+
+- **Ingress WebUI with HTTPS gateway:** nginx now proxies `/webui/` to `https://127.0.0.1:18789/` when the gateway runs in `lan_https` mode.
+- **TUI startup:** `openclaw tui` now starts with `--session agent:coding-main:main` for OpenClaw 2026.8.2 multi-agent requirement.
+
+---
+
+## [0.7.10.1] — 2026-10-09
+
+### Fixed
+
+- **TUI startup:** `openclaw tui` now starts with `--session agent:coding-main:main` to satisfy OpenClaw 2026.8.2 multi-agent requirement.
+- **Ingress base-path injection:** nginx `sub_filter` now injects the HA Ingress base path for both terminal enabled states.
+
+---

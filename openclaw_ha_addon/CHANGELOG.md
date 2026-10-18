@@ -114,6 +114,32 @@ For a release-facing summary, see the root [CHANGELOG.md](../CHANGELOG.md).
 
 ---
 
+## [0.7.13.27] — 2026-10-13
+
+### Fixed
+
+- **Reply loss on clone archive:** the archive step now runs five minutes after a turn completes, outside the commit window, with re-checks at fire time. Replies are no longer lost to `Terminal write owner changed before commit`.
+- **Real sessions incorrectly hidden:** the provenance stamp now refuses any session outside the clone key grammar. Eighteen real harness sessions that had been hidden as subagents were restored and can no longer be re-stamped.
+- **Boot sweep gating and idle grace:** the archive step is disabled in native dispatch mode (prevents permanently archived binding targets after a mode flip) and waits for 15 minutes of inactivity, so recently active clones are no longer archived at boot.
+
+### Verification
+
+- 220 binding tests pass, strict TypeScript build clean.
+
+---
+
+## [0.7.13.26] — 2026-10-13
+
+### Fixed
+
+- **Benign wait cancellation:** a cancelled wait observation during a UI reload or reconnect is now handled as a normal client disconnect — info-level log and a "still running" notice instead of an error. The harness run itself is never cancelled by the wait; the settle and mirror paths are unchanged.
+
+### Verification
+
+- 215 binding tests pass (new case for the cancelled observation), strict TypeScript build clean.
+
+---
+
 ## [0.7.13.25] — 2026-10-13
 
 ### Fixed
