@@ -20,6 +20,19 @@ INVESTIGATION-*
 *findings*
 *FINDING*
 
+# Directive GaRoN 2026-10-18: internal design/engineering docs must never be
+# published. They describe internal architecture, session keys and host layout —
+# a roadmap for attackers and a prompt-injection surface. Keep them in the
+# gitignored agent workspace (agents/hcw-session/internal-docs/).
+BRIDGE.md
+MERGE-HANDOVER.md
+*-HANDOVER.md
+*-BRIDGE.md
+# Internal architecture / design notes by naming convention
+DESIGN-*.md
+ARCHITECTURE-*.md
+INTERNAL-*.md
+
 # Repo-Split A2 (2026-10-11): Plugin node_modules/lockfiles sind npm-lokal und
 # dürfen weder ins Repo noch ins Image (ausgeschlossen via openclaw_ha_addon/.dockerignore).
 openclaw_ha_addon/plugins/*/node_modules/
