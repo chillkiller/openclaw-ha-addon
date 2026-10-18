@@ -23,7 +23,7 @@
  *                Multi-Model-Surface).
  * `models`-Präzedenz: explizite Entry-Liste (non-empty) gewinnt über
  * Auto-Matching aus `api.config.models.providers` (baseUrl-Match); `[]`
- * = Opt-out; abwesig = Auto-Matching. Details: BRIDGE.md §15.10.
+ * = Opt-out; abwesig = Auto-Matching. Details: the 15.10 design (model-catalog match keys).
  *
  * Multi-Model γ.1 (2026-10-13): codex Modell-Metadaten-Katalog — die
  * Operator-Metadaten aus `models.providers[*].models[*].contextWindow`
@@ -31,7 +31,7 @@
  * `model_catalog_json` (key-Verifizierung am DEPLOYED binary: `codex debug
  * models` parsed die Datei, Custom-Slugs haben echte Metadaten statt
  * Fallback-Warnung). Caveat: ersetzt den built-in Katalog; acpx vererbt den
- * key NICHT → nur direkte CLI-Nutzer (BRIDGE §15.10).
+ * key NICHT → nur direkte CLI-Nutzer (the 15.10 design (model-catalog match keys)).
  *
  * ADDITIV-GARANTIE (bindend): das Plugin ist ein Add-on zum bundled acpx,
  * kein Ersatz. Fehlt ein Harness in `harnesses` (oder die Section ganz),
@@ -39,7 +39,7 @@
  * Copilot-OAuth, …) laufen identisch zum acpx-Default über die eigene
  * Vendor-Auth ("Vendor auth must already exist on the host").
  *
- * Drei Mechanismen (Katalog: acpx SKILL.md §"Harness aliases" 199ff + docs
+ * Drei Mechanismen (Katalog: acpx SKILL.md Abschnitt "Harness aliases" ab Zeile 199 + docs
  * acp-agents/quickstart+setup, 10:37 live-gefetched):
  *   A FILE : codex   → CODEX_HOME auth.json + /config/.codex/config.toml
  *                      (die acpx-Inheritance-Quelle; Semantik VERBATIM aus
@@ -55,14 +55,14 @@
  *            Ollama-Doku + Binary verifiziert) — je eine env-Datei pro
  *            Harness (harness-env/<id>.env), gesourcet vom acpx-Command-
  *            Override plugins.entries.acpx.config.agents.<id>.command/args
- *            (BRIDGE.md §15). Alle ENV-Namen docs-verifiziert.
+ *            (the 15 design (generalized harness config (HCW phase 3))). Alle ENV-Namen docs-verifiziert.
  *   C NONE : cursor und alle übrigen CLI-OAuth-owned Harnesses —
  *            Skip, das Plugin schreibt für sie nichts.
  *
  * Deployment-Trigger: registerFull (Plugin-Load, idempotent — alle Writer
  * sind install-if-missing bzw. bytes-sync, Helper-Semantik). Es gibt keinen
  * verifizierten config-change-Hook am Host: Harness-Config-Änderungen
- * GELTEN BEIM NÄCHSTEN BOOT (BRIDGE.md §15.4, ehrlich dokumentiert).
+ * GELTEN BEIM NÄCHSTEN BOOT (the 15.4 design (trigger + config-change semantics), ehrlich dokumentiert).
  */
 
 import {
@@ -280,7 +280,7 @@ function writeFileIfMissingOrDiffers(
  * Self-Recognition (γ): Dateien MIT `CODEX_SIGNATURE_LINE`-Erstzeile sind
  * nachweislich writer-generiert und werden bytes-genau geupdatet — nur so
  * wirken Modelllisten-Änderungen über den [model_providers.-Block hinaus,
- * der den heutigen NOTE-Zweig sonst einfrieren würde (BRIDGE.md §15.10).
+ * der den heutigen NOTE-Zweig sonst einfrieren würde (the 15.10 design (model-catalog match keys)).
  * Signaturlose Dateien MIT [model_providers.-Block bleiben customized (NOTE).
  */
 
@@ -662,7 +662,7 @@ function normalizeModelListInternal(
  * Katalog + Sammel-Warning, nie einen Crash. Provider-Keys sortiert
  * (deterministische Merge-Order), ids first-occurrence-deduped; metaById
  * first-occurrence (kollidierende Provider-Settings entscheiden die erste,
- * sortiert ermittelte Provider — bewusst, dokumentiert in BRIDGE §15.10).
+ * sortiert ermittelte Provider — bewusst, dokumentiert in the 15.10 design (model-catalog match keys)).
  */
 export function buildModelCatalog(fullConfig: unknown, warnings: string[]): ModelCatalog {
   const byBaseUrl = new Map<string, string[]>();
@@ -980,7 +980,7 @@ export function deployCodexAuth(
  * aus openclaw.json (`contextWindow`) — Ids ohne Kontextfenster werden
  * geskippt und geplant (never guess). Semantik: catalog REPLACE-ALL (gpt-*
  * built-ins verschwinden aus dem Picker — für Ollama-only-Setups gewollt,
- * BRIDGE §15.10).
+ * the 15.10 design (model-catalog match keys)).
  */
 const CODEX_MODEL_CATALOG_LIMIT = 10000;
 
@@ -1043,7 +1043,7 @@ export function buildCodexModelCatalogJson(
  * sort — tomllib rejected duplicate table headers, Template-Kommentar verbatim).
  *
  * γ.1: `modelCatalogPath` → top-level `model_catalog_json` key (Metadaten-
- * Katalog für Custom-Modelle). NICHT acpx-vererbt (BRIDGE §15.10) — nur
+ * Katalog für Custom-Modelle). NICHT acpx-vererbt (the 15.10 design (model-catalog match keys)) — nur
  * direkte codex-CLI-Nutzer mit CODEX_HOME auf dieser Datei bekommen den
  * Katalog live; ACP-Sessions bleiben bundled-catalog.
  */
@@ -1057,7 +1057,7 @@ export function buildCodexConfigToml(
     CODEX_SIGNATURE_LINE,
     // Self-Recognition + Refresh-Aufnahme (γ): nachweislich writer-generierte
     // Dateien werden bytes-sync aktualisiert; Hands-Edits haben nach dem
-    // ersten Upgrade verloren (BRIDGE.md §15.10, one-time-Migration Doku).
+    // ersten Upgrade verloren (the 15.10 design (model-catalog match keys), one-time-Migration Doku).
     "# Multi-Model γ: [profiles.*] blocks are NOT inherited by acpx",
     "# renderIsolatedCodexConfig (only model/model_provider/model_reasoning_effort/",
     "# sandbox_mode + [model_providers.*]); profiles serve direct codex-CLI users",
@@ -1072,7 +1072,7 @@ export function buildCodexConfigToml(
   if (modelCatalogPath) {
     lines.push(
       // γ.1: Metadaten-Katalog für Custom-Modelle (binary-verifiziert). Nur
-      // direkte CLI-Nutzer — acpx inheritiert den key nicht (BRIDGE §15.10).
+      // direkte CLI-Nutzer — acpx inheritiert den key nicht (the 15.10 design (model-catalog match keys)).
       `model_catalog_json = ${tomlString(modelCatalogPath)}`,
     );
   }
@@ -1177,7 +1177,7 @@ export function deployCodexHarnessFiles(
     logger?.info?.(
       `[${harnessId}] model catalog ${catalogPath}: ${built.included} model(s) with operator metadata` +
         (built.skipped.length > 0
-          ? `; ${built.skipped.length} skipped (no contextWindow in openclaw.json — REPLACE-ALL nimmt sie aus dem codex-Picker, BRIDGE §15.11)`
+          ? `; ${built.skipped.length} skipped (no contextWindow in openclaw.json — REPLACE-ALL nimmt sie aus dem codex-Picker, the 15.11 design (writer-owned file detection))`
           : ""),
     );
   } else if (built && action === "note (customized, left intact)") {
@@ -1498,7 +1498,7 @@ export function deployHarnessEnvFile(
   const header = [
     `harness-config-writer (Phase 3, Repo-Split A2) — harness env file (${harnessId}).`,
     "Gesourcet wrapperartig vom acpx-Command-Override",
-    "plugins.entries.acpx.config.agents.<id>.command/args — BRIDGE.md §15.2.",
+    "plugins.entries.acpx.config.agents.<id>.command/args — the 15.2 design (the three mechanisms: FILE / ENV / NONE).",
     "GENERIERT (Phase 3): Hand-Edits werden beim nächsten Boot überschrieben.",
   ];
   let content = renderEnvFile(mapping.vars, header);

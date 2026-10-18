@@ -6,12 +6,12 @@ import {
 } from "./agent-map.js";
 
 /**
- * §9.2 register-crash forensics 2026-10-13 (agents/coding-review/findings/
+ * 9.2 (why boundAgents win over exclusions) register-crash forensics 2026-10-13 (agents/coding-review/findings/
  * 2026-10-13-register-crash-forensics.md): the OpenClaw 2026.10.2 registry
  * THROWS "hook registration missing name" for every api.registerHook
  * registration without opts.name (registry-854ZO8XT.mjs:2937-2941), and the
  * plugin-api wrapper forwards opts verbatim (:781). The pre-existing test
- * mocks silently accepted anything (the forensics §7a gap) — which is how
+ * mocks silently accepted anything (the forensics 7a (ACP session-init for binding keys (F3)) gap) — which is how
  * the nameless boot-sweep and bridge calls shipped through a green suite.
  * These tests exercise registerFull against the FAITHFUL host contract.
  */
@@ -84,7 +84,7 @@ function createHookContractApi() {
   };
 }
 
-describe("registerFull vs host hook-name contract (§9.2, register-crash forensics)", () => {
+describe("registerFull vs host hook-name contract (9.2 (why boundAgents win over exclusions), register-crash forensics)", () => {
   it("registers bridge inbound hook NAMED + sweep/claim via typed hook runner", async () => {
     const { api, registry, typedHooks, unhandled, offUnhandled } = createHookContractApi();
     try {
@@ -111,7 +111,7 @@ describe("registerFull vs host hook-name contract (§9.2, register-crash forensi
   });
 });
 
-// --- Weg B: dispatchMode resolution at registerFull (BRIDGE.md §21) ----------
+// --- Weg B: dispatchMode resolution at registerFull (the 21 design (native dispatch via the dispatchMode config gate)) ----------
 //
 // The mode is resolved from live config BEFORE any record producer runs; a
 // flip applies on the next boot because registerFull re-registers. The hook
@@ -158,7 +158,7 @@ describe("registerFull resolves dispatchMode without changing the hook inventory
   });
 });
 
-describe("registerHook call-site inventory (§9.2a static tripwire)", () => {
+describe("registerHook call-site inventory (9.2a (roster edge case) static tripwire)", () => {
   const FILES = ["../index.ts", "dashboard-bridge.ts", "channel.ts"];
 
   /** Counts top-level arguments between the call's surrounding parens. */

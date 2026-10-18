@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 
-// Shared plugin constants live in agent-map (BRIDGE.md §4.3 / Phase-2.6 fix):
+// Shared plugin constants live in agent-map (the 4.3 design (binding composition follow-up) / Phase-2.6 fix):
 // one source for bridge + adapter, so binding-id prefixes and roster ids cannot
 // drift apart. agent-map keeps the prefix (plugin-binding:) — it is now used
 // for ALL bindingIds of this plugin (bridge rows AND adapter records).
@@ -79,7 +79,7 @@ export interface HarnessAgentDefaults {
    * Phase 2.19: `runtime.acp.agent` (harness-id) — surfaced so the bridge's
    * Turn-1 synthesis carries the same informative metadata field the
    * binding-adapter's derive record has always set (metadata parity between
-   * the two synthesis paths once the delegation leads, see §4.2 note there).
+   * the two synthesis paths once the delegation leads, see 4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19)) note there).
    */
   readonly acpAgentId?: string;
 }
@@ -246,7 +246,7 @@ export function isPluginOwnedBindingMetadata(metadata: Record<string, unknown> |
  * Records without a registered plugin root stay WITHOUT ownership markers and
  * keep the legacy retarget dispatch (safe degraded mode).
  *
- * Weg B (`dispatchMode: "native"`, BRIDGE.md §21): flips this into the native
+ * Weg B (`dispatchMode: "native"`, the 21 design (native dispatch via the dispatchMode config gate)): flips this into the native
  * projection — ownership fields are STRIPPED instead of merged, so legacy rows
  * hydrated in the claim-era shape demote to generic (natively dispatchable)
  * records too. The binding-adapter applies the same projection at its return
@@ -317,7 +317,7 @@ export function createConfigHarnessRoster(config: unknown): HarnessRoster {
     // Phase 2.18b (F3 Weg A): resolves the real spawned-session target from
     // plugins.entries['acp-dashboard-binding'].config.harnessSessions through
     // the SAME validated agent-map resolver the binding-adapter uses — the
-    // §4.2 row-miss delegation therefore answers with the real key too, not
+    // 4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19)) row-miss delegation therefore answers with the real key too, not
     // only the adapter's own Turn-1 synthesis.
     harnessSessionTargetKey(agentId: string): string | null {
       const spec = resolveHarnessAgentSpec(config, agentId);
@@ -387,7 +387,7 @@ export function resolveDashboardBindingDecision(
   // Phase 2.18b (F3 Weg A) → Phase 2.21 target cascade: a validated
   // harnessSessions entry REPLACES the synthetic ACP target with the real
   // spawned session key; without one, an auto-provisioned per-agent session
-  // key takes over (fire-and-forget ensure in the roster above); the §1.4
+  // key takes over (fire-and-forget ensure in the roster above); the 1.4 (ACP target-key format (dist-verified))
   // synthetic derivation stays the fallback (autoProvision:false / no
   // provisioner). The roster gate is upstream of this point and unchanged.
   const configuredTargetKey = roster.harnessSessionTargetKey?.(dashboardKey.agentId) ?? null;
@@ -496,7 +496,7 @@ export function createStandaloneBindingResolver(roster: HarnessRoster): (
   };
 }
 
-// --- BRIDGE.md §4.2: write-free delegation target for binding-adapter.ts ----
+// --- the 4.2 design (turn-1 race fix via the config-driven delegation roster (phase 2.19)): write-free delegation target for binding-adapter.ts ----
 
 /** Conversation ref accepted by the write-free dashboard binding resolvers. */
 export type DashboardBindingRefLike = {
@@ -517,7 +517,7 @@ interface ActiveBridgeResolution {
 let activeBridgeResolution: ActiveBridgeResolution | null = null;
 
 /**
- * BRIDGE.md §4.2 row-miss resolver for claude's binding-adapter.ts:
+ * the 4.2 design (turn-1 race fix via the config-driven delegation roster (phase 2.19)) row-miss resolver for claude's binding-adapter.ts:
  * deterministic and write-free — a row in the active bridge's store wins, a
  * tombstone there suppresses the binding, otherwise the Turn-1 synthesis
  * (boundAt: 0) answers.
@@ -531,7 +531,7 @@ let activeBridgeResolution: ActiveBridgeResolution | null = null;
  * adapter fell through to its own derive, producing a record that diverged
  * from the bridge synthesis across the hydration flip. Once the bridge IS
  * active, its own roster (same config provenance, plus its rows/tombstones)
- * keeps precedence, so delegation stays bridge-consistent (§4.2-Vertrag).
+ * keeps precedence, so delegation stays bridge-consistent (4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19))-Vertrag).
  */
 export function resolveDashboardBinding(
   ref: DashboardBindingRefLike,
@@ -550,7 +550,7 @@ export function resolveDashboardBinding(
 }
 
 /**
- * Async mirror of {@link resolveDashboardBinding} — the exported §4.2
+ * Async mirror of {@link resolveDashboardBinding} — the exported 4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19))
  * delegation target that binding-adapter.ts calls on row-miss. Identical
  * results, so the host's resolve → re-resolve stability comparison stays
  * byte-stable whether it went through the sync mirror or this path.
@@ -866,7 +866,7 @@ export function createWebchatDashboardBindingAdapter(args: {
       // Phase 2.12 F2: never answer from a half-hydrated store.
       await args.store.whenReady();
       const record = resolveSync(ref);
-      // §24 native readiness join: hold the async resolve until the target's
+      // 24 (init race: native readiness join) native readiness join: hold the async resolve until the target's
       // in-flight provision settled (bounded); record content unchanged.
       await awaitPendingDashboardHarnessProvisioning((record?.targetSessionKey ?? "").trim());
       return record;
@@ -1021,7 +1021,7 @@ export async function createDashboardBridge(args: DashboardBridgeArgs): Promise<
   // async store consumer awaits store.ready below, so no read races the load.
   void store.hydrate();
 
-  // Publish this bridge's resolution state to the §4.2 delegation resolvers
+  // Publish this bridge's resolution state to the 4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19)) delegation resolvers
   // while the bridge is alive (cleared in dispose).
   const resolution: ActiveBridgeResolution = { roster, store };
   activeBridgeResolution = resolution;
@@ -1127,7 +1127,7 @@ export async function createDashboardBridge(args: DashboardBridgeArgs): Promise<
     ownsWebchatAdapter,
     registeredWebchatAdapterKeys: registeredAdapterKeys,
     async resolveDashboardBindingAsync(ref) {
-      // Shares the §4.2 core (rows → tombstones → Turn-1 synthesis) so this
+      // Shares the 4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19)) core (rows → tombstones → Turn-1 synthesis) so this
       // handle and the exported delegation resolvers always agree. Awaiting
       // the store keeps the F2 boot hydration from being read half-loaded.
       await store.whenReady();
@@ -1138,7 +1138,7 @@ export async function createDashboardBridge(args: DashboardBridgeArgs): Promise<
     },
     dispose(): void {
       hooksActive = false;
-      // Detach this bridge from the §4.2 delegation resolvers (only if it is
+      // Detach this bridge from the 4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19)) delegation resolvers (only if it is
       // the one still published — a later-created instance owns the pointer).
       if (activeBridgeResolution === resolution) activeBridgeResolution = null;
     },

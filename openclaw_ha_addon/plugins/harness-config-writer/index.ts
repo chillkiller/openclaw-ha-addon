@@ -4,7 +4,7 @@
  * Phase 3 (generalisierte Harness-Config, GaRoN 10:37): die Harness-Konfig-
  * Generierung für Local-Provider (Ollama/vLLM/LocalAI/llama.cpp) lebt hier
  * unabhängig vom acp-dashboard-binding Channel-Plugin — GaRoNs Split-Idee
- * (Tagesnotiz / BRIDGE.md §15): "config-writer als eigenes Feature-Plugin".
+ * (Tagesnotiz / the 15 design (generalized harness config (HCW phase 3))): "config-writer als eigenes Feature-Plugin".
  *
  * Surface: plugins.entries['harness-config-writer'].config.harnesses
  * (Legacy-Key plugins.entries['acp-dashboard-binding'].config.harnesses wird
@@ -165,7 +165,7 @@ export function registerHarnessConfigDeployment(api: OpenClawPluginApi): void {
     api.logger?.info?.(
       `[${PLUGIN_ID}] harness config deployment: ${report.results
         .map((r) => (r.modelsSource ? `${r.harnessId}=${r.mechanism} (models:${r.modelsSource})` : `${r.harnessId}=${r.mechanism}`))
-        .join(", ")} (harnesses config surface, BRIDGE.md §15)`,
+        .join(", ")} (harnesses config surface, the 15 design (generalized harness config (HCW phase 3)))`,
     );
   } catch (error) {
     api.logger?.error?.(
@@ -178,6 +178,6 @@ export default definePluginEntry({
   id: PLUGIN_ID,
   name: "Harness Config Writer",
   description:
-    "Deploys harness-native file/env config for configured local-provider harnesses (codex/opencode/claude/gemini/...) on plugin load — see BRIDGE.md §15.",
+    "Deploys harness-native file/env config for configured local-provider harnesses (codex/opencode/claude/gemini/...) on plugin load — see the 15 design (generalized harness config (HCW phase 3)).",
   register: registerHarnessConfigDeployment,
 });

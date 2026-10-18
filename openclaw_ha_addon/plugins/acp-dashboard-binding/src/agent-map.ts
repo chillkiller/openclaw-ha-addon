@@ -130,7 +130,7 @@ export function resetDashboardBindingPluginRootForTest(): void {
  * record path emits generic metadata and the host dispatchs natively.
  */
 export function buildPluginOwnedBindingMetadata(): Record<string, unknown> | null {
-  // Weg-B native mode (BRIDGE.md §21): GENERIC records on EVERY path — the
+  // Weg-B native mode (the 21 design (native dispatch via the dispatchMode config gate)): GENERIC records on EVERY path — the
   // host's native dispatch (resolveBoundAcpDispatchSessionKey) owns the whole
   // reply; no claim hook, no mirror. The F3 blocker this metadata used to
   // route around was removed by the Phase-2.21 ensure provisioning.
@@ -1282,7 +1282,7 @@ export function pendingDashboardHarnessProvisioning(targetOrAgentId: unknown): P
 }
 
 /**
- * §24 native readiness join (Init-Race): the host's own pre-dispatch ready
+ * 24 (init race: native readiness join) native readiness join (Init-Race): the host's own pre-dispatch ready
  * wait (`ensureConfiguredBindingRouteReady`, 30 s budget, binding-routing-
  * DrKISi49.mjs:150) runs ONLY for `bindingMode.kind === "configured"` —
  * plugin-owned bindings are skipped (bot-message-BSJK5l6G.mjs:1211), so the

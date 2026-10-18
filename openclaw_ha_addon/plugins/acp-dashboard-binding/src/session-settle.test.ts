@@ -1,5 +1,5 @@
 /**
- * BRIDGE §19 tests: claim-path settlements (origin/clone session-node terminal
+ * the 19 design (claim-path conversation settle) tests: claim-path settlements (origin/clone session-node terminal
  * patches), the V39→γ clone stamps (spawnedBy provenance + archivedAt hide),
  * and the boot sweep incl. its γ archival leg. The store is a fake
  * plugin-sdk session-store-runtime (same public/patch semantics the live
@@ -75,7 +75,7 @@ const RUN_ID = "9b4a2cf5-db1a-4780-aabe-1c7db67c1e84";
 const ORIGIN = "agent:claude:dashboard:99d8daf5-ae9c-4e35-8295-d1172e1b5051";
 const TARGET = "agent:claude:acp:binding:webchat:default:4fbefeb91c0aed3d";
 
-describe("BRIDGE §19: buildClaimSettlePatch", () => {
+describe("the 19 design (claim-path conversation settle): buildClaimSettlePatch", () => {
   it("returns null unless the entry is still running (idempotence vs the host's own settle)", () => {
     expect(buildClaimSettlePatch({ status: "done" }, RUN_ID, Date.now())).toBeNull();
     expect(buildClaimSettlePatch(undefined, RUN_ID, Date.now())).toBeNull();
@@ -171,7 +171,7 @@ describe("BRIDGE §19: buildClaimSettlePatch", () => {
   });
 });
 
-describe("BRIDGE §19a: settleClaimedTurnSessions", () => {
+describe("the 19a design (claim settle lane variant): settleClaimedTurnSessions", () => {
   it("settles the ORIGIN node always and the TARGET only after a terminal wait", async () => {
     const store = createFakeStore({
       entries: {
@@ -207,7 +207,7 @@ describe("BRIDGE §19a: settleClaimedTurnSessions", () => {
     ).toBe("done");
   });
 
-  it("no-ops when the host's §17 terminal commit already settled the entry", async () => {
+  it("no-ops when the host's 17 (terminal write-owner race (post-settle yield fix)) terminal commit already settled the entry", async () => {
     const store = createFakeStore({
       entries: { [ORIGIN]: { status: "done", endedAt: 42 } },
     });
@@ -222,7 +222,7 @@ describe("BRIDGE §19a: settleClaimedTurnSessions", () => {
   });
 });
 
-describe("BRIDGE §19 / V39: stampSubagentProvenance", () => {
+describe("the 19 design (claim-path conversation settle) / V39: stampSubagentProvenance", () => {
   it("stamps spawnedBy = <origin key> on the clone entry (provenance leg)", async () => {
     const store = createFakeStore({ entries: { [TARGET]: { status: "running" } } });
     const stamped = await stampSubagentProvenance({
@@ -389,7 +389,7 @@ describe("BRIDGE γ OFF (default, GaRoN directive 2026-10-14): no auto-archiving
   });
 });
 
-describe("BRIDGE §19c: sweepOwnedStuckSessions", () => {
+describe("the 19c design (claim settle orphan binding): sweepOwnedStuckSessions", () => {
   afterEach(() => resetDashboardBindingCloneAutoArchiveForTest());
 
   it("settles stuck owned entries (clone + dashboard grammar) and nothing else", async () => {
@@ -487,7 +487,7 @@ describe("BRIDGE §19c: sweepOwnedStuckSessions", () => {
     expect(store.patches).toEqual([]);
   });
 });
-describe("BRIDGE §23 (native dispatch mode, reset-bug): no stamps in + boot un-archive heal", () => {
+describe("the 23 design (main-session reset bug: native-mode un-archive) (native dispatch mode, reset-bug): no stamps in + boot un-archive heal", () => {
   beforeEach(() => setDashboardBindingDispatchMode("native"));
   afterEach(() => {
     resetDashboardBindingDispatchModeForTest();
@@ -588,7 +588,7 @@ describe("BRIDGE §23 (native dispatch mode, reset-bug): no stamps in + boot un-
   });
 });
 
-describe("BRIDGE §23.2/V39 (native dispatch mode): unhideOverstampedCloneSessions", () => {
+describe("the 23.2 design (fix legs (native mode))/V39 (native dispatch mode): unhideOverstampedCloneSessions", () => {
   beforeEach(() => setDashboardBindingDispatchMode("native"));
   afterEach(() => {
     resetDashboardBindingDispatchModeForTest();
@@ -637,7 +637,7 @@ describe("BRIDGE §23.2/V39 (native dispatch mode): unhideOverstampedCloneSessio
   });
 });
 
-describe("runBootHealWithRetries ([§23.3/.31] boot-heal retry driver)", () => {
+describe("runBootHealWithRetries ([23.3 (race-freedom argument)/.31] boot-heal retry driver)", () => {
   it("runs once and returns when the attempt completes without warns", async () => {
     const warns: string[] = [];
     const runs: string[][] = [];

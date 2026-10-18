@@ -272,13 +272,13 @@ describe("dashboard binding adapter (acceptance #2)", () => {
     expect(viaSync).toEqual(viaAsync);
   });
 
-  // §25 (2026-10-16 live /reset test failure): bridged/derived records are
+  // 25 (dual-reset driver: work reset + conversation reset legs) (2026-10-16 live /reset test failure): bridged/derived records are
   // computed on the fly and never stored, so the reverse lookup the dual-reset
   // driver claims through returned ONLY explicit rows — every natively
   // dispatched dashboard conversation answered [] and the conversation reset
   // leg never fired. The cascade must note its projected records for
   // listBySession.
-  it("listBySession answers for derived records after a cascade resolve (§25 reverse lookup)", async () => {
+  it("listBySession answers for derived records after a cascade resolve (25 (dual-reset driver: work reset + conversation reset legs) reverse lookup)", async () => {
     const adapter = createDashboardBindingAdapter({ getConfig: () => HARNESS_CFG });
     const workKey = buildAcpBindingSessionKey({
       channel: "webchat",
@@ -305,7 +305,7 @@ describe("dashboard binding adapter (acceptance #2)", () => {
   });
 });
 
-// --- Weg B: config-gated dispatch mode (BRIDGE.md §21) -----------------------
+// --- Weg B: config-gated dispatch mode (the 21 design (native dispatch via the dispatchMode config gate)) -----------------------
 //
 // claim (Weg A, default): derived records carry the plugin-owned ownership
 // metadata (pluginBindingOwner/pluginId/pluginRoot/pluginName) and turns claim
@@ -593,14 +593,14 @@ describe("Phase 2.18b harnessSessions (F3 Weg A)", () => {
 //
 // ROOT CAUSE (codex-Diagnose 7e9298af): createDashboardBridge startet async
 // hinter registerFull (der Host awaitet nichts — Phase-2.6-Befund), während
-// der Adapter SOFORT registriert ist. In der Lücke antwortete die §4.2-
+// der Adapter SOFORT registriert ist. In der Lücke antwortete die 4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19))-
 // Delegation (resolveDashboardBinding[-Async]) mit dem UNBEGRÜNDETEN
 // Fallback-Roster (createConfigHarnessRoster(undefined)) → null → der Adapter
 // fiel in seine eigene deriveBindingRecord-Synthese, deren Record (bindingId-
 // Format, Metadata) von der Bridge-Synthese abweicht — mit harnessSessions
 // lief der Fallback am ECHTEN Target vorbei. Fix: beide Delegation-Calls
 // übergeben einen config-getriebenen Roster; die aktive Brücke behält
-// Vorrang (§4.2), der Fallback synthesize aus der Live-Config.
+// Vorrang (4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19))), der Fallback synthesize aus der Live-Config.
 
 function makeBridgeApi(config: unknown): DashboardBridgeApiLike {
   return {
@@ -618,7 +618,7 @@ const STUB_RUNTIME: SessionBindingRuntimeModule = {
 };
 
 describe("Phase 2.19 Turn-1-Race (Bridge noch nicht aktiv)", () => {
-  it("§4.2-Fallback mit config-getriebenem Roster: harnessSessions-Target statt Derivations-Synthese", async () => {
+  it("4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19))-Fallback mit config-getriebenem Roster: harnessSessions-Target statt Derivations-Synthese", async () => {
     const cfg = withHarnessSessions({ codex: REAL_CODEX_SESSION_KEY });
     const adapter = createDashboardBindingAdapter({ getConfig: () => cfg });
     // Host-Pfade: async Delegation (diff) UND der Sync-Spiegel (deprecated
