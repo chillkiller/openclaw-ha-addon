@@ -10,6 +10,12 @@ Each entry summarizes user-visible changes. Full engineering notes:
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- Keep bundled skills inside the OpenClaw package so runtime updates no longer fail rollback validation on an external skills symlink. Existing managed skills remain unchanged. Deploy a rebuilt add-on image to replace the legacy container layout; this does not repair an already-running container.
+
 ## [0.7.13.35] — 2026-10-18
 
 ### Fixed
