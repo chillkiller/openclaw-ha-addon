@@ -441,40 +441,19 @@ export XDG_CONFIG_HOME=/config
 mkdir -p /config/.openclaw /config/.openclaw/identity /config/clawd /config/keys /config/secrets
 
 # ------------------------------------------------------------------------------
-# Sync built-in OpenClaw skills from image to persistent storage
-# On each startup, copy new/updated built-in skills so they survive rebuilds.
-# We sync them to /config/.openclaw/skills and symlink back.
-# NOTE: We cannot use `npm root -g` here because HOME=/config may contain a
-# persisted .npmrc with a custom prefix from a previous run. Instead, we
-# resolve the real image path by temporarily overriding HOME.
+# Keep bundled skills inside the package tree for safe update rollback scans.
+# OpenClaw independently loads managed skills from <state-dir>/skills at higher
+# precedence. Preserve existing files; copying bundles creates stale overrides.
+# A rebuilt add-on image supplies the original bundled directory. This does not
+# repair the legacy symlink in an already-running container.
 # ------------------------------------------------------------------------------
-IMAGE_SKILLS_DIR="$(HOME=/root npm root -g 2>/dev/null)/openclaw/skills"
-PERSISTENT_SKILLS_DIR="/config/.openclaw/skills"
-
-if [ -d "$IMAGE_SKILLS_DIR" ] && [ ! -L "$IMAGE_SKILLS_DIR" ]; then
-  mkdir -p "$PERSISTENT_SKILLS_DIR"
-  # Sync skills: --update replaces older files so upgrades propagate,
-  # but doesn't delete user-added files in persistent storage.
-  if command -v rsync >/dev/null 2>&1; then
-    rsync -a --update "$IMAGE_SKILLS_DIR/" "$PERSISTENT_SKILLS_DIR/" 2>/dev/null || true
-  else
-    cp -ru "$IMAGE_SKILLS_DIR/"* "$PERSISTENT_SKILLS_DIR/" 2>/dev/null || true
-  fi
-  # Replace image skills dir with symlink to persistent copy
-  rm -rf "$IMAGE_SKILLS_DIR"
-  ln -sf "$PERSISTENT_SKILLS_DIR" "$IMAGE_SKILLS_DIR"
-  echo "INFO: Synced built-in skills to persistent storage at $PERSISTENT_SKILLS_DIR"
-elif [ -L "$IMAGE_SKILLS_DIR" ]; then
-  echo "INFO: Built-in skills already linked to persistent storage"
-else
-  echo "WARN: Built-in skills directory not found at $IMAGE_SKILLS_DIR"
-fi
+mkdir -p /config/.openclaw/skills
 
 # ------------------------------------------------------------------------------
 # Persist user-installed node skills across Docker image rebuilds
 # Redirect npm/pnpm global installs to /config/.node_global (persistent storage)
 # so that skills installed via the dashboard survive container rebuilds.
-# NOTE: This MUST come after the skills sync above (which needs the original npm root -g).
+# Bundled skills stay in the image; managed skills stay in the state directory.
 # ------------------------------------------------------------------------------
 PERSISTENT_NODE_GLOBAL="/config/.node_global"
 mkdir -p "$PERSISTENT_NODE_GLOBAL"
