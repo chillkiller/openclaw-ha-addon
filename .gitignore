@@ -39,3 +39,7 @@ openclaw_ha_addon/plugins/*/node_modules/
 openclaw_ha_addon/plugins/*/package-lock.json
 # Lokaler npm-Convenience-Symlink (Binding → Writer node_modules), nie im Repo:
 openclaw_ha_addon/plugins/*/node_modules_deps
+
+# Vitest-Cache (lokal erzeugt, niemals ins Repo):
+.vite/
+**/.vite/
