@@ -9,6 +9,20 @@ For a release-facing summary, see the root [CHANGELOG.md](../CHANGELOG.md).
 
 ---
 
+## [Unreleased]
+
+### Fixed
+
+- **harness-config-writer writes a usable Codex model catalog:** the generated `model_catalog.json` had 29 of 36 model fields missing or wrong, which left direct `codex` CLI users with a degraded model setup. `base_instructions` was empty, so the model received no Codex base instructions at all. The catalog now carries the full field set: base instructions (from a bundled template with the model name substituted), reasoning levels, `default_reasoning_level`, parallel tool calls, the `unified_exec` shell type, token-based output truncation, search-tool support, usage instructions, and model priority. Models are marked as Ollama-served so the compaction tooling recognizes them.
+- **harness-config-writer no longer writes into operator-owned config sections:** the post-turn compaction threshold was inserted into the operator part of `config.toml`, which duplicated the key and placed it inside a provider table where Codex ignores it. The key is now written once, at the top level of the managed section, before the first table header. Operator content stays byte-preserved.
+- **harness-config-writer reasoning default and provider detection:** `default_reasoning_level` no longer falls back to the last entry of the reasoning-level list, because that list does not state which level is the default. The OpenAI provider detection no longer treats every `gpt-` prefixed model as an OpenAI model, which would have skipped the compaction safety margin for Ollama-served `gpt-oss` models.
+
+### Added
+
+- **Optional provider policy for the Codex harness:** providers can declare a context-window factor, an auto-compaction factor, a post-turn compaction threshold, and the supported reasoning levels. The policy applies per provider and can be overridden per model. Nothing changes for existing configurations until a policy is set, and providers flagged as OpenAI are never adjusted.
+
+---
+
 ## [0.7.13.35] — 2026-10-18
 
 ### Fixed

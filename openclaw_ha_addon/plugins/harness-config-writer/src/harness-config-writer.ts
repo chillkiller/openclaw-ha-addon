@@ -75,7 +75,7 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { dirname, join } from "node:path";
+ import { dirname, join, resolve } from "node:path";
 
 // Repo-Split A2 (2026-10-11): resolveOpenClawStateDir lebt hier als EIGENE
 // Kopie (origin: acp-dashboard-binding/src/agent-map.ts, Byte-identisch).
@@ -340,6 +340,7 @@ export function buildCodexAugmentSection(
   entry: HarnessConfigEntry,
   existingHeaders: ReadonlySet<string>,
   skipped: string[],
+  postTurnCompactThresholdPercent?: number,
 ): string {
   const providerId = deriveProviderId(entry.baseUrl ?? "");
   const baseUrl = withV1Suffix(entry.baseUrl ?? "");
@@ -392,6 +393,12 @@ export function buildCodexAugmentSection(
     }
     lines.push(`[${header}]`, `trust_level = "trusted"`, ``);
   }
+  // γ.2: Post-Turn-Compaction-Key kommt genau einmal in den managed Block,
+  // aber nur wenn der Block überhaupt eigenen Inhalt hat (sonst bleibt er leer
+  // und der Aufrufer entfernt ihn bei Total-Kollisionen).
+  if (typeof postTurnCompactThresholdPercent === "number" && lines.length > 0) {
+    lines.unshift(`model_post_turn_compact_threshold_percent = ${postTurnCompactThresholdPercent}`);
+  }
   // Trailing Blank + Full-Section-Content zurückgeben (ohne BEGIN/END-Marker —
   // die rahmt der Aufrufer).
   while (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
@@ -414,6 +421,7 @@ function manageCodexToml(
   desired: string,
   entry: HarnessConfigEntry,
   warnings: string[],
+  postTurnCompactThresholdPercent?: number,
 ): FileAction {
   if (!existsSync(tomlPath)) {
     atomicWrite(tomlPath, desired);
@@ -460,12 +468,21 @@ function manageCodexToml(
   const isRefresh = hasManagedBlock;
   const operatorContent = before.replace(/\n+$/, "");
   const operatorTail = after.replace(/^\n+/, "").replace(/\n+$/, "");
-  // Headers des Operator-Teils (beide Seiten) — NICHT unseres alten Sections-Teils.
-  const existingHeaders = collectTomlSectionHeaders(
-    operatorContent + (operatorTail ? `\n${operatorTail}` : ""),
-  );
-  const skipped: string[] = [];
-  const section = buildCodexAugmentSection(entry, existingHeaders, skipped);
+  const operatorFull = operatorContent + (operatorTail ? `\n${operatorTail}` : "");
+  // γ.2: Post-Turn-Compaction-Key wird global verwaltet: im Signatur-Fall
+  // ersetzt buildCodexConfigToml den Wert; im AUGMENT-Fall kommt er genau
+  // einmal in den managed Block – nie in den fremden Operator-Teil.
+  const operatorHasCompactKey = /^model_post_turn_compact_threshold_percent\s*=/m.test(operatorFull);
+  const managedCompactValue = typeof postTurnCompactThresholdPercent === "number" && !operatorHasCompactKey
+    ? postTurnCompactThresholdPercent
+    : undefined;
+
+ // Headers des Operator-Teils (beide Seiten) — NICHT unseres alten Sections-Teils.
+ const existingHeaders = collectTomlSectionHeaders(
+   operatorContent + (operatorTail ? `\n${operatorTail}` : ""),
+ );
+ const skipped: string[] = [];
+  const section = buildCodexAugmentSection(entry, existingHeaders, skipped, managedCompactValue);
   for (const s of skipped) warnings.push(`codex: skipped ${s}`);
   if (section.trim() === "") {
     if (isRefresh) {
@@ -491,6 +508,7 @@ function manageCodexToml(
   atomicWrite(tomlPath, next);
   return isRefresh ? "updated" : "augmented";
 }
+
 
 function briefError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -569,11 +587,71 @@ export type ModelCatalog = {
    * (Ownership-Regel).
    */
   metaById: Map<string, ModelMeta>;
+  /** γ.2 Provider-Policy: pro normalisierter baseUrl. */
+  policyByBaseUrl: Map<string, ProviderPolicy>;
+};
+
+/** Provider-weite Policy aus `models.providers[*].modelPolicy`. */
+export type ProviderPolicy = {
+  /** Faktor auf den Nominalwert für context_window. */
+  contextWindowFactor?: number;
+  /** Faktor auf den Nominalwert für auto_compact_token_limit. */
+  autoCompactFactor?: number;
+  /** Globaler Post-Turn-Compaction-Schwellenwert für die config.toml. */
+  postTurnCompactThresholdPercent?: number;
+  /** Ob Modelle des Providers web_search_tool_type unterstützen. */
+  searchTool?: boolean;
+  /** Ob Usage-Instructions für Apps/Plugins/Skills eingeschaltet werden. */
+  includeUsageInstructions?: boolean;
+  /** Optionale Priorität (Default für Modelle dieses Providers). */
+  priority?: number;
+  /** Optionale Thinking-Level (Default für Modelle dieses Providers). */
+  thinkingLevels?: string[];
+  /** Default-Reasoning-Level (Default für Modelle dieses Providers). */
+  defaultReasoningLevel?: string;
+  /** Optionale Input-Modalitäten (Default für Modelle dieses Providers). */
+  inputModalities?: ("text" | "image")[];
+  /** Optionale Beschreibung (Default für Modelle dieses Providers). */
+  description?: string;
+  /** Ob parallele Tool-Calls unterstützt werden (Default für Modelle). */
+  supportsParallelToolCalls?: boolean;
+  /** Ob das Search-Tool unterstützt wird (Default für Modelle). */
+  supportsSearchTool?: boolean;
+  /** Explizite base_instructions; "fixture" lädt das Codex-Template. */
+  baseInstructions?: string;
+  /** Provider-Art; "openai" deaktiviert Compaction-Faktoren. */
+  providerKind?: "ollama" | "openai" | "other";
 };
 
 /** Operator-gepflegte Modell-Metadaten aus `models.providers[*].models[*]`. */
 export type ModelMeta = {
   contextWindow?: number;
+  /** Optionale Obergrenze (Nominalwert). Default = contextWindow. */
+  maxContextWindow?: number;
+  /** Faktor auf den Nominalwert für context_window (übersteuert Provider-Policy). */
+  contextWindowFactor?: number;
+  /** Faktor auf den Nominalwert für auto_compact_token_limit (übersteuert Provider-Policy). */
+  autoCompactFactor?: number;
+  /** Optionale Priorität im Modell-Picker. */
+  priority?: number;
+  /** Optionale Thinking-Level (Reihenfolge = Bedeutung). */
+  thinkingLevels?: string[];
+  /** Default-Reasoning-Level. */
+  defaultReasoningLevel?: string;
+  /** Optionale Input-Modalitäten. Default ["text"]. */
+  inputModalities?: ("text" | "image")[];
+  /** Optionale Beschreibung. Default HCW-Text. */
+  description?: string;
+  /** Ob parallele Tool-Calls unterstützt werden. Default false. */
+  supportsParallelToolCalls?: boolean;
+  /** Ob das Search-Tool unterstützt wird. Default false. */
+  supportsSearchTool?: boolean;
+  /** Ob Usage-Instructions eingeschaltet werden. Default false. */
+  includeUsageInstructions?: boolean;
+  /** Explizite base_instructions; "fixture" lädt das Codex-Template. */
+  baseInstructions?: string;
+  /** Provider-Art; übersteuert Provider-Policy. */
+  providerKind?: "ollama" | "openai" | "other";
 };
 
 /** N2 (Fix 2026-10-14): "optout" trennt Operator-`models: []` bewusst von "none" (kein Katalogmatch). */
@@ -655,6 +733,84 @@ function normalizeModelListInternal(
   return { ids, explicitEmpty: false };
 }
 
+
+/** γ.2: Helper zum Zusammenführen von Modell-Metadaten mit Provider-Policy-Defaults. */
+function buildModelMeta(
+  rec: Record<string, unknown>,
+  policy: ProviderPolicy,
+): ModelMeta {
+  const inputModalities = parseInputModalities(rec.inputModalities);
+  const thinkingLevels = parseThinkingLevels(rec.thinkingLevels);
+  return {
+    contextWindow: typeof rec.contextWindow === "number" ? rec.contextWindow : undefined,
+    maxContextWindow: typeof rec.maxContextWindow === "number" ? rec.maxContextWindow : undefined,
+    contextWindowFactor: orNumber(rec.contextWindowFactor, policy.contextWindowFactor),
+    autoCompactFactor: orNumber(rec.autoCompactFactor, policy.autoCompactFactor),
+    priority: orNumber(rec.priority, policy.priority),
+    thinkingLevels,
+    defaultReasoningLevel: orString(rec.defaultReasoningLevel, policy.defaultReasoningLevel),
+    inputModalities,
+    description: orString(rec.description, policy.description),
+    supportsParallelToolCalls: orBoolean(rec.supportsParallelToolCalls, policy.supportsParallelToolCalls),
+    supportsSearchTool: orBoolean(rec.supportsSearchTool, policy.searchTool),
+    includeUsageInstructions: orBoolean(rec.includeUsageInstructions, policy.includeUsageInstructions),
+    baseInstructions: orString(rec.baseInstructions, policy.baseInstructions),
+    providerKind: isProviderKind(rec.providerKind) ? rec.providerKind : policy.providerKind,
+  };
+}
+
+function orNumber(a: unknown, b?: number): number | undefined {
+  return typeof a === "number" ? a : b;
+}
+
+function orString(a: unknown, b?: string): string | undefined {
+  return typeof a === "string" && a.length > 0 ? a : b;
+}
+
+function orBoolean(a: unknown, b?: boolean): boolean | undefined {
+  return typeof a === "boolean" ? a : b;
+}
+
+function parseInputModalities(value: unknown): ("text" | "image")[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const arr = value.filter((v): v is "text" | "image" => v === "text" || v === "image");
+  return arr.length > 0 ? arr : undefined;
+}
+
+function parseThinkingLevels(value: unknown): string[] | undefined {
+  if (!Array.isArray(value)) return undefined;
+  const arr = value.filter((v): v is string => typeof v === "string" && v.length > 0);
+  return arr.length > 0 ? arr : undefined;
+}
+
+function isProviderKind(value: unknown): value is "ollama" | "openai" | "other" {
+  return value === "ollama" || value === "openai" || value === "other";
+}
+
+function parseProviderPolicy(provider: Record<string, unknown>): ProviderPolicy {
+  const raw = provider.modelPolicy ?? provider.model_policy;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  const p = raw as Record<string, unknown>;
+  return {
+    contextWindowFactor: typeof p.contextWindowFactor === "number" ? p.contextWindowFactor : undefined,
+    autoCompactFactor: typeof p.autoCompactFactor === "number" ? p.autoCompactFactor : undefined,
+    postTurnCompactThresholdPercent: typeof p.postTurnCompactThresholdPercent === "number"
+      ? p.postTurnCompactThresholdPercent
+      : undefined,
+    searchTool: typeof p.searchTool === "boolean" ? p.searchTool : undefined,
+    includeUsageInstructions: typeof p.includeUsageInstructions === "boolean" ? p.includeUsageInstructions : undefined,
+    priority: typeof p.priority === "number" ? p.priority : undefined,
+    thinkingLevels: parseThinkingLevels(p.thinkingLevels),
+    defaultReasoningLevel: orString(p.defaultReasoningLevel, undefined),
+    inputModalities: parseInputModalities(p.inputModalities),
+    description: orString(p.description, undefined),
+    supportsParallelToolCalls: typeof p.supportsParallelToolCalls === "boolean" ? p.supportsParallelToolCalls : undefined,
+    supportsSearchTool: typeof p.supportsSearchTool === "boolean" ? p.supportsSearchTool : undefined,
+    baseInstructions: orString(p.baseInstructions, undefined),
+    providerKind: isProviderKind(p.providerKind) ? p.providerKind : undefined,
+  };
+}
+
 /**
  * Modellkatalog aus der vollen Gateway-Config (`api.config.models.providers`):
  * je Provider `baseUrl` + `models[].id` (+ `contextWindow` für
@@ -667,6 +823,7 @@ function normalizeModelListInternal(
 export function buildModelCatalog(fullConfig: unknown, warnings: string[]): ModelCatalog {
   const byBaseUrl = new Map<string, string[]>();
   const metaById = new Map<string, ModelMeta>();
+  const policyByBaseUrl = new Map<string, ProviderPolicy>();
   try {
     const models = typeof fullConfig === "object" && fullConfig !== null
       ? (fullConfig as Record<string, unknown>).models
@@ -676,11 +833,11 @@ export function buildModelCatalog(fullConfig: unknown, warnings: string[]): Mode
         ? (models as Record<string, unknown>).providers
         : undefined;
     if (providers === null || providers === undefined) {
-      return { byBaseUrl, metaById };
+      return { byBaseUrl, metaById, policyByBaseUrl };
     }
     if (typeof providers !== "object" || Array.isArray(providers)) {
       warnings.push("models.providers: unexpected shape (object expected) — catalog skipped");
-      return { byBaseUrl, metaById };
+      return { byBaseUrl, metaById, policyByBaseUrl };
     }
     let malformed = 0;
     for (const key of Object.keys(providers).sort()) {
@@ -701,7 +858,9 @@ export function buildModelCatalog(fullConfig: unknown, warnings: string[]): Mode
         malformed += 1;
         continue;
       }
-      // γ.1 Metadaten: nur positive Zahlen zählen (contextWindow — das
+      const providerPolicy = parseProviderPolicy(p);
+      policyByBaseUrl.set(normalized, providerPolicy);
+      // γ.1/γ.2 Metadaten: nur positive Zahlen zählen (contextWindow — das
       // einzige Feld mit codex-Katalog-Surface; M4-Fix: maxTokens wird
       // bewusst NICHT gesammelt, es gibt keine konsumierende Surface).
       for (const m of rawModels) {
@@ -710,7 +869,7 @@ export function buildModelCatalog(fullConfig: unknown, warnings: string[]): Mode
         const id = typeof rec.id === "string" ? rec.id.trim() : "";
         if (!id || metaById.has(id)) continue;
         if (typeof rec.contextWindow === "number" && rec.contextWindow > 0) {
-          metaById.set(id, { contextWindow: rec.contextWindow });
+          metaById.set(id, buildModelMeta(rec, providerPolicy));
         }
       }
       const ids = dedupeModelIds(
@@ -736,7 +895,7 @@ export function buildModelCatalog(fullConfig: unknown, warnings: string[]): Mode
   } catch (error) {
     warnings.push(`model catalog build failed (fail-soft): ${briefError(error)}`);
   }
-  return { byBaseUrl, metaById };
+  return { byBaseUrl, metaById, policyByBaseUrl };
 }
 
 /** Default-prepend (claude-Adapter: models[0] = Fallback-Default). */
@@ -984,9 +1143,99 @@ export function deployCodexAuth(
  */
 const CODEX_MODEL_CATALOG_LIMIT = 10000;
 
+/** γ.2: Lädt das Codex-Base-Instructions-Template und substituiert `{{model}}`.
+ *  - baseInstructions fehlt/undefined/null/"fixture" → Fixture laden (Default).
+ *  - "none" oder leerer String → expliziter Opt-out, leer lassen.
+ *  - anderer String → wörtlicher Operator-Override.
+ *  - Fehlendes Fixture → Warnung + leerer String.
+ */
+function resolveBaseInstructions(modelId: string, meta: ModelMeta, warnings: string[]): string {
+  const value = meta.baseInstructions;
+  // Expliziter Opt-out: nur wenn wirklich "none" oder leerer String gesetzt ist.
+  if (value === "none" || value === "") return "";
+  // Default + explizit "fixture": Template laden.
+  if (value === undefined || value === null || value === "fixture") {
+    const raw = loadCodexBaseInstructionsFixture(warnings);
+    if (raw === null) return "";
+    return raw.replace(/\{\{\s*model\s*\}\}/g, modelId);
+  }
+  // Operator-Override.
+  return value;
+}
+
+/**
+ * γ.2: Robustes Laden des Fixtures – funktioniert sowohl bei TS-Quelle als auch dist/.
+ *
+ * PROVENIENZ des Templates (src/fixtures/codex-base-instructions.txt):
+ * Der Codex-Basisprompt stammt aus dem Codex-CLI-Katalog (`base_instructions`
+ * je ModelInfo, dokumentiert in openai/codex `codex-rs/protocol/src/openai_models.rs`;
+ * das codex-cli-Projekt steht unter Apache-2.0). Das Fixture ist diese Basis-
+ * Anweisung mit einem einzigen Platzhalter (`{{model}}`) in Zeile 0 – der Rest
+ * ist byte-identisch. Das Template wird NICHT zur Laufzeit aus dem Binary
+ * gelesen: der Writer muss offline und deterministisch arbeiten.
+ *
+ * Bei einem Codex-Upstream-Update das Template neu erzeugen:
+ *   1) `codex debug models --bundled` bzw. die models_cache.json eines
+ *      Codex-Installations heranziehen,
+ *   2) Zeile 0 durch "You are Codex, a coding agent powered by {{model}}
+ *      through Ollama. …" ersetzen,
+ *   3) die übrigen Zeilen unverändert übernehmen.
+ */
+function loadCodexBaseInstructionsFixture(warnings: string[]): string | null {
+  const fileName = "codex-base-instructions.txt";
+  const candidates = new Set<string>();
+  const add = (p: string) => { if (p) candidates.add(p); };
+  try {
+    const modulePath = new URL(import.meta.url).pathname;
+    const moduleDir = dirname(modulePath);
+    add(resolve(moduleDir, "fixtures", fileName));
+    add(resolve(moduleDir, "..", "fixtures", fileName));
+    add(resolve(moduleDir, "..", "src", "fixtures", fileName));
+    add(resolve(moduleDir, "..", "..", "src", "fixtures", fileName));
+  } catch { /* import.meta.url unavailable in some transpilers */ }
+  try {
+    add(resolve(__dirname, "fixtures", fileName));
+    add(resolve(__dirname, "..", "fixtures", fileName));
+    add(resolve(__dirname, "..", "src", "fixtures", fileName));
+    add(resolve(__dirname, "..", "..", "src", "fixtures", fileName));
+  } catch { /* ignore */ }
+  for (const path of candidates) {
+    try {
+      if (existsSync(path)) {
+        return readFileSync(path, "utf-8");
+      }
+    } catch { /* try next */ }
+  }
+  warnings.push("codex base_instructions fixture missing or unreadable at expected paths");
+  return null;
+ }
+
+const REASONING_DESCRIPTIONS: Record<string, string> = {
+  low: "Faster, less capable reasoning",
+  medium: "Balanced reasoning",
+  high: "Deeper reasoning for harder problems",
+  xhigh: "Extreme reasoning depth",
+  max: "Maximum reasoning depth",
+  none: "No explicit reasoning",
+};
+
+/** γ.2: Mapping von Thinking-Level-Strings auf codex supported_reasoning_levels. */
+function buildReasoningLevels(meta: ModelMeta): {
+  levels: { effort: string; description: string }[];
+  defaultLevel?: string;
+} {
+  const levels = (meta.thinkingLevels ?? []).map((effort) => ({
+    effort,
+    description: REASONING_DESCRIPTIONS[effort] ?? `${effort} reasoning effort`,
+  }));
+  const defaultLevel = meta.defaultReasoningLevel;
+  return { levels, defaultLevel };
+}
+
 export function buildCodexModelCatalogJson(
   modelIds: readonly string[],
   metaById: ReadonlyMap<string, ModelMeta>,
+  warnings: string[] = [],
 ): { content: string; included: number; skipped: string[] } | null {
   const entries: Record<string, unknown>[] = [];
   const skipped: string[] = [];
@@ -997,27 +1246,56 @@ export function buildCodexModelCatalogJson(
       continue;
     }
     const contextWindow = Math.floor(meta.contextWindow);
-    entries.push({
+    const nominal = meta.maxContextWindow ?? contextWindow;
+    const isOpenAi = meta.providerKind === "openai" || (meta.providerKind === undefined && /^gpt-/i.test(id));
+    const contextWindowFactor = isOpenAi ? 1 : (meta.contextWindowFactor ?? 1);
+    const ctx = Math.round(nominal * contextWindowFactor);
+    const autoCompactFactor = isOpenAi ? undefined : meta.autoCompactFactor;
+    const compact = autoCompactFactor ? Math.round(nominal * autoCompactFactor) : undefined;
+
+    const description = meta.description ?? "Ollama model";
+    const baseInstructions = resolveBaseInstructions(id, meta, warnings);
+    const reasoning = buildReasoningLevels(meta);
+    const inputModalities = meta.inputModalities ?? ["text"];
+    const priority = meta.priority ?? 1;
+    const supportsParallelToolCalls = meta.supportsParallelToolCalls ?? true;
+    const supportsSearchTool = meta.supportsSearchTool ?? true;
+    const includeUsageInstructions = meta.includeUsageInstructions ?? true;
+
+    const entry: Record<string, unknown> = {
       slug: id,
       display_name: id,
-      description: "custom model (metadata from openclaw.json models.providers)",
-      base_instructions: "",
-      supported_reasoning_levels: [],
-      shell_type: "shell_command",
+      description,
+      base_instructions: baseInstructions,
+      supported_reasoning_levels: reasoning.levels,
+      shell_type: "unified_exec",
       visibility: "list",
       supported_in_api: true,
-      priority: 1,
+      priority,
       support_verbosity: false,
       default_reasoning_summary: "auto",
       web_search_tool_type: "text",
-      truncation_policy: { mode: "bytes", limit: CODEX_MODEL_CATALOG_LIMIT },
-      supports_parallel_tool_calls: false,
+      truncation_policy: { mode: "tokens", limit: CODEX_MODEL_CATALOG_LIMIT },
+      supports_parallel_tool_calls: supportsParallelToolCalls,
+      supports_search_tool: supportsSearchTool,
       experimental_supported_tools: [],
-      input_modalities: ["text"],
-      context_window: contextWindow,
-      max_context_window: contextWindow,
+      input_modalities: inputModalities,
+      context_window: ctx,
+      max_context_window: nominal,
       effective_context_window_percent: 95,
-    });
+    };
+    if (reasoning.defaultLevel !== undefined) {
+      entry.default_reasoning_level = reasoning.defaultLevel;
+    }
+    if (compact !== undefined) {
+      entry.auto_compact_token_limit = compact;
+    }
+    if (includeUsageInstructions) {
+      entry.include_apps_usage_instructions = true;
+      entry.include_plugin_usage_instructions = true;
+      entry.include_skills_usage_instructions = true;
+    }
+    entries.push(entry);
   }
   if (entries.length === 0) return null;
   return {
@@ -1050,6 +1328,7 @@ export function buildCodexModelCatalogJson(
 export function buildCodexConfigToml(
   entry: HarnessConfigEntry,
   modelCatalogPath?: string,
+  postTurnCompactThresholdPercent?: number,
 ): string {
   const baseUrl = withV1Suffix(entry.baseUrl ?? "");
   const providerId = deriveProviderId(entry.baseUrl ?? "");
@@ -1078,6 +1357,11 @@ export function buildCodexConfigToml(
   }
   lines.push(
     `sandbox_mode = "workspace-write"`,
+  );
+  if (typeof postTurnCompactThresholdPercent === "number") {
+    lines.push(`model_post_turn_compact_threshold_percent = ${postTurnCompactThresholdPercent}`);
+  }
+  lines.push(
     ``,
     `[model_providers.${providerId}]`,
     `name = "harness-config-writer (${baseUrl})"`,
@@ -1141,15 +1425,27 @@ export function deployCodexHarnessFiles(
   //    VOR der TOML-Emission berechnet.
   const tomlPath = join(paths.codexSourceHome, "config.toml");
   const catalogPath = join(paths.codexSourceHome, "model-catalog.json");
+  const normalizedBaseUrl = normalizeBaseUrlForMatch(entry.baseUrl ?? "");
+  const providerPolicy = modelCatalog?.policyByBaseUrl.get(normalizedBaseUrl);
+  const postTurnCompactThresholdPercent = providerPolicy?.postTurnCompactThresholdPercent ?? 70;
+  const defaultMeta = modelCatalog?.metaById.get(entry.model);
+  const thinking = nonEmpty(entry.thinking);
+  if (thinking) {
+    const levels = defaultMeta?.thinkingLevels ?? providerPolicy?.thinkingLevels;
+    if (levels && !levels.includes(thinking)) {
+      warnings.push(`codex: model_reasoning_effort "${thinking}" is not in supported reasoning levels [${levels.join(", ")}]`);
+    }
+  }
   const built =
     modelCatalog && entry.models !== undefined && entry.models.length > 0
-      ? buildCodexModelCatalogJson(entry.models, modelCatalog.metaById)
+      ? buildCodexModelCatalogJson(entry.models, modelCatalog.metaById, warnings)
       : null;
   const action = manageCodexToml(
     tomlPath,
-    buildCodexConfigToml(entry, built ? catalogPath : undefined),
+    buildCodexConfigToml(entry, built ? catalogPath : undefined, postTurnCompactThresholdPercent),
     entry,
     warnings,
+    postTurnCompactThresholdPercent,
   );
   if (action === "note (customized, left intact)") {
     logger?.info?.(

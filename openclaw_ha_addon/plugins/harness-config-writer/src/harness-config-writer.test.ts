@@ -970,27 +970,33 @@ describe("codex model metadata catalog (γ.1)", () => {
     const kimi = parsed.models[0];
     // Binary-verified (2026-10-13, deployed binary via `codex debug models`):
     // genau DIESE Pflicht-/Metadaten-Felder — Optionals entfallen.
-    expect(kimi).toEqual({
+    expect(kimi).toMatchObject({
       slug: "kimi-k2.7-code:cloud",
       display_name: "kimi-k2.7-code:cloud",
-      description: "custom model (metadata from openclaw.json models.providers)",
-      base_instructions: "",
+      description: "Ollama model",
       supported_reasoning_levels: [],
-      shell_type: "shell_command",
+      shell_type: "unified_exec",
       visibility: "list",
       supported_in_api: true,
       priority: 1,
       support_verbosity: false,
       default_reasoning_summary: "auto",
       web_search_tool_type: "text",
-      truncation_policy: { mode: "bytes", limit: 10000 },
-      supports_parallel_tool_calls: false,
+      truncation_policy: { mode: "tokens", limit: 10000 },
+      supports_parallel_tool_calls: true,
+      supports_search_tool: true,
       experimental_supported_tools: [],
       input_modalities: ["text"],
       context_window: 262144,
       max_context_window: 262144,
       effective_context_window_percent: 95,
+      include_apps_usage_instructions: true,
+      include_plugin_usage_instructions: true,
+      include_skills_usage_instructions: true,
     });
+    expect(typeof kimi.base_instructions).toBe("string");
+    expect((kimi.base_instructions as string).length).toBeGreaterThan(15000);
+    expect((kimi.base_instructions as string)).toContain("kimi-k2.7-code:cloud");
   });
 
   it("no model has metadata → null (no catalog file, no config key)", () => {
@@ -1130,6 +1136,317 @@ describe("codex model metadata catalog (γ.1)", () => {
   });
 });
 
+
+describe("codex model metadata catalog (γ.2)", () => {
+  it("modelPolicy factors compute context_window and auto_compact_token_limit from nominal", () => {
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            ollama: {
+              baseUrl: "http://localhost:11434",
+              modelPolicy: { contextWindowFactor: 0.85, autoCompactFactor: 0.6 },
+              models: [{ id: "llama3", contextWindow: 1000000 }],
+            },
+          },
+        },
+      },
+      [],
+    );
+    const built = buildCodexModelCatalogJson(["llama3"], catalog.metaById);
+    const model = JSON.parse(built!.content).models[0];
+    expect(model.context_window).toBe(850000);
+    expect(model.max_context_window).toBe(1000000);
+    expect(model.auto_compact_token_limit).toBe(600000);
+  });
+
+  it("without factors context_window stays nominal and no auto_compact_token_limit", () => {
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            ollama: {
+              baseUrl: "http://localhost:11434",
+              models: [{ id: "llama3", contextWindow: 1000000 }],
+            },
+          },
+        },
+      },
+      [],
+    );
+    const built = buildCodexModelCatalogJson(["llama3"], catalog.metaById);
+    const model = JSON.parse(built!.content).models[0];
+    expect(model.context_window).toBe(1000000);
+    expect(model.max_context_window).toBe(1000000);
+    expect(model.auto_compact_token_limit).toBeUndefined();
+  });
+
+  it("providerKind openai disables factors even when configured", () => {
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            openai: {
+              baseUrl: "https://api.openai.com/v1",
+              modelPolicy: { contextWindowFactor: 0.85, autoCompactFactor: 0.6, providerKind: "openai" },
+              models: [{ id: "gpt-5", contextWindow: 1000000 }],
+            },
+          },
+        },
+      },
+      [],
+    );
+    const built = buildCodexModelCatalogJson(["gpt-5"], catalog.metaById);
+    const model = JSON.parse(built!.content).models[0];
+    expect(model.context_window).toBe(1000000);
+    expect(model.max_context_window).toBe(1000000);
+    expect(model.auto_compact_token_limit).toBeUndefined();
+  });
+
+  it("model-level factors override provider-level factors", () => {
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            ollama: {
+              baseUrl: "http://localhost:11434",
+              modelPolicy: { contextWindowFactor: 0.85, autoCompactFactor: 0.6 },
+              models: [{ id: "llama3", contextWindow: 1000000, contextWindowFactor: 0.9, autoCompactFactor: 0.5 }],
+            },
+          },
+        },
+      },
+      [],
+    );
+    const built = buildCodexModelCatalogJson(["llama3"], catalog.metaById);
+    const model = JSON.parse(built!.content).models[0];
+    expect(model.context_window).toBe(900000);
+    expect(model.max_context_window).toBe(1000000);
+    expect(model.auto_compact_token_limit).toBe(500000);
+  });
+
+  it("baseInstructions default loads fixture template with model substitution", () => {
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            ollama: {
+              baseUrl: "http://localhost:11434",
+              models: [{ id: "llama3", contextWindow: 128000 }],
+            },
+          },
+        },
+      },
+      [],
+    );
+    const warnings: string[] = [];
+    const built = buildCodexModelCatalogJson(["llama3"], catalog.metaById, warnings);
+    const model = JSON.parse(built!.content).models[0];
+    expect(model.base_instructions).toContain("llama3");
+    expect(model.base_instructions.length).toBeGreaterThan(15000);
+    expect(warnings).toHaveLength(0);
+  });
+
+  it("baseInstructions fixture loads template with model substitution", () => {
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            ollama: {
+              baseUrl: "http://localhost:11434",
+              models: [{ id: "llama3", contextWindow: 128000, baseInstructions: "fixture" }],
+            },
+          },
+        },
+      },
+      [],
+    );
+    const warnings: string[] = [];
+    const built = buildCodexModelCatalogJson(["llama3"], catalog.metaById, warnings);
+    const model = JSON.parse(built!.content).models[0];
+    expect(model.base_instructions).toContain("llama3");
+    expect(warnings).toHaveLength(0);
+  });
+
+  it("baseInstructions explicit string is used verbatim", () => {
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            ollama: {
+              baseUrl: "http://localhost:11434",
+              models: [{ id: "llama3", contextWindow: 128000, baseInstructions: "operator override" }],
+            },
+          },
+        },
+      },
+      [],
+    );
+    const warnings: string[] = [];
+    const built = buildCodexModelCatalogJson(["llama3"], catalog.metaById, warnings);
+    const model = JSON.parse(built!.content).models[0];
+    expect(model.base_instructions).toBe("operator override");
+    expect(warnings).toHaveLength(0);
+  });
+
+  it("baseInstructions none results in empty string", () => {
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            ollama: {
+              baseUrl: "http://localhost:11434",
+              models: [{ id: "llama3", contextWindow: 128000, baseInstructions: "none" }],
+            },
+          },
+        },
+      },
+      [],
+    );
+    const warnings: string[] = [];
+    const built = buildCodexModelCatalogJson(["llama3"], catalog.metaById, warnings);
+    const model = JSON.parse(built!.content).models[0];
+    expect(model.base_instructions).toBe("");
+    expect(warnings).toHaveLength(0);
+  });
+
+  it("thinkingLevels and defaultReasoningLevel map to supported_reasoning_levels", () => {
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            ollama: {
+              baseUrl: "http://localhost:11434",
+              models: [
+                { id: "llama3", contextWindow: 128000, thinkingLevels: ["low", "high"], defaultReasoningLevel: "high" },
+              ],
+            },
+          },
+        },
+      },
+      [],
+    );
+    const built = buildCodexModelCatalogJson(["llama3"], catalog.metaById);
+    const model = JSON.parse(built!.content).models[0];
+    expect(model.supported_reasoning_levels).toEqual([
+      { effort: "low", description: "Faster, less capable reasoning" },
+      { effort: "high", description: "Deeper reasoning for harder problems" },
+    ]);
+    expect(model.default_reasoning_level).toBe("high");
+  });
+
+  it("config.toml includes model_post_turn_compact_threshold_percent before first table", () => {
+    const toml = buildCodexConfigToml({ model: "m", baseUrl: "http://localhost:11434" }, undefined, 70);
+    const lines = toml.split("\n");
+    const compactIdx = lines.findIndex((l) => l.startsWith("model_post_turn_compact_threshold_percent"));
+    const firstTableIdx = lines.findIndex((l) => /^\s*\[/.test(l));
+    expect(compactIdx).toBeGreaterThan(-1);
+    expect(firstTableIdx).toBeGreaterThan(compactIdx);
+  });
+
+  it("inputModalities, priority, description, supportsParallelToolCalls, supportsSearchTool, includeUsageInstructions from meta", () => {
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            ollama: {
+              baseUrl: "http://localhost:11434",
+              models: [
+                {
+                  id: "llama3",
+                  contextWindow: 128000,
+                  inputModalities: ["text", "image"],
+                  priority: -5,
+                  description: "Ollama model",
+                  supportsParallelToolCalls: true,
+                  supportsSearchTool: true,
+                  includeUsageInstructions: true,
+                },
+              ],
+            },
+          },
+        },
+      },
+      [],
+    );
+    const built = buildCodexModelCatalogJson(["llama3"], catalog.metaById);
+    const model = JSON.parse(built!.content).models[0];
+    expect(model.input_modalities).toEqual(["text", "image"]);
+    expect(model.priority).toBe(-5);
+    expect(model.description).toBe("Ollama model");
+    expect(model.supports_parallel_tool_calls).toBe(true);
+    expect(model.supports_search_tool).toBe(true);
+    expect(model.include_apps_usage_instructions).toBe(true);
+    expect(model.include_plugin_usage_instructions).toBe(true);
+    expect(model.include_skills_usage_instructions).toBe(true);
+  });
+
+  it("generated ModelInfo matches expected shape", () => {
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            ollama: {
+              baseUrl: "http://localhost:11434",
+              modelPolicy: { contextWindowFactor: 0.85, autoCompactFactor: 0.6 },
+              models: [
+                {
+                  id: "kimi-k2.7-code:cloud",
+                  contextWindow: 1048576,
+                  maxContextWindow: 1048576,
+                  thinkingLevels: ["low", "high", "max"],
+                  defaultReasoningLevel: "high",
+                  inputModalities: ["text", "image"],
+                  priority: -28,
+                  description: "Ollama model",
+                  supportsParallelToolCalls: true,
+                  supportsSearchTool: true,
+                  includeUsageInstructions: true,
+                  baseInstructions: "fixture",
+                },
+              ],
+            },
+          },
+        },
+      },
+      [],
+    );
+    const built = buildCodexModelCatalogJson(["kimi-k2.7-code:cloud"], catalog.metaById);
+    const model = JSON.parse(built!.content).models[0];
+    expect(model).toMatchObject({
+      slug: "kimi-k2.7-code:cloud",
+      display_name: "kimi-k2.7-code:cloud",
+      description: "Ollama model",
+      supported_reasoning_levels: [
+        { effort: "low", description: "Faster, less capable reasoning" },
+        { effort: "high", description: "Deeper reasoning for harder problems" },
+        { effort: "max", description: "Maximum reasoning depth" },
+      ],
+      default_reasoning_level: "high",
+      shell_type: "unified_exec",
+      visibility: "list",
+      supported_in_api: true,
+      priority: -28,
+      support_verbosity: false,
+      default_reasoning_summary: "auto",
+      web_search_tool_type: "text",
+      truncation_policy: { mode: "tokens", limit: 10000 },
+      supports_parallel_tool_calls: true,
+      supports_search_tool: true,
+      experimental_supported_tools: [],
+      input_modalities: ["text", "image"],
+      context_window: 891290,
+      max_context_window: 1048576,
+      auto_compact_token_limit: 629146,
+      effective_context_window_percent: 95,
+      include_apps_usage_instructions: true,
+      include_plugin_usage_instructions: true,
+      include_skills_usage_instructions: true,
+    });
+    expect(model.base_instructions).toContain("kimi-k2.7-code:cloud");
+  });
+});
+
 describe("opencode writer multi-model", () => {
   it("models map carries default first + all ids + smallModel when differing", () => {
     const cfg = JSON.parse(
@@ -1266,5 +1583,220 @@ describe("resolveHarnessWriterPaths", () => {
 
   it("unresolvable env → null (honest degrade)", () => {
     expect(resolveHarnessWriterPaths({})).toBe(null);
+  });
+});
+
+// γ.2 Amendment-2 Regressionstests (BUG-1..4)
+function countTopLevelKey(toml: string, key: string): number {
+  let inTable = false;
+  let count = 0;
+  for (const raw of toml.split("\n")) {
+    const line = raw.replace(/\r$/, "");
+    if (/^\s*\[/.test(line)) inTable = true;
+    if (!inTable && new RegExp(`^\\s*${key}\\s*=`).test(line)) count++;
+  }
+  return count;
+}
+
+describe("γ.2 Amendment-2 BUG-1..4", () => {
+  it("BUG-1: foreign file WITH existing provider table is left intact (no silent key pollution)", () => {
+    const p = paths();
+    const tomlPath = join(p.codexSourceHome, "config.toml");
+    mkdirSync(join(root, "config", ".codex"), { recursive: true });
+    const foreign = 'model = "gpt-5"\n[model_providers.foo]\nbase_url = "http://x"\n';
+    writeFileSync(tomlPath, foreign, "utf-8");
+    const report = DEPLOY({ harnesses: { codex: OLLAMA } }, p);
+    expect(readText(tomlPath)).toBe(foreign);
+    expect(
+      report.results[0].files.some(
+        (f) => f.path === tomlPath && f.action === "note (customized, left intact)",
+      ),
+    ).toBe(true);
+  });
+
+  it("BUG-1: augment foreign file with only top-level keys inserts compaction key before first managed table", () => {
+    const p = paths();
+    const tomlPath = join(p.codexSourceHome, "config.toml");
+    mkdirSync(join(root, "config", ".codex"), { recursive: true });
+    writeFileSync(tomlPath, 'model = "gpt-5"\nlog_level = "info"\n', "utf-8");
+    DEPLOY({ harnesses: { codex: OLLAMA } }, p);
+    const after = readText(tomlPath);
+    expect(countTopLevelKey(after, "model_post_turn_compact_threshold_percent")).toBe(1);
+    expect(after).toContain("model_post_turn_compact_threshold_percent = 70");
+    expect(after.indexOf("model_post_turn_compact_threshold_percent")).toBeLessThan(
+      after.indexOf("[model_providers."),
+    );
+  });
+
+  it("BUG-1: augment foreign file WITHOUT table still inserts top-level key", () => {
+    const p = paths();
+    const tomlPath = join(p.codexSourceHome, "config.toml");
+    mkdirSync(join(root, "config", ".codex"), { recursive: true });
+    writeFileSync(tomlPath, 'model = "gpt-5"\n', "utf-8");
+    DEPLOY({ harnesses: { codex: OLLAMA } }, p);
+    const after = readText(tomlPath);
+    expect(countTopLevelKey(after, "model_post_turn_compact_threshold_percent")).toBe(1);
+  });
+
+  it("BUG-1: signature file with stale compaction value is replaced", () => {
+    const p = paths();
+    const tomlPath = join(p.codexSourceHome, "config.toml");
+    mkdirSync(join(root, "config", ".codex"), { recursive: true });
+    const stale = buildCodexConfigToml({ ...OLLAMA, model: "m" }, undefined, 60);
+    writeFileSync(tomlPath, stale, "utf-8");
+    DEPLOY({ harnesses: { codex: { ...OLLAMA, model: "m" } } }, p);
+    const after = readText(tomlPath);
+    expect(countTopLevelKey(after, "model_post_turn_compact_threshold_percent")).toBe(1);
+    expect(after).toContain("model_post_turn_compact_threshold_percent = 70");
+  });
+
+  it("BUG-1: augment foreign file that already has compaction key is not duplicated", () => {
+    const p = paths();
+    const tomlPath = join(p.codexSourceHome, "config.toml");
+    mkdirSync(join(root, "config", ".codex"), { recursive: true });
+    writeFileSync(
+      tomlPath,
+      'model = "gpt-5"\nmodel_post_turn_compact_threshold_percent = 50\n',
+      "utf-8",
+    );
+    DEPLOY({ harnesses: { codex: OLLAMA } }, p);
+    const after = readText(tomlPath);
+    expect(countTopLevelKey(after, "model_post_turn_compact_threshold_percent")).toBe(1);
+    expect(after).toContain("model_post_turn_compact_threshold_percent = 50");
+  });
+
+  it("BUG-1: second deploy on augmented file is byte-identical", () => {
+    const p = paths();
+    const tomlPath = join(p.codexSourceHome, "config.toml");
+    mkdirSync(join(root, "config", ".codex"), { recursive: true });
+    writeFileSync(tomlPath, 'model = "gpt-5"\n', "utf-8");
+    DEPLOY({ harnesses: { codex: OLLAMA } }, p);
+    const first = readText(tomlPath);
+    DEPLOY({ harnesses: { codex: OLLAMA } }, p);
+    expect(readText(tomlPath)).toBe(first);
+  });
+
+  it("BUG-2: baseInstructions fixture loads real Codex template with model substitution", () => {
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            ollama: {
+              baseUrl: "http://localhost:11434",
+              models: [{ id: "llama3", contextWindow: 128000 }],
+            },
+          },
+        },
+      },
+      [],
+    );
+    const warnings: string[] = [];
+    const built = buildCodexModelCatalogJson(["llama3"], catalog.metaById, warnings);
+    const model = JSON.parse(built!.content).models[0];
+    expect(model.base_instructions).toContain("llama3");
+    expect((model.base_instructions as string).length).toBeGreaterThan(15000);
+    expect(warnings).toHaveLength(0);
+  });
+
+  it("BUG-3: default_reasoning_level is omitted when defaultReasoningLevel is not explicit", () => {
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            ollama: {
+              baseUrl: "http://localhost:11434",
+              models: [{ id: "llama3", contextWindow: 128000, thinkingLevels: ["low", "high"] }],
+            },
+          },
+        },
+      },
+      [],
+    );
+    const built = buildCodexModelCatalogJson(["llama3"], catalog.metaById);
+    const model = JSON.parse(built!.content).models[0];
+    expect(model.supported_reasoning_levels).toHaveLength(2);
+    expect(model.default_reasoning_level).toBeUndefined();
+  });
+
+  it("BUG-3: warning when entry.thinking is not in supported levels", () => {
+    const p = paths();
+    const tomlPath = join(p.codexSourceHome, "config.toml");
+    mkdirSync(join(root, "config", ".codex"), { recursive: true });
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            ollama: {
+              baseUrl: "http://localhost:11434",
+              models: [
+                {
+                  id: "kimi-k2.7-code:cloud",
+                  contextWindow: 128000,
+                  thinkingLevels: ["low", "high"],
+                },
+              ],
+            },
+          },
+        },
+      },
+      [],
+    );
+    const report = deployHarnessConfigs(
+      {
+        harnesses: {
+          codex: { ...OLLAMA, model: "kimi-k2.7-code:cloud", thinking: "unknown" },
+        },
+      },
+      p,
+      SILENT,
+      catalog,
+    );
+    expect(
+      report.results[0].warnings.some((w) =>
+        w.includes('model_reasoning_effort "unknown" is not in supported reasoning levels'),
+      ),
+    ).toBe(true);
+  });
+
+  it("BUG-4: gpt-oss id with providerKind ollama applies compaction factors", () => {
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            ollama: {
+              baseUrl: "http://localhost:11434",
+              modelPolicy: { providerKind: "ollama", contextWindowFactor: 0.85, autoCompactFactor: 0.6 },
+              models: [{ id: "gpt-oss:120b-cloud", contextWindow: 1048576 }],
+            },
+          },
+        },
+      },
+      [],
+    );
+    const built = buildCodexModelCatalogJson(["gpt-oss:120b-cloud"], catalog.metaById);
+    const model = JSON.parse(built!.content).models[0];
+    expect(model.context_window).toBe(Math.round(1048576 * 0.85));
+    expect(model.auto_compact_token_limit).toBe(Math.round(1048576 * 0.6));
+  });
+
+  it("BUG-4: providerKind openai disables factors even for gpt-prefixed id", () => {
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            openai: {
+              baseUrl: "http://localhost:11434",
+              modelPolicy: { providerKind: "openai", contextWindowFactor: 0.85, autoCompactFactor: 0.6 },
+              models: [{ id: "gpt-oss:120b-cloud", contextWindow: 1048576 }],
+            },
+          },
+        },
+      },
+      [],
+    );
+    const built = buildCodexModelCatalogJson(["gpt-oss:120b-cloud"], catalog.metaById);
+    const model = JSON.parse(built!.content).models[0];
+    expect(model.context_window).toBe(1048576);
+    expect(model.auto_compact_token_limit).toBeUndefined();
   });
 });
