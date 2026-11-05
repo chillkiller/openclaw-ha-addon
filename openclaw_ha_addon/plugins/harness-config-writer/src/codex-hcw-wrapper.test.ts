@@ -404,3 +404,70 @@ describe("setAcpxCodexCommand", () => {
     expect(warnings).toEqual([]);
   });
 });
+
+describe("codex-hcw wrapper adapter-path mirror", () => {
+  // ESM: the mirrored adapter path is spawned as a module by the wrapper.
+  const FAKE_ADAPTER = `import fs from "node:fs";
+const marker = process.argv.find(a => a.startsWith("--marker="));
+if (marker) fs.writeFileSync(marker.slice(9), "spawned", "utf-8");
+`;
+
+  function writeMirror(acpxDir: string, payload: unknown): void {
+    mkdirSync(acpxDir, { recursive: true, mode: 0o700 });
+    writeFileSync(join(acpxDir, "adapter-paths.json"), JSON.stringify(payload));
+  }
+
+  it("prefers the mirrored adapter path over the relative fallback", async () => {
+    const p = paths();
+    const marker = join(root, "marker-mirror.txt");
+    const mirrored = join(root, "mirror", "adapter.mjs");
+    mkdirSync(dirname(mirrored), { recursive: true });
+    writeFileSync(mirrored, FAKE_ADAPTER, { mode: 0o700 });
+    writeMirror(p.acpxDir, { version: 1, adapterPaths: [mirrored], adapterGlobs: [] });
+
+    const res = await runGeneratedWrapper(OLLAMA, p, { extraArgs: [`--marker=${marker}`] });
+    expect(res.exitCode).toBe(0);
+    expect(existsSync(marker)).toBe(true);
+  });
+
+  it("resolves a mirrored adapter glob (plugin capture layout)", async () => {
+    const p = paths();
+    const marker = join(root, "marker-glob.txt");
+    const captured = join(root, "captures", "cap-1", "adapter.mjs");
+    mkdirSync(dirname(captured), { recursive: true });
+    writeFileSync(captured, FAKE_ADAPTER, { mode: 0o700 });
+    writeMirror(p.acpxDir, {
+      version: 1,
+      adapterPaths: [],
+      adapterGlobs: [join(root, "captures", "*", "adapter.mjs")],
+    });
+
+    const res = await runGeneratedWrapper(OLLAMA, p, { extraArgs: [`--marker=${marker}`] });
+    expect(res.exitCode).toBe(0);
+    expect(existsSync(marker)).toBe(true);
+  });
+
+  it("keeps the stable relative adapter when no mirror exists", async () => {
+    const p = paths();
+    const marker = join(root, "marker-stable.txt");
+
+    const res = await runGeneratedWrapper(OLLAMA, p, {
+      createStableAdapter: true,
+      extraArgs: [`--marker=${marker}`],
+    });
+    expect(res.exitCode).toBe(0);
+    expect(existsSync(marker)).toBe(true);
+  });
+
+  it("embeds the mirror contract in the generated script", () => {
+    const script = buildCodexHcwWrapperScript(OLLAMA, paths());
+    expect(script).toContain("adapter-paths.json");
+    expect(script).toContain("adapterPaths");
+    expect(script).toContain("adapterGlobs");
+    const mirrorCall = script.indexOf("resolveMirroredAdapterPath(wrapperDir)");
+    const stableCall = script.indexOf("resolve(wrapperDir, STABLE_ADAPTER_REL_PATH)");
+    expect(mirrorCall).toBeGreaterThan(0);
+    expect(stableCall).toBeGreaterThan(0);
+    expect(mirrorCall).toBeLessThan(stableCall);
+  });
+});

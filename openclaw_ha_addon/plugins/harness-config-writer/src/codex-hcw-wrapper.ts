@@ -51,6 +51,9 @@ export const HCW_AUTH_FILE = "auth.json";
 /** Relativer Pfad vom Wrapper-Verzeichnis zum stabilen acpx-Extension-Install. */
 const STABLE_ADAPTER_REL_PATH = "../extensions/acpx/node_modules/@agentclientprotocol/codex-acp/dist/index.js";
 
+/** Mirror-Datei im Wrapper-Verzeichnis (add-on layout, vom add-on helper geschrieben). */
+export const ADAPTER_MIRROR_FILE = "adapter-paths.json";
+
 export function resolveCodexHcwWrapperPath(paths: HarnessWriterPaths): string {
   return join(paths.acpxDir, HCW_WRAPPER_NAME);
 }
@@ -142,6 +145,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  readdirSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -215,8 +219,78 @@ function writeAuthJson() {
   atomicWrite(AUTH_PATH, content, 0o600);
 }
 
+function matchGlobSegment(pattern, name) {
+  if (pattern === "*") return true;
+  if (pattern.indexOf("*") < 0) return pattern === name;
+  const parts = pattern.split("*");
+  let index = 0;
+  for (const part of parts) {
+    if (part === "") continue;
+    const found = name.indexOf(part, index);
+    if (found < 0) return false;
+    index = found + part.length;
+  }
+  return true;
+}
+
+function expandGlob(pattern) {
+  const segments = pattern.split("/").filter((segment) => segment.length > 0);
+  let current = ["/"];
+  for (const segment of segments) {
+    if (segment.indexOf("*") < 0) {
+      current = current.map((dir) => join(dir, segment));
+      continue;
+    }
+    const next = [];
+    for (const dir of current) {
+      let entries = [];
+      try {
+        entries = readdirSync(dir);
+      } catch {
+        continue;
+      }
+      for (const entry of entries) {
+        if (matchGlobSegment(segment, entry)) next.push(join(dir, entry));
+      }
+    }
+    current = next;
+  }
+  return current;
+}
+
+// Mirror contract (add-on helper writes this file next to the wrapper):
+//   { "version": 1, "adapterPaths": [<abs>...], "adapterGlobs": [<abs glob>...] }
+// Order: concrete paths (first existing wins) -> globs (first match wins) ->
+// stable relative path -> capture path -> npm exec.
+function resolveMirroredAdapterPath(wrapperDir) {
+  try {
+    const raw = readFileSync(resolve(wrapperDir, ${JSON.stringify(ADAPTER_MIRROR_FILE)}), "utf-8");
+    const parsed = JSON.parse(raw);
+    const paths = Array.isArray(parsed?.adapterPaths) ? parsed.adapterPaths : [];
+    for (const candidate of paths) {
+      if (typeof candidate === "string" && candidate.trim() !== "" && existsSync(candidate)) {
+        return candidate;
+      }
+    }
+    const globs = Array.isArray(parsed?.adapterGlobs) ? parsed.adapterGlobs : [];
+    for (const pattern of globs) {
+      if (typeof pattern !== "string" || pattern.indexOf("*") < 0) continue;
+      for (const candidate of expandGlob(pattern)) {
+        if (existsSync(candidate)) return candidate;
+      }
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function resolveAdapterCommand() {
   const wrapperDir = dirname(fileURLToPath(import.meta.url));
+  const mirrored = resolveMirroredAdapterPath(wrapperDir);
+  if (mirrored) {
+    return { command: process.execPath, args: [mirrored] };
+  }
   const stable = resolve(wrapperDir, STABLE_ADAPTER_REL_PATH);
   if (existsSync(stable)) {
     return { command: process.execPath, args: [stable] };
