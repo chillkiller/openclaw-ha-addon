@@ -429,6 +429,8 @@ if (marker) fs.writeFileSync(marker.slice(9), import.meta.url, "utf-8");
     const res = await runGeneratedWrapper(OLLAMA, p, { extraArgs: [`--marker=${marker}`] });
     expect(res.exitCode).toBe(0);
     expect(existsSync(marker)).toBe(true);
+    expect(res.stderr).toContain("adapter source=mirror");
+    expect(res.stderr).toContain(mirrored);
   });
 
   it("resolves a mirrored adapter glob (plugin capture layout)", async () => {
@@ -481,6 +483,7 @@ if (marker) fs.writeFileSync(marker.slice(9), import.meta.url, "utf-8");
     });
     expect(res.exitCode).toBe(0);
     expect(existsSync(marker)).toBe(true);
+    expect(res.stderr).toContain("adapter source=stable");
   });
 
   it("embeds the mirror contract in the generated script", () => {

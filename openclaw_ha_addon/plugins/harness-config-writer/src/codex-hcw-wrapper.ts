@@ -306,14 +306,24 @@ function resolveMirroredAdapterPath(wrapperDir) {
   }
 }
 
+function logAdapterChoice(source, adapterPath) {
+  try {
+    process.stderr.write("[hcw-codex] adapter source=" + source + " path=" + adapterPath + "\\n");
+  } catch {
+    // logging must never break the adapter start
+  }
+}
+
 function resolveAdapterCommand() {
   const wrapperDir = dirname(fileURLToPath(import.meta.url));
   const mirrored = resolveMirroredAdapterPath(wrapperDir);
   if (mirrored) {
+    logAdapterChoice("mirror", mirrored);
     return { command: process.execPath, args: [mirrored] };
   }
   const stable = resolve(wrapperDir, STABLE_ADAPTER_REL_PATH);
   if (existsSync(stable)) {
+    logAdapterChoice("stable", stable);
     return { command: process.execPath, args: [stable] };
   }
   const capture = ${JSON.stringify(captureBinPath)};
