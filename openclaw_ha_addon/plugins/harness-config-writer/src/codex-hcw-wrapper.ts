@@ -148,6 +148,7 @@ import {
   readdirSync,
   renameSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -258,9 +259,27 @@ function expandGlob(pattern) {
   return current;
 }
 
+// Several plugin captures can exist in parallel (one per plugin build), so
+// glob hits are ordered by modification time, newest first - a stale capture
+// must never win over the current one.
+function newestFirst(paths) {
+  const stamped = [];
+  for (const candidate of paths) {
+    let mtime = 0;
+    try {
+      mtime = statSync(candidate).mtimeMs;
+    } catch {
+      mtime = 0;
+    }
+    stamped.push({ path: candidate, mtime });
+  }
+  stamped.sort((a, b) => b.mtime - a.mtime);
+  return stamped.map((entry) => entry.path);
+}
+
 // Mirror contract (add-on helper writes this file next to the wrapper):
 //   { "version": 1, "adapterPaths": [<abs>...], "adapterGlobs": [<abs glob>...] }
-// Order: concrete paths (first existing wins) -> globs (first match wins) ->
+// Order: concrete paths (first existing wins) -> globs (newest match first) ->
 // stable relative path -> capture path -> npm exec.
 function resolveMirroredAdapterPath(wrapperDir) {
   try {
@@ -273,13 +292,15 @@ function resolveMirroredAdapterPath(wrapperDir) {
       }
     }
     const globs = Array.isArray(parsed?.adapterGlobs) ? parsed.adapterGlobs : [];
+    const hits = [];
     for (const pattern of globs) {
       if (typeof pattern !== "string" || pattern.indexOf("*") < 0) continue;
       for (const candidate of expandGlob(pattern)) {
-        if (existsSync(candidate)) return candidate;
+        if (existsSync(candidate)) hits.push(candidate);
       }
     }
-    return null;
+    const ordered = newestFirst(hits);
+    return ordered.length > 0 ? ordered[0] : null;
   } catch {
     return null;
   }

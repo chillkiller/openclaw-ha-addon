@@ -17,6 +17,7 @@ import {
   readFileSync,
   rmSync,
   statSync,
+  utimesSync,
   writeFileSync,
 } from "node:fs";
 import { spawn } from "node:child_process";
@@ -409,7 +410,7 @@ describe("codex-hcw wrapper adapter-path mirror", () => {
   // ESM: the mirrored adapter path is spawned as a module by the wrapper.
   const FAKE_ADAPTER = `import fs from "node:fs";
 const marker = process.argv.find(a => a.startsWith("--marker="));
-if (marker) fs.writeFileSync(marker.slice(9), "spawned", "utf-8");
+if (marker) fs.writeFileSync(marker.slice(9), import.meta.url, "utf-8");
 `;
 
   function writeMirror(acpxDir: string, payload: unknown): void {
@@ -445,6 +446,29 @@ if (marker) fs.writeFileSync(marker.slice(9), "spawned", "utf-8");
     const res = await runGeneratedWrapper(OLLAMA, p, { extraArgs: [`--marker=${marker}`] });
     expect(res.exitCode).toBe(0);
     expect(existsSync(marker)).toBe(true);
+  });
+
+  it("picks the newest capture when several plugin captures exist", async () => {
+    const p = paths();
+    const marker = join(root, "marker-newest.txt");
+    const older = join(root, "captures", "cap-old", "adapter.mjs");
+    const newer = join(root, "captures", "cap-new", "adapter.mjs");
+    mkdirSync(dirname(older), { recursive: true });
+    mkdirSync(dirname(newer), { recursive: true });
+    writeFileSync(older, FAKE_ADAPTER, { mode: 0o700 });
+    writeFileSync(newer, FAKE_ADAPTER, { mode: 0o700 });
+    utimesSync(older, new Date(1000), new Date(1000));
+    utimesSync(newer, new Date(9000), new Date(9000));
+    writeMirror(p.acpxDir, {
+      version: 1,
+      adapterPaths: [],
+      adapterGlobs: [join(root, "captures", "*", "adapter.mjs")],
+    });
+
+    const res = await runGeneratedWrapper(OLLAMA, p, { extraArgs: [`--marker=${marker}`] });
+    expect(res.exitCode).toBe(0);
+    expect(existsSync(marker)).toBe(true);
+    expect(readFileSync(marker, "utf-8")).toContain("cap-new");
   });
 
   it("keeps the stable relative adapter when no mirror exists", async () => {
