@@ -114,6 +114,10 @@ export type HarnessConfigEntry = {
   thinking?: string;
   smallModel?: string;
   trustProjects?: string[];
+  /** Opt-in override for Copilot BYOK wire API (default: responses). */
+  wireApi?: string;
+  /** Opt-in override for Copilot provider type (default: openai when baseUrl set). */
+  providerType?: string;
   /**
    * Verfügbare Modelle (Multi-Model γ): aufgelöste, normalisierte Liste.
    * Präzedenz: explizite Entry-Liste (non-empty) > Auto-Matching über
@@ -148,9 +152,13 @@ export type HarnessWriterPaths = {
   codexSourceHome: string;
   /** Parent/state-dir/opencode — OpenCode global config dir. */
   opencodeGlobalDir: string;
+  /** Parent/state-dir/.claude — Claude Code settings.json (model/env). */
+  claudeSourceHome: string;
+  /** Parent/state-dir/.pi/agent — pi-coding-agent config dir. */
+  piAgentDir: string;
 };
 
-export type HarnessMechanism = "file-codex" | "file-opencode" | "env" | "none";
+export type HarnessMechanism = "file-codex" | "file-opencode" | "file-claude" | "file-pi" | "env" | "none";
 
 export type HarnessDeployFile = {
   path: string;
@@ -199,6 +207,8 @@ export function resolveHarnessWriterPaths(
     acpxDir: `${state}/acpx`,
     codexSourceHome: `${parent}/.codex`,
     opencodeGlobalDir: `${parent}/opencode`,
+    claudeSourceHome: `${parent}/.claude`,
+    piAgentDir: `${parent}/.pi/agent`,
   };
 }
 
@@ -998,7 +1008,7 @@ function envMapping(
  */
 const ENV_MECHANISM: Record<
   string,
-  (entry: HarnessConfigEntry) => EnvMappingResult | null
+  (entry: HarnessConfigEntry, catalog?: ModelCatalog) => EnvMappingResult | null
 > = {
   claude: (e) =>
     envMapping([
@@ -1073,18 +1083,44 @@ const ENV_MECHANISM: Record<
   // "COPILOT_PROVIDER_API_KEY: optional for local providers like Ollama";
   // "GitHub authentication is not required" beim BYOK-Provider). Wire-API
   // "responses" ist der dokumentierte Default-Wert für Ollama-Backends.
-  copilot: (e) => {
+  // Schritt 3 (2026-11-05): belegbare Provider-Variablen ergänzt (TYPE,
+  // MODEL_ID, WIRE_MODEL, MAX_PROMPT_TOKENS); unklare Werte werden nicht
+  // gesetzt, sondern in warnings dokumentiert.
+  copilot: (e, catalog) => {
     const baseUrl = nonEmpty(e.baseUrl);
-    return envMapping([
-      ["COPILOT_PROVIDER_BASE_URL", baseUrl ? withV1Suffix(baseUrl) : undefined],
-      ["COPILOT_PROVIDER_API_KEY", nonEmpty(e.apiKey)],
-      // Jagd-F2 (2026-10-17): WIRE_API bewusst "responses" — der Ollama-
-      // Backend-Endpunkt ist /v1/responses; die Copilot-CLI-Doku nennt
-      // "completions" als Default, das Ollama-Gateway implementiert aber
-      // die Responses-API. Dokumentation statt Config-Flip
-      ["COPILOT_PROVIDER_WIRE_API", baseUrl ? "responses" : undefined],
-      ["COPILOT_MODEL", nonEmpty(e.model)],
-    ]);
+    const providerType = nonEmpty(e.providerType) ?? (baseUrl ? "openai" : undefined);
+    const wireApi = nonEmpty(e.wireApi) ?? (baseUrl ? "responses" : undefined);
+    const modelId = nonEmpty(e.model);
+    const normalizedBaseUrl = normalizeBaseUrlForMatch(baseUrl ?? "");
+    const contextWindow =
+      modelId && catalog?.metaById.get(modelId)?.contextWindow;
+    const maxPromptTokens =
+      typeof contextWindow === "number" && contextWindow > 0
+        ? Math.floor(contextWindow)
+        : undefined;
+    const warnings: string[] = [];
+    if (baseUrl) {
+      warnings.push(
+        "copilot: COPILOT_PROVIDER_AZURE_API_VERSION, _API_KEY_COMMAND, " +
+          "_BEARER_TOKEN, _TRANSPORT, _HEADERS are not set (values not derivable)",
+      );
+    }
+    return envMapping(
+      [
+        ["COPILOT_PROVIDER_BASE_URL", baseUrl ? withV1Suffix(baseUrl) : undefined],
+        ["COPILOT_PROVIDER_API_KEY", nonEmpty(e.apiKey)],
+        ["COPILOT_PROVIDER_TYPE", providerType],
+        ["COPILOT_PROVIDER_MODEL_ID", modelId],
+        ["COPILOT_PROVIDER_WIRE_MODEL", modelId],
+        ["COPILOT_PROVIDER_WIRE_API", wireApi],
+        [
+          "COPILOT_PROVIDER_MAX_PROMPT_TOKENS",
+          maxPromptTokens !== undefined ? String(maxPromptTokens) : undefined,
+        ],
+        ["COPILOT_MODEL", modelId],
+      ],
+      warnings,
+    );
   },
 };
 
@@ -1761,6 +1797,108 @@ export function deployOpencodeHarnessFiles(
   return { warnings, files };
 }
 
+
+// ---------------------------------------------------------------------------
+// Mechanismus A — claude (FILE, zusätzlich zum ENV-Mechanismus)
+// ---------------------------------------------------------------------------
+
+const CLAUDE_EFFORT_LEVELS = new Set(["low", "medium", "high", "xhigh", "max"]);
+
+export function buildClaudeSettingsJson(entry: HarnessConfigEntry, warnings: string[]): string {
+  const model = nonEmpty(entry.model);
+  const baseUrl = nonEmpty(entry.baseUrl);
+  const apiKey = nonEmpty(entry.apiKey);
+  const smallModel = nonEmpty(entry.smallModel) ?? model;
+  const thinking = nonEmpty(entry.thinking);
+  const cfg: Record<string, unknown> = { model };
+  if (thinking) {
+    if (CLAUDE_EFFORT_LEVELS.has(thinking)) {
+      cfg.effort = thinking;
+    } else {
+      warnings.push(
+        `claude: effort level "${thinking}" is not supported (${[...CLAUDE_EFFORT_LEVELS].join("|")}); skipping`,
+      );
+    }
+  }
+  cfg.env = {
+    ANTHROPIC_BASE_URL: baseUrl,
+    ANTHROPIC_AUTH_TOKEN: apiKey,
+    ANTHROPIC_SMALL_FAST_MODEL: smallModel,
+  };
+  return `${JSON.stringify(cfg, null, 2)}\n`;
+}
+
+function manageClaudeSettingsJson(
+  path: string,
+  desired: string,
+  entry: HarnessConfigEntry,
+  warnings: string[],
+): FileAction {
+  const exists = existsSync(path);
+  if (!exists) {
+    atomicWrite(path, desired, 0o600, warnings);
+    return "created";
+  }
+  const current = tryOr(() => readFileSync(path, "utf-8"), null);
+  if (current === desired) {
+    try {
+      if ((statSync(path).mode & 0o777) !== 0o600) chmodSync(path, 0o600);
+    } catch (error) {
+      warnings.push(`could not chmod ${path}: ${briefError(error)}`);
+    }
+    return "unchanged";
+  }
+  if (current === null) {
+    warnings.push(`claude: ${path} unreadable; leaving intact`);
+    return "note (customized, left intact)";
+  }
+  const desiredObj = tryOr(() => JSON.parse(desired) as Record<string, unknown>, null);
+  const currentObj = tryOr(() => JSON.parse(current) as Record<string, unknown>, null);
+  if (desiredObj === null || currentObj === null) {
+    warnings.push(`claude: ${path} is not valid JSON; leaving intact`);
+    return "note (customized, left intact)";
+  }
+  const managedEnvKeys = ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_SMALL_FAST_MODEL"];
+  const currentEnv =
+    typeof currentObj.env === "object" && currentObj.env !== null && !Array.isArray(currentObj.env)
+      ? (currentObj.env as Record<string, unknown>)
+      : {};
+  const mergedEnv: Record<string, unknown> = {};
+  for (const key of managedEnvKeys) {
+    mergedEnv[key] = (desiredObj.env as Record<string, unknown>)[key];
+  }
+  for (const key of Object.keys(currentEnv).sort()) {
+    if (!managedEnvKeys.includes(key)) mergedEnv[key] = currentEnv[key];
+  }
+  const merged: Record<string, unknown> = { model: desiredObj.model, env: mergedEnv };
+  if ("effort" in desiredObj) merged.effort = desiredObj.effort;
+  for (const key of Object.keys(currentObj).sort()) {
+    if (key !== "model" && key !== "effort" && key !== "env") merged[key] = currentObj[key];
+  }
+  const next = `${JSON.stringify(merged, null, 2)}\n`;
+  if (next === current) return "unchanged";
+  atomicWrite(path, next, 0o600, warnings);
+  return "augmented";
+}
+
+export function deployClaudeHarnessFiles(
+  entry: HarnessConfigEntry,
+  paths: HarnessWriterPaths,
+  warnings: string[],
+  logger?: HarnessWriterLogger,
+  harnessId = "claude",
+): { files: HarnessDeployFile[] } {
+  const files: HarnessDeployFile[] = [];
+  const path = join(paths.claudeSourceHome, "settings.json");
+  const desired = buildClaudeSettingsJson(entry, warnings);
+  const action = manageClaudeSettingsJson(path, desired, entry, warnings);
+  if (action !== "unchanged") {
+    logger?.info?.(`[${harnessId}] ${action} ${path} (settings.json)`);
+  }
+  files.push({ path, action });
+  return { files };
+}
+
 // ---------------------------------------------------------------------------
 // Mechanismus B — ENV-Datei pro Harness (harness-env/<id>.env)
 // ---------------------------------------------------------------------------
@@ -1779,14 +1917,42 @@ export function renderEnvFile(vars: Record<string, string>, header: readonly str
   return `${lines.join("\n")}\n`;
 }
 
+/** Parse a previously written env file; returns null if it is not readable/parseable. */
+function readEnvFileVars(path: string): Record<string, string> | null {
+  const current = tryOr(() => readFileSync(path, "utf-8"), null);
+  if (current === null) return null;
+  const vars: Record<string, string> = {};
+  for (const line of current.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("#")) continue;
+    const match = /^([A-Z_][A-Z0-9_]*)='(.*)'\s*$/.exec(trimmed);
+    if (!match) continue;
+    // Reverse renderEnvFile escaping: '"'"' -> '
+    vars[match[1]] = match[2].replace(/'"'"'/g, "'");
+  }
+  return vars;
+}
+
+/** Merge managed vars with foreign keys already present in the file (copilot merge rule). */
+function mergeEnvFileVars(path: string, managed: Record<string, string>): Record<string, string> {
+  const existing = readEnvFileVars(path);
+  if (existing === null) return managed;
+  const foreign: Record<string, string> = {};
+  for (const key of Object.keys(existing).sort()) {
+    if (!(key in managed)) foreign[key] = existing[key];
+  }
+  return { ...managed, ...foreign };
+}
+
 export function deployHarnessEnvFile(
   harnessId: string,
   entry: HarnessConfigEntry,
   paths: HarnessWriterPaths,
   logger?: HarnessWriterLogger,
   modelsComment?: readonly string[],
+  modelCatalog?: ModelCatalog,
 ): { warnings: string[]; file: HarnessDeployFile | null } {
-  const mapping = ENV_MECHANISM[harnessId]?.(entry) ?? null;
+  const mapping = ENV_MECHANISM[harnessId]?.(entry, modelCatalog) ?? null;
   if (!mapping) {
     return { warnings: [], file: null };
   }
@@ -1797,7 +1963,8 @@ export function deployHarnessEnvFile(
     "plugins.entries.acpx.config.agents.<id>.command/args — BRIDGE.md §15.2.",
     "GENERIERT (Phase 3): Hand-Edits werden beim nächsten Boot überschrieben.",
   ];
-  let content = renderEnvFile(mapping.vars, header);
+  const mergedVars = existsSync(path) ? mergeEnvFileVars(path, mapping.vars) : mapping.vars;
+  let content = renderEnvFile(mergedVars, header);
   // Multi-Model γ: ENV-Harnesses ohne Multi-Model-Surface bekommen die
   // verfügbaren Modelle als INFORMATIONAL-Kommentar (cap 25 + more-Zeile).
   if (modelsComment !== undefined && modelsComment.length > 0) {
@@ -1828,6 +1995,209 @@ export function deployHarnessEnvFile(
     }
   }
   return { warnings: mapping.warnings, file: { path, action } };
+}
+
+
+// ---------------------------------------------------------------------------
+// Mechanismus A — pi (FILE)
+// ---------------------------------------------------------------------------
+
+const PI_THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
+
+export function derivePiProviderId(baseUrl: string): string {
+  return deriveProviderId(baseUrl);
+}
+
+export function buildPiModelsJson(
+  entry: HarnessConfigEntry,
+  providerId: string,
+  metaById?: Map<string, ModelMeta>,
+): string {
+  const baseUrl = withV1Suffix(entry.baseUrl ?? "");
+  const modelIds = entry.models && entry.models.length > 0 ? dedupeModelIds(entry.models) : [entry.model];
+  const models = modelIds.map((id) => {
+    const meta = metaById?.get(id);
+    const rec: Record<string, unknown> = {
+      id,
+      reasoning: true,
+      input: ["text"],
+    };
+    if (typeof meta?.contextWindow === "number" && meta.contextWindow > 0) {
+      rec.contextWindow = Math.floor(meta.contextWindow);
+    }
+    return rec;
+  });
+  const cfg = {
+    $schema: "https://pi.dev/schemas/models.schema.json",
+    providers: {
+      [providerId]: {
+        name: `harness-config-writer (${baseUrl})`,
+        baseUrl,
+        api: "openai-completions",
+        apiKey: entry.apiKey ?? "ollama",
+        models,
+      },
+    },
+  };
+  return `${JSON.stringify(cfg, null, 2)}\n`;
+}
+
+export function buildPiSettingsJson(
+  entry: HarnessConfigEntry,
+  providerId: string,
+  warnings: string[],
+): string {
+  const thinking = nonEmpty(entry.thinking);
+  const cfg: Record<string, unknown> = {
+    defaultProvider: providerId,
+    defaultModel: `${providerId}/${entry.model}`,
+    enabledModels: [`${providerId}/*`],
+  };
+  if (thinking) {
+    if (PI_THINKING_LEVELS.has(thinking)) {
+      cfg.defaultThinkingLevel = thinking;
+    } else {
+      warnings.push(
+        `pi: defaultThinkingLevel "${thinking}" is not supported (${[...PI_THINKING_LEVELS].join("|")}); skipping`,
+      );
+    }
+  }
+  return `${JSON.stringify(cfg, null, 2)}\n`;
+}
+
+function managePiModelsJson(
+  path: string,
+  desired: string,
+  providerId: string,
+  warnings: string[],
+): FileAction {
+  const exists = existsSync(path);
+  if (!exists) {
+    atomicWrite(path, desired, 0o600, warnings);
+    return "created";
+  }
+  const current = tryOr(() => readFileSync(path, "utf-8"), null);
+  if (current === desired) {
+    if ((statSync(path).mode & 0o777) !== 0o600) {
+      try {
+        chmodSync(path, 0o600);
+      } catch (error) {
+        warnings.push(`could not chmod ${path}: ${briefError(error)}`);
+      }
+    }
+    return "unchanged";
+  }
+  if (current === null) {
+    warnings.push(`pi: ${path} unreadable; leaving intact`);
+    return "note (customized, left intact)";
+  }
+  const desiredObj = tryOr(() => JSON.parse(desired) as Record<string, unknown>, null);
+  const currentObj = tryOr(() => JSON.parse(current) as Record<string, unknown>, null);
+  if (desiredObj === null || currentObj === null) {
+    warnings.push(`pi: ${path} is not valid JSON; leaving intact`);
+    return "note (customized, left intact)";
+  }
+  const desiredProviders =
+    typeof desiredObj.providers === "object" && desiredObj.providers !== null && !Array.isArray(desiredObj.providers)
+      ? (desiredObj.providers as Record<string, unknown>)
+      : {};
+  const currentProviders =
+    typeof currentObj.providers === "object" && currentObj.providers !== null && !Array.isArray(currentObj.providers)
+      ? (currentObj.providers as Record<string, unknown>)
+      : {};
+  const mergedProviders: Record<string, unknown> = { ...currentProviders };
+  if (providerId in mergedProviders && !deepEqualsWriter(mergedProviders[providerId], desiredProviders[providerId])) {
+    warnings.push(
+      `pi: provider '${providerId}' already present in ${path} with different content; operator wins, not overwriting`,
+    );
+    return "note (customized, left intact)";
+  }
+  mergedProviders[providerId] = desiredProviders[providerId];
+  const merged: Record<string, unknown> = { $schema: desiredObj.$schema, providers: mergedProviders };
+  for (const key of Object.keys(currentObj).sort()) {
+    if (key !== "$schema" && key !== "providers") merged[key] = currentObj[key];
+  }
+  const next = `${JSON.stringify(merged, null, 2)}\n`;
+  if (next === current) return "unchanged";
+  atomicWrite(path, next, 0o600, warnings);
+  return "augmented";
+}
+
+function managePiSettingsJson(
+  path: string,
+  desired: string,
+  warnings: string[],
+): FileAction {
+  const exists = existsSync(path);
+  if (!exists) {
+    atomicWrite(path, desired, 0o600, warnings);
+    return "created";
+  }
+  const current = tryOr(() => readFileSync(path, "utf-8"), null);
+  if (current === desired) {
+    if ((statSync(path).mode & 0o777) !== 0o600) {
+      try {
+        chmodSync(path, 0o600);
+      } catch (error) {
+        warnings.push(`could not chmod ${path}: ${briefError(error)}`);
+      }
+    }
+    return "unchanged";
+  }
+  if (current === null) {
+    warnings.push(`pi: ${path} unreadable; leaving intact`);
+    return "note (customized, left intact)";
+  }
+  const desiredObj = tryOr(() => JSON.parse(desired) as Record<string, unknown>, null);
+  const currentObj = tryOr(() => JSON.parse(current) as Record<string, unknown>, null);
+  if (desiredObj === null || currentObj === null) {
+    warnings.push(`pi: ${path} is not valid JSON; leaving intact`);
+    return "note (customized, left intact)";
+  }
+  const managedKeys = ["defaultProvider", "defaultModel", "defaultThinkingLevel", "enabledModels"];
+  const merged: Record<string, unknown> = {};
+  for (const key of managedKeys) {
+    if (key in desiredObj) merged[key] = desiredObj[key];
+  }
+  for (const key of Object.keys(currentObj).sort()) {
+    if (!managedKeys.includes(key)) merged[key] = currentObj[key];
+  }
+  const next = `${JSON.stringify(merged, null, 2)}\n`;
+  if (next === current) return "unchanged";
+  atomicWrite(path, next, 0o600, warnings);
+  return "augmented";
+}
+
+export function deployPiHarnessFiles(
+  entry: HarnessConfigEntry,
+  paths: HarnessWriterPaths,
+  logger?: HarnessWriterLogger,
+  harnessId = "pi",
+  modelCatalog?: ModelCatalog,
+): { warnings: string[]; files: HarnessDeployFile[] } {
+  const warnings: string[] = [];
+  const files: HarnessDeployFile[] = [];
+  const providerId = derivePiProviderId(entry.baseUrl ?? "");
+  const modelsPath = join(paths.piAgentDir, "models.json");
+  const settingsPath = join(paths.piAgentDir, "settings.json");
+  const desiredModels = buildPiModelsJson(entry, providerId, modelCatalog?.metaById);
+  const desiredSettings = buildPiSettingsJson(entry, providerId, warnings);
+  const modelsAction = managePiModelsJson(modelsPath, desiredModels, providerId, warnings);
+  const settingsAction = managePiSettingsJson(settingsPath, desiredSettings, warnings);
+  if (modelsAction !== "unchanged") {
+    logger?.info?.(`[${harnessId}] ${modelsAction} ${modelsPath} (models.json)`);
+  }
+  if (settingsAction !== "unchanged") {
+    logger?.info?.(`[${harnessId}] ${settingsAction} ${settingsPath} (settings.json)`);
+  }
+  files.push({ path: modelsPath, action: modelsAction });
+  files.push({ path: settingsPath, action: settingsAction });
+  // Addon-Pfad: pi muss seinen Agent-Dir via ENV finden, da im Container HOME
+  // nicht auf /config zeigt. Nur setzen, wenn ein Pfad vorliegt.
+  if (paths.piAgentDir) {
+    process.env.PI_CODING_AGENT_DIR = paths.piAgentDir;
+  }
+  return { warnings, files };
 }
 
 // ---------------------------------------------------------------------------
@@ -1922,7 +2292,7 @@ export function deployHarnessConfigs(
       continue;
     }
     if (harnessId in ENV_MECHANISM) {
-      const { warnings, file } = deployHarnessEnvFile(
+      const envResult = deployHarnessEnvFile(
         harnessId,
         enriched,
         paths,
@@ -1933,13 +2303,42 @@ export function deployHarnessConfigs(
         harnessId !== "claude" && (resolvedModels?.models.length ?? 0) > 0
           ? (resolvedModels?.models ?? [])
           : undefined,
+        modelCatalog,
       );
+      const files: HarnessDeployFile[] = envResult.file ? [envResult.file] : [];
+      const envWarnings = [...envResult.warnings];
+      // Schritt 2: claude bekommt zusätzlich ~/.claude/settings.json.
+      if (harnessId === "claude") {
+        const claudeFiles = deployClaudeHarnessFiles(enriched, paths, envWarnings, logger, harnessId).files;
+        files.push(...claudeFiles);
+      }
       results.push({
         harnessId,
         mechanism: "env",
-        warnings: [...entryWarnings, ...warnings],
+        warnings: [...entryWarnings, ...envWarnings],
         modelsSource: resolvedModels?.source,
-        files: file ? [file] : [],
+        files,
+      });
+      continue;
+    }
+    // Schritt 5: pi FILE-Mechanismus (models.json + settings.json).
+    if (harnessId === "pi") {
+      if (!nonEmpty(entry.baseUrl)) {
+        results.push({
+          harnessId,
+          mechanism: "file-pi",
+          warnings: [...entryWarnings, "baseUrl (non-empty) ist für den FILE-Mechanismus Pflicht — skipt"],
+          files: [],
+        });
+        continue;
+      }
+      const deploy = deployPiHarnessFiles(enriched, paths, logger, harnessId, modelCatalog);
+      results.push({
+        harnessId,
+        mechanism: "file-pi",
+        ...deploy,
+        warnings: [...entryWarnings, ...deploy.warnings],
+        modelsSource: resolvedModels?.source,
       });
       continue;
     }

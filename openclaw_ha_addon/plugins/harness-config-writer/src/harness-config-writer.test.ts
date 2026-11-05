@@ -20,11 +20,15 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  buildClaudeSettingsJson,
   buildCodexConfigToml,
   buildCodexModelCatalogJson,
   buildModelCatalog,
   buildOpencodeConfigJsonc,
+  buildPiModelsJson,
+  buildPiSettingsJson,
   deployHarnessConfigs,
+  derivePiProviderId,
   deriveProviderId,
   normalizeBaseUrlForMatch,
   OPENCODE_LEGACY_PLACEHOLDER,
@@ -51,6 +55,8 @@ function paths(): HarnessWriterPaths {
     acpxDir: join(root, "state", "acpx"),
     codexSourceHome: join(root, "config", ".codex"),
     opencodeGlobalDir: join(root, "config", "opencode"),
+    claudeSourceHome: join(root, "config", ".claude"),
+    piAgentDir: join(root, "config", ".pi", "agent"),
   };
 }
 
@@ -66,7 +72,7 @@ const OLLAMA: HarnessConfigEntry = {
 
 const SILENT = { debug: () => {}, info: () => {}, warn: () => {} };
 
-const DEPLOY = (config: unknown, p = paths()) => deployHarnessConfigs(config, p, SILENT);
+const DEPLOY = (config: unknown, p = paths(), catalog?: ReturnType<typeof buildModelCatalog>) => deployHarnessConfigs(config, p, SILENT, catalog);
 
 // ---------------------------------------------------------------------------
 // String-Helper
@@ -635,6 +641,297 @@ describe("env writer", () => {
   it("sh-safe quoting: values with apostrophes survive sourcing", () => {
     const rendered = renderEnvFile({ ANTHROPIC_MODEL: "it's a 'model'" }, ["h"]);
     expect(rendered).toContain("ANTHROPIC_MODEL='it'\"'\"'s a '\"'\"'model'\"'\"''");
+  });
+});
+
+
+// ---------------------------------------------------------------------------
+// Mechanismus A — claude settings.json (FILE, zusätzlich zum ENV)
+// ---------------------------------------------------------------------------
+
+describe("claude file writer", () => {
+  it("fresh install writes ~/.claude/settings.json with model/effort/env", () => {
+    const p = paths();
+    const report = DEPLOY({
+      harnesses: {
+        claude: {
+          model: "kimi-k2.7-code:cloud",
+          baseUrl: "http://localhost:11434",
+          apiKey: "tok",
+          thinking: "high",
+          smallModel: "glm-5.3-flash:cloud",
+        },
+      },
+    }, p);
+    const settingsPath = join(p.claudeSourceHome, "settings.json");
+    const content = JSON.parse(readText(settingsPath));
+    expect(content.model).toBe("kimi-k2.7-code:cloud");
+    expect(content.effort).toBe("high");
+    expect(content.env).toEqual({
+      ANTHROPIC_BASE_URL: "http://localhost:11434",
+      ANTHROPIC_AUTH_TOKEN: "tok",
+      ANTHROPIC_SMALL_FAST_MODEL: "glm-5.3-flash:cloud",
+    });
+    expect(statSync(settingsPath).mode & 0o777).toBe(0o600);
+    const claudeResult = report.results.find((r) => r.harnessId === "claude");
+    expect(claudeResult?.files.some((f) => f.path === settingsPath && f.action === "created")).toBe(true);
+  });
+
+  it("claude settings: smallModel falls back to model", () => {
+    const json = JSON.parse(buildClaudeSettingsJson({ model: "m", baseUrl: "http://b" }, []));
+    expect(json.env.ANTHROPIC_SMALL_FAST_MODEL).toBe("m");
+  });
+
+  it("claude settings: thinking absent → effort omitted; invalid thinking → warning", () => {
+    const p = paths();
+    const report = DEPLOY({
+      harnesses: {
+        claude: { model: "m", baseUrl: "http://b", apiKey: "k", thinking: "invalid" },
+      },
+    }, p);
+    const content = JSON.parse(readText(join(p.claudeSourceHome, "settings.json")));
+    expect(content.effort).toBeUndefined();
+    expect(report.results.find((r) => r.harnessId === "claude")?.warnings.join(" ")).toContain(
+      'effort level "invalid" is not supported',
+    );
+  });
+
+  it("claude settings: merge preserves foreign keys and other env vars", () => {
+    const p = paths();
+    mkdirSync(p.claudeSourceHome, { recursive: true });
+    const existing = JSON.stringify(
+      { model: "old", permissions: { x: true }, env: { ANTHROPIC_BASE_URL: "http://old", OTHER: "v" } },
+      null,
+      2,
+    );
+    writeFileSync(join(p.claudeSourceHome, "settings.json"), `${existing}\n`, "utf-8");
+    DEPLOY({ harnesses: { claude: { model: "m", baseUrl: "http://b", apiKey: "k" } } }, p);
+    const content = JSON.parse(readText(join(p.claudeSourceHome, "settings.json")));
+    expect(content.model).toBe("m");
+    expect(content.permissions).toEqual({ x: true });
+    expect(content.env.ANTHROPIC_AUTH_TOKEN).toBe("k");
+    expect(content.env.OTHER).toBe("v");
+  });
+
+  it("claude settings: idempotent", () => {
+    const p = paths();
+    DEPLOY({ harnesses: { claude: { model: "m", baseUrl: "http://b", apiKey: "k", thinking: "low" } } }, p);
+    const first = readText(join(p.claudeSourceHome, "settings.json"));
+    const report = DEPLOY({ harnesses: { claude: { model: "m", baseUrl: "http://b", apiKey: "k", thinking: "low" } } }, p);
+    expect(readText(join(p.claudeSourceHome, "settings.json"))).toBe(first);
+    expect(report.results.find((r) => r.harnessId === "claude")?.files.find((f) =>
+      f.path.endsWith("settings.json"),
+    )?.action).toBe("unchanged");
+  });
+
+  it("claude deploy creates both settings.json and the env file", () => {
+    const p = paths();
+    const report = DEPLOY({
+      harnesses: {
+        claude: { model: "m", baseUrl: "http://b", apiKey: "k" },
+      },
+    }, p);
+    const claude = report.results.find((r) => r.harnessId === "claude");
+    expect(claude?.files.map((f) => f.path).sort()).toEqual(
+      [
+        join(p.claudeSourceHome, "settings.json"),
+        join(p.acpxDir, "harness-env", "claude.env"),
+      ].sort(),
+    );
+  });
+
+  it("claude absent → no settings.json is created", () => {
+    const p = paths();
+    DEPLOY({ harnesses: { codex: OLLAMA } }, p);
+    expect(existsSync(p.claudeSourceHome)).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Schritt 3 — copilot: belegbare Provider-Variablen + Merge
+// ---------------------------------------------------------------------------
+
+describe("copilot env extended provider variables", () => {
+  it("writes TYPE, MODEL_ID, WIRE_MODEL, WIRE_API and MAX_PROMPT_TOKENS when derivable", () => {
+    const p = paths();
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            ollama: {
+              baseUrl: "http://localhost:11434",
+              models: [{ id: "cp-model", contextWindow: 128000 }],
+            },
+          },
+        },
+      },
+      [],
+    );
+    const report = DEPLOY(
+      { harnesses: { copilot: { model: "cp-model", baseUrl: "http://localhost:11434", apiKey: "ck" } } },
+      p,
+      catalog,
+    );
+    const env = readText(join(p.acpxDir, "harness-env", "copilot.env"));
+    expect(env).toContain("COPILOT_PROVIDER_TYPE='openai'");
+    expect(env).toContain("COPILOT_PROVIDER_MODEL_ID='cp-model'");
+    expect(env).toContain("COPILOT_PROVIDER_WIRE_MODEL='cp-model'");
+    expect(env).toContain("COPILOT_PROVIDER_WIRE_API='responses'");
+    expect(env).toContain("COPILOT_PROVIDER_MAX_PROMPT_TOKENS='128000'");
+    expect(env).toContain("COPILOT_MODEL='cp-model'");
+    expect(report.results.find((r) => r.harnessId === "copilot")?.warnings.join(" ")).toContain(
+      "COPILOT_PROVIDER_AZURE_API_VERSION",
+    );
+  });
+
+  it("copilot wireApi override via entry.wireApi", () => {
+    const p = paths();
+    DEPLOY({ harnesses: { copilot: { model: "m", baseUrl: "http://b", apiKey: "k", wireApi: "completions" } } }, p);
+    const env = readText(join(p.acpxDir, "harness-env", "copilot.env"));
+    expect(env).toContain("COPILOT_PROVIDER_WIRE_API='completions'");
+  });
+
+  it("copilot env merge preserves foreign keys", () => {
+    const p = paths();
+    mkdirSync(join(p.acpxDir, "harness-env"), { recursive: true });
+    writeFileSync(
+      join(p.acpxDir, "harness-env", "copilot.env"),
+      "# h\nCOPILOT_PROVIDER_API_KEY='old'\nFOREIGN='keep'\n",
+      "utf-8",
+    );
+    DEPLOY({ harnesses: { copilot: { model: "m", baseUrl: "http://b", apiKey: "new" } } }, p);
+    const env = readText(join(p.acpxDir, "harness-env", "copilot.env"));
+    expect(env).toContain("COPILOT_PROVIDER_API_KEY='new'");
+    expect(env).toContain("FOREIGN='keep'");
+  });
+
+  it("copilot env is byte-identical on second deploy", () => {
+    const p = paths();
+    DEPLOY({ harnesses: { copilot: { model: "m", baseUrl: "http://b", apiKey: "k" } } }, p);
+    const first = readText(join(p.acpxDir, "harness-env", "copilot.env"));
+    const report = DEPLOY({ harnesses: { copilot: { model: "m", baseUrl: "http://b", apiKey: "k" } } }, p);
+    expect(readText(join(p.acpxDir, "harness-env", "copilot.env"))).toBe(first);
+    expect(report.results.find((r) => r.harnessId === "copilot")?.files[0]?.action).toBe("unchanged");
+  });
+
+  it("copilot without baseUrl: no provider routing vars, key+model only", () => {
+    const p = paths();
+    DEPLOY({ harnesses: { copilot: { model: "cp", apiKey: "ck" } } }, p);
+    const env = readText(join(p.acpxDir, "harness-env", "copilot.env"));
+    expect(env).toContain("COPILOT_PROVIDER_API_KEY='ck'");
+    expect(env).toContain("COPILOT_MODEL='cp'");
+    expect(env).not.toContain("COPILOT_PROVIDER_TYPE");
+    expect(env).not.toContain("COPILOT_PROVIDER_BASE_URL");
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Schritt 5 — pi file writer (models.json + settings.json)
+// ---------------------------------------------------------------------------
+
+describe("pi file writer", () => {
+  it("fresh install writes models.json + settings.json with enabledModels", () => {
+    const p = paths();
+    const report = DEPLOY(
+      { harnesses: { pi: { model: "kimi-k2.7-code:cloud", baseUrl: "http://localhost:11434", apiKey: "tok" } } },
+      p,
+    );
+    const modelsPath = join(p.piAgentDir, "models.json");
+    const settingsPath = join(p.piAgentDir, "settings.json");
+    const models = JSON.parse(readText(modelsPath));
+    const settings = JSON.parse(readText(settingsPath));
+    expect(models.providers.binding_localhost_11434.baseUrl).toBe("http://localhost:11434/v1");
+    expect(models.providers.binding_localhost_11434.api).toBe("openai-completions");
+    expect(models.providers.binding_localhost_11434.apiKey).toBe("tok");
+    expect(models.providers.binding_localhost_11434.models[0].id).toBe("kimi-k2.7-code:cloud");
+    expect(settings.defaultProvider).toBe("binding_localhost_11434");
+    expect(settings.defaultModel).toBe("binding_localhost_11434/kimi-k2.7-code:cloud");
+    expect(settings.enabledModels).toEqual(["binding_localhost_11434/*"]);
+    expect(statSync(modelsPath).mode & 0o777).toBe(0o600);
+    expect(statSync(settingsPath).mode & 0o777).toBe(0o600);
+    const piResult = report.results.find((r) => r.harnessId === "pi");
+    expect(piResult?.mechanism).toBe("file-pi");
+    expect(piResult?.files.map((f) => f.action)).toEqual(["created", "created"]);
+  });
+
+  it("pi settings: invalid thinking level → warning and key omitted", () => {
+    const p = paths();
+    const report = DEPLOY(
+      { harnesses: { pi: { model: "m", baseUrl: "http://b", apiKey: "k", thinking: "mega" } } },
+      p,
+    );
+    const settings = JSON.parse(readText(join(p.piAgentDir, "settings.json")));
+    expect(settings.defaultThinkingLevel).toBeUndefined();
+    expect(report.results.find((r) => r.harnessId === "pi")?.warnings.join(" ")).toContain(
+      'defaultThinkingLevel "mega" is not supported',
+    );
+  });
+
+  it("pi models.json merge preserves foreign providers", () => {
+    const p = paths();
+    mkdirSync(p.piAgentDir, { recursive: true });
+    const existing = JSON.stringify(
+      { $schema: "https://pi.dev/schemas/models.schema.json", providers: { foreign: { name: "f" } } },
+      null,
+      2,
+    );
+    writeFileSync(join(p.piAgentDir, "models.json"), `${existing}\n`, "utf-8");
+    DEPLOY({ harnesses: { pi: { model: "m", baseUrl: "http://b", apiKey: "k" } } }, p);
+    const models = JSON.parse(readText(join(p.piAgentDir, "models.json")));
+    expect(models.providers.foreign).toEqual({ name: "f" });
+    expect(models.providers.binding_b).toBeDefined();
+  });
+
+  it("pi settings.json merge preserves foreign keys", () => {
+    const p = paths();
+    mkdirSync(p.piAgentDir, { recursive: true });
+    const existing = JSON.stringify({ theme: "dark", enabledModels: ["other/*"] }, null, 2);
+    writeFileSync(join(p.piAgentDir, "settings.json"), `${existing}\n`, "utf-8");
+    DEPLOY({ harnesses: { pi: { model: "m", baseUrl: "http://b", apiKey: "k" } } }, p);
+    const settings = JSON.parse(readText(join(p.piAgentDir, "settings.json")));
+    expect(settings.theme).toBe("dark");
+    expect(settings.enabledModels).toEqual(["binding_b/*"]);
+  });
+
+  it("pi files: idempotent", () => {
+    const p = paths();
+    DEPLOY({ harnesses: { pi: { model: "m", baseUrl: "http://b", apiKey: "k" } } }, p);
+    const firstModels = readText(join(p.piAgentDir, "models.json"));
+    const firstSettings = readText(join(p.piAgentDir, "settings.json"));
+    const report = DEPLOY({ harnesses: { pi: { model: "m", baseUrl: "http://b", apiKey: "k" } } }, p);
+    expect(readText(join(p.piAgentDir, "models.json"))).toBe(firstModels);
+    expect(readText(join(p.piAgentDir, "settings.json"))).toBe(firstSettings);
+    expect(report.results.find((r) => r.harnessId === "pi")?.files.every((f) => f.action === "unchanged")).toBe(true);
+  });
+
+  it("pi without baseUrl → skipped with warning, no files written", () => {
+    const p = paths();
+    const report = DEPLOY({ harnesses: { pi: { model: "m", apiKey: "k" } } }, p);
+    expect(report.results.find((r) => r.harnessId === "pi")?.warnings.join(" ")).toContain("baseUrl");
+    expect(existsSync(p.piAgentDir)).toBe(false);
+  });
+
+  it("pi absent → no .pi directory created", () => {
+    const p = paths();
+    DEPLOY({ harnesses: { codex: OLLAMA } }, p);
+    expect(existsSync(p.piAgentDir)).toBe(false);
+  });
+
+  it("pi: contextWindow from model catalog lands in models.json", () => {
+    const p = paths();
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            ollama: { baseUrl: "http://localhost:11434", models: [{ id: "m", contextWindow: 32000 }] },
+          },
+        },
+      },
+      [],
+    );
+    DEPLOY({ harnesses: { pi: { model: "m", baseUrl: "http://localhost:11434" } } }, p, catalog);
+    const models = JSON.parse(readText(join(p.piAgentDir, "models.json")));
+    expect(models.providers.binding_localhost_11434.models[0].contextWindow).toBe(32000);
   });
 });
 
@@ -1578,6 +1875,8 @@ describe("resolveHarnessWriterPaths", () => {
       acpxDir: "/config/.openclaw/acpx",
       codexSourceHome: "/config/.codex",
       opencodeGlobalDir: "/config/opencode",
+      claudeSourceHome: "/config/.claude",
+      piAgentDir: "/config/.pi/agent",
     });
   });
 
