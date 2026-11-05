@@ -1021,5 +1021,96 @@ class UtilityModelMergeTest(unittest.TestCase):
         self.assertTrue(helper.merge_utility_model())
 
 
+class Gamma2WriterSurfaceTest(unittest.TestCase):
+    """gamma.2 write surface: every file the writer plugin owns must be in
+    the managed set, otherwise disabling the writer leaves files behind (the
+    Codex-HCW auth.json carries the API key)."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.config_dir = Path(self.tmp.name) / "config"
+        self.config_dir.mkdir()
+        patches = (
+            mock.patch.object(helper, "ACPX_DIR", self.config_dir / "acpx"),
+            mock.patch.object(helper, "CODEX_SOURCE_HOME", self.config_dir / ".codex"),
+            mock.patch.object(helper, "OPENCODE_GLOBAL_DIR", self.config_dir / "opencode"),
+            mock.patch.object(helper, "CLAUDE_SOURCE_HOME", self.config_dir / ".claude"),
+            mock.patch.object(helper, "PI_AGENT_DIR", self.config_dir / ".pi" / "agent"),
+        )
+        for patcher in patches:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_managed_files_cover_gamma2_targets(self) -> None:
+        managed = set(helper.harness_writer_managed_files())
+        acpx = self.config_dir / "acpx"
+        for expected in (
+            acpx / "codex-acp-hcw-wrapper.mjs",
+            acpx / "codex-home-hcw" / "auth.json",
+            acpx / "codex-home-hcw" / "config.toml",
+            acpx / "codex-home-hcw" / "model-catalog.json",
+            self.config_dir / ".claude" / "settings.json",
+            self.config_dir / ".pi" / "agent" / "models.json",
+            self.config_dir / ".pi" / "agent" / "settings.json",
+        ):
+            self.assertIn(expected, managed)
+
+    def test_legacy_targets_still_managed(self) -> None:
+        managed = set(helper.harness_writer_managed_files())
+        acpx = self.config_dir / "acpx"
+        for expected in (
+            acpx / "codex-home" / "auth.json",
+            self.config_dir / ".codex" / "config.toml",
+            acpx / "opencode-home" / "opencode.jsonc",
+            self.config_dir / "opencode" / "opencode.jsonc",
+        ):
+            self.assertIn(expected, managed)
+
+
+class AdapterPathsMirrorTest(unittest.TestCase):
+    """The HCW Codex wrapper resolves its ACP adapter via a stable relative
+    path that does not exist in the add-on; the helper publishes the real
+    candidates in <state>/acpx/adapter-paths.json."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.config_dir = Path(self.tmp.name) / "config"
+        self.config_dir.mkdir()
+        patches = (
+            mock.patch.object(helper, "CONFIG_DIR", self.config_dir),
+            mock.patch.object(helper, "ACPX_DIR", self.config_dir / "acpx"),
+            mock.patch.object(helper, "PROJECT_DIR", self.config_dir / "acpx" / ".node_project"),
+        )
+        for patcher in patches:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_mirror_written_with_contract(self) -> None:
+        self.assertTrue(helper.write_adapter_paths_mirror())
+        payload = json.loads(
+            (self.config_dir / "acpx" / "adapter-paths.json").read_text()
+        )
+        self.assertEqual(payload["version"], 1)
+        self.assertIsInstance(payload["adapterPaths"], list)
+        self.assertIsInstance(payload["adapterGlobs"], list)
+        self.assertTrue(payload["adapterGlobs"])
+        self.assertIn("@agentclientprotocol", payload["adapterGlobs"][0])
+
+    def test_existing_candidate_is_published(self) -> None:
+        entry = (
+            self.config_dir / "acpx" / ".node_project" / "node_modules"
+            / "@agentclientprotocol" / "codex-acp" / "dist" / "index.js"
+        )
+        entry.parent.mkdir(parents=True)
+        entry.write_text("// adapter\n")
+        self.assertTrue(helper.write_adapter_paths_mirror())
+        payload = json.loads(
+            (self.config_dir / "acpx" / "adapter-paths.json").read_text()
+        )
+        self.assertIn(str(entry), payload["adapterPaths"])
+
+
 if __name__ == "__main__":
     unittest.main()

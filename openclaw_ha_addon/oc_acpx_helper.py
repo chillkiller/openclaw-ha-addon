@@ -44,6 +44,14 @@ CONFIG_DIR = Path("/config/.openclaw")
 ACPX_DIR = CONFIG_DIR / "acpx"
 WRAPPER_SRC_DIR = Path("/openclaw_ha_addon/acpx")
 PROJECT_DIR = ACPX_DIR / ".node_project"
+# OpenCode's global config dir. Resolution rule (verified 2026-11-05 against
+# the installed opencode binary): `XDG_CONFIG_HOME || homedir()/.config` —
+# XDG FIRST. The add-on exports XDG_CONFIG_HOME=/config and the acpx wrappers
+# hand the full process env to the harness child (oc_provider_env.mjs:
+# resolveProviderEnv -> {...processEnv}), so OpenCode reads
+# $XDG_CONFIG_HOME/opencode = /config/opencode. The harness-config-writer
+# resolves identically (resolveOpencodeGlobalDir: XDG first). Do NOT switch
+# this to /config/.config/opencode — that would break writer/reader agreement.
 OPENCODE_GLOBAL_DIR = Path("/config/opencode")
 # Bundled plugin payloads shipped in the add-on image (copied to
 # CONFIG_DIR/plugins/<name> at start; never copied recursively from the
@@ -81,6 +89,24 @@ ESBUILD_BIN_CANDIDATES = (
 # never clobber (npm-managed or VCS-managed payload added at runtime).
 PRUNED_PLUGIN_DIRS = {"node_modules", ".git", "__pycache__"}
 CODEX_SOURCE_HOME = Path("/config/.codex")
+# γ.2 writer targets (HCW gamma.2, 2026-11-05): the file-based claude/pi
+# harnesses and the Codex-HCW wrapper write outside the acpx dir. The writer
+# paths mirror harness-config-writer.ts resolveHarnessWriterPaths(): the
+# state dir is /config/.openclaw, its parent (/config) carries .claude/ and
+# .pi/agent/. These constants must stay in sync with the plugin — a target
+# missing here is NOT rolled back when the writer is disabled.
+CLAUDE_SOURCE_HOME = Path("/config/.claude")
+PI_AGENT_DIR = Path("/config/.pi/agent")
+CODEX_HCW_WRAPPER_NAME = "codex-acp-hcw-wrapper.mjs"
+# NOTE: the codex-home-hcw dir and the adapter-paths mirror are DERIVED from
+# ACPX_DIR at call time (not import time) — the state dir is a runtime
+# constant of the container, and tests patch ACPX_DIR.
+# Adapter-path mirror: the HCW Codex wrapper resolves its ACP adapter via a
+# stable relative path (<state>/extensions/acpx/...) that does NOT exist in
+# the add-on (the acpx npm project and the plugin capture live elsewhere).
+# The helper publishes the resolved absolute candidates here; the wrapper
+# reads this file first.
+ADAPTER_PATHS_FILE_NAME = "adapter-paths.json"
 
 # npm package versions (bump when the app image is rebuilt)
 OPENCLAW_ACPX_VERSION = os.environ.get("OPENCLAW_ACPX_VERSION", "2026.7.1")
@@ -610,12 +636,65 @@ HARNESS_WRITER_ENV_IDS = ("claude", "copilot", "droid", "gemini", "iflow", "kimi
 HARNESS_WRITER_BACKUP_VERSION = 1
 
 
+def _adapter_entry_rel() -> Path:
+    """Entry point of the @agentclientprotocol/codex-acp ACP adapter."""
+    return Path("node_modules") / "@agentclientprotocol" / "codex-acp" / "dist" / "index.js"
+
+
+def write_adapter_paths_mirror() -> bool:
+    """Publish the ACP adapter paths for the HCW Codex wrapper.
+
+    The wrapper resolves its adapter via a stable relative path
+    (<state>/extensions/acpx/...), which does not exist in the add-on: the
+    acpx npm project and the plugin capture live elsewhere. This mirror hands
+    the wrapper the absolute candidates that DO exist, plus the capture glob
+    (a capture is created per plugin build, so it may appear only later).
+
+    Contract — the wrapper reads this file FIRST, before its stable relative
+    path and before the npm-exec fallback:
+      {"version": 1,
+       "adapterPaths": ["<abs path>/node_modules/@agentclientprotocol/codex-acp/dist/index.js", ...],
+       "adapterGlobs": ["<abs glob>", ...]}
+    """
+    rel = _adapter_entry_rel()
+    candidates = [
+        PROJECT_DIR / rel,
+        CONFIG_DIR / "extensions" / "acpx" / rel,
+    ]
+    paths = [str(p) for p in candidates if p.exists()]
+    capture_glob = str(
+        CONFIG_DIR / "tmp" / "plugin-captures" / "*" / "captures" / "*"
+        / "package-*" / rel
+    )
+    payload: dict[str, Any] = {
+        "version": 1,
+        "adapterPaths": paths,
+        "adapterGlobs": [capture_glob],
+    }
+    try:
+        ACPX_DIR.mkdir(parents=True, exist_ok=True)
+        write_json(ACPX_DIR / ADAPTER_PATHS_FILE_NAME, payload)
+    except OSError as e:
+        log(f"WARN: adapter-paths mirror not written: {e}")
+        return False
+    log(
+        "Adapter-path mirror written: "
+        f"{ACPX_DIR / ADAPTER_PATHS_FILE_NAME} ({len(paths)} concrete path(s), 1 glob)"
+    )
+    return True
+
+
 def harness_writer_managed_files() -> list[Path]:
     """The writer plugin's complete write surface (canonical/managed set).
 
     Mirrors harness-config-writer.ts deploy targets:
       - codex:    <acpx>/codex-home/auth.json + <.codex>/config.toml
                   + <.codex>/model-catalog.json (γ.1 metadata catalog)
+      - codex-hcw (γ.2): <acpx>/codex-acp-hcw-wrapper.mjs
+                  + <acpx>/codex-home-hcw/{auth.json,config.toml,model-catalog.json}
+                  (auth.json carries the API key → secret-bearing)
+      - claude (γ.2): <.claude>/settings.json
+      - pi (γ.2):     <.pi/agent>/models.json + <.pi/agent>/settings.json
       - opencode: <acpx>/opencode-home/opencode.jsonc, <opencode>/opencode.jsonc
                   + legacy <acpx>/opencode-home/config.toml neutralization
       - env:      <acpx>/harness-env/<id>.env for canonical ENV-MECHANISM ids
@@ -627,6 +706,13 @@ def harness_writer_managed_files() -> list[Path]:
         ACPX_DIR / "opencode-home" / "opencode.jsonc",
         OPENCODE_GLOBAL_DIR / "opencode.jsonc",
         ACPX_DIR / "opencode-home" / "config.toml",
+        ACPX_DIR / CODEX_HCW_WRAPPER_NAME,
+        ACPX_DIR / "codex-home-hcw" / "auth.json",
+        ACPX_DIR / "codex-home-hcw" / "config.toml",
+        ACPX_DIR / "codex-home-hcw" / "model-catalog.json",
+        CLAUDE_SOURCE_HOME / "settings.json",
+        PI_AGENT_DIR / "models.json",
+        PI_AGENT_DIR / "settings.json",
     ]
     files.extend(
         ACPX_DIR / "harness-env" / f"{harness_id}.env"
@@ -768,7 +854,13 @@ def restore_harness_writer_targets() -> bool:
         # lexically AND after symlink/`..`-resolution (audit H3).
         allowed_roots = tuple(
             Path(root).resolve()
-            for root in (ACPX_DIR, CODEX_SOURCE_HOME, OPENCODE_GLOBAL_DIR)
+            for root in (
+                ACPX_DIR,
+                CODEX_SOURCE_HOME,
+                OPENCODE_GLOBAL_DIR,
+                CLAUDE_SOURCE_HOME,
+                PI_AGENT_DIR,
+            )
         )
         restored = 0
         removed = 0
@@ -1408,6 +1500,10 @@ def main() -> int:
     deploy_harness_configs()  # retired no-op (kept for the stable surface)
     ok = deploy_plugins()
     ok = install_acpx_npm_project() and ok
+    # The HCW Codex wrapper resolves its ACP adapter via a stable relative
+    # path that does not exist in the add-on; the mirror hands it the real
+    # candidates (written after the npm project exists).
+    ok = write_adapter_paths_mirror() and ok
     ok = patch_openclaw_config() and ok
     # V36.2 (2026-10-13): agents.defaults.utilityModel from the utility_model
     # option — agent entries stay untouched; unset = no write.
