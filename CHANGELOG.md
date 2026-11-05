@@ -21,6 +21,7 @@ OpenClaw 2026.10.10 with working harness configuration for Codex, Claude Code, p
 
 ### Fixed
 
+- **The Codex catalog carries the base prompt for every model again:** the prompt template is part of the bundled plugin now, so it is no longer lost during deployment.
 - **Disabling the harness writer now removes everything it wrote:** the Codex wrapper, its Codex home (including the file that holds the API key), the Claude Code settings and the pi agent configuration are part of the managed file set and are rolled back with the rest.
 - **The Codex ACP adapter no longer downloads a package at runtime:** the add-on publishes the adapter paths that exist in the container, the wrapper reads them first and prefers the newest plugin capture. It logs which adapter it starts and where it came from.
 

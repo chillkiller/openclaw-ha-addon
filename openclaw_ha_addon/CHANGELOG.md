@@ -14,6 +14,11 @@ For a release-facing summary, see the root [CHANGELOG.md](../CHANGELOG.md).
 ### Fixed
 
 - **harness-config-writer copilot BYOK provider variables:** `COPILOT_PROVIDER_TYPE`, `_MODEL_ID`, `_WIRE_MODEL`, `_WIRE_API`, and `_MAX_PROMPT_TOKENS` are now written when the values are derivable from the harness entry and model catalog. Unknown provider-specific values are left unset and reported in warnings instead of guessed. Existing foreign keys in `copilot.env` are preserved on update (merge semantics).
+- **Codex base prompt in the add-on:** the Codex catalog was written without
+  `base_instructions`, so the Codex agent ran without the model-aware base prompt.
+  The plugin ships as a compiled bundle, so the prompt template was not part of it
+  and was lost during the deploy; the add-on now copies it into the plugin
+  directory. Every model in the catalog carries the prompt again.
 - **Helper rolls back every file the writer created:** the managed file set now covers the
   Codex-HCW wrapper, its own Codex home (`auth.json`, `config.toml`, `model-catalog.json`),
   the Claude Code settings file and the pi agent configuration (`models.json`, `settings.json`).
