@@ -3,8 +3,8 @@
  * Step 3). `register` (via src/entry.ts) registers the channel capability
  * itself (`api.registerChannel({ plugin })`); `registerFull` attaches the
  * runtime seam: the SessionBindingAdapter for the internal webchat scope plus
- * the dashboard bridge (BRIDGE.md §4.1) and — Phase 2.20 (F4) — the
- * `inbound_claim` claim hook for plugin-owned binding records (BRIDGE.md §10,
+ * the dashboard bridge (the 4.1 design (dashboard bridge: webchat adapter + hook wiring)) and — Phase 2.20 (F4) — the
+ * `inbound_claim` claim hook for plugin-owned binding records (the 10 design (reply-delivery claim (agent-side claim hook)),
  * src/reply-claim.ts).
  *
  * Bundle shape (Forensik 2026-10-12, backlog-binding): the deployed record must
@@ -152,7 +152,7 @@ function configuredBindingSpecFromHarnessSpec(
  *
  * Lifecycle: the plugin owns the session's process lifetime; idle-timeout and
  * runtime retirement follow the host's normal ACP session policy (see
- * BRIDGE.md §11). `harnessSessions` stays the manual override (higher cascade
+ * the 11 design (auto-provisioning + workspace convention (phase 2.21))). `harnessSessions` stays the manual override (higher cascade
  * priority) and is no longer required.
  */
 function registerHarnessAutoProvision(api: OpenClawPluginApi): void {
@@ -201,7 +201,7 @@ function registerHarnessAutoProvision(api: OpenClawPluginApi): void {
 }
 
 /**
- * BRIDGE §19 (v0.7.13.22-Paket a/c): the plugin-sdk session-store surface
+ * the 19 design (claim-path conversation settle) (v0.7.13.22-Paket a/c): the plugin-sdk session-store surface
  * wired into the claim handler's settlement + the boot sweep. getSessionEntry/
  * patchSessionEntry/listSessionEntries are official plugin-sdk
  * session-store-runtime exports (not trust-gated; the plugin is bundled-root
@@ -222,7 +222,7 @@ function createSessionStoreApi(
 }
 
 /**
- * BRIDGE §20 (v0.7.13.22, "Flüchtigkeit"-Root): the host delivers a claim's
+ * the 20 design (claim-reply transcript mirror) (v0.7.13.22, "Flüchtigkeit"-Root): the host delivers a claim's
  * terminal reply to the origin conversation but NEVER transcribes it there —
  * the only final-transcript mirror write lives in the agent-run finalization
  * (dispatch-from-config:800/848); `finishPluginBindingDispatch` bookkeeps only
@@ -283,7 +283,7 @@ function createClaimReplyMirror(
 }
 
 /**
- * §25 (GaRoN 2026-10-16): `/reset` in a bound conversation resets only the
+ * 25 (dual-reset driver: work reset + conversation reset legs) (GaRoN 2026-10-16): `/reset` in a bound conversation resets only the
  * acp work session — the host's bound-command path returns before the
  * conversation is ever touched, so the visible chat survives (the "reset
  * shows no effect" story). This registers the plugin's dual-reset stateful
@@ -296,7 +296,7 @@ function createClaimReplyMirror(
  * host-created conversation rows, LIVE-verified 2026-10-16).
  * Best-effort second leg — failures log, the work reset result stands.
  * Rationale + registry mechanics: src/dual-reset-driver.ts header + BRIDGE.md
- * §25.
+ * 25 (dual-reset driver: work reset + conversation reset legs).
  */
 function registerDualResetDriverSeam(api: OpenClawPluginApi): void {
   registerDualResetDriver(
@@ -313,7 +313,7 @@ function registerDualResetDriverSeam(api: OpenClawPluginApi): void {
 }
 
 /**
- * BRIDGE §19c (v0.7.13.22-Paket c): settles the pre-boot stuck entries the
+ * the 19c design (claim settle orphan binding) (v0.7.13.22-Paket c): settles the pre-boot stuck entries the
  * host's own main-session recovery leaves marked with an unsatisfiable
  * restart-recovery delivery for our claimed conversations (99d8daf5… live-DB
  * proof: the Denken-Spinner survives every boot otherwise). Runs at
@@ -328,7 +328,7 @@ function registerStuckSessionSweep(api: OpenClawPluginApi, sessionStore: Session
   // instead." A registry-named registerHook call is contract-legal but INERT
   // for this event. (registerHook here was also the nameless-opts sync-throw
   // shape that dropped the whole plugin on every 0.7.13.22 boot — forensics
-  // §9.) api.on fixes the dispatch AND needs no registry name (typed-hook
+  // 9 (harnessSessions manual override (phase 2.18b)).) api.on fixes the dispatch AND needs no registry name (typed-hook
   // runner contract, same surface as the inbound_claim claim hook below).
   if (typeof (api as { on?: unknown }).on !== "function") {
     api.logger?.warn?.(
@@ -340,7 +340,7 @@ function registerStuckSessionSweep(api: OpenClawPluginApi, sessionStore: Session
     hookName: string,
     handler: (event: unknown, ctx: unknown) => Promise<void>,
   ) => void)("gateway_start", async () => {
-    // §23 (.31) boot-heal resilience: agent databases keep inspecting in the
+    // 23 (main-session reset bug: native-mode un-archive) (.31) boot-heal resilience: agent databases keep inspecting in the
     // background after the gateway's 5-second foreground startup budget
     // elapses and the session APIs can stay UNAVAILABLE for minutes
     // (LIVE 2026-10-15: the single-shot sweep ran the moment gateway_start
@@ -374,7 +374,7 @@ function registerStuckSessionSweep(api: OpenClawPluginApi, sessionStore: Session
             `[${CHANNEL_ID}] boot sweep archived ${result.archived.length} harness clone(s) (γ hidden from standard listings): ${result.archived.join(", ")}`,
           );
         }
-        // §23 native-mode un-archive heal: the claim path's per-dispatch
+        // 23 (main-session reset bug: native-mode un-archive) native-mode un-archive heal: the claim path's per-dispatch
         // unarchiveHiddenClone never fires in native dispatch mode (zero
         // inbound_claim events, LIVE 2026-10-14), so legacy γ stamps would keep
         // refusing dispatch/`/reset` on archived binding targets. gateway_start
@@ -519,7 +519,7 @@ export default defineBundledChannelCompatibleEntry({
     // synthesized (adapter registration + bridge below) — the host's
     // isPluginOwnedBindingMetadata predicate reads metadata.pluginRoot.
     setDashboardBindingPluginRoot(api.rootDir);
-    // Weg B (BRIDGE.md §21): resolve the dispatch mode from live config BEFORE
+    // Weg B (the 21 design (native dispatch via the dispatchMode config gate)): resolve the dispatch mode from live config BEFORE
     // any record producer runs — "native" makes every record path generic and
     // stands the claim hook down; "claim" (default) keeps the Weg-A status quo.
     // A restart re-registers and re-reads config, so a mode flip applies on the
@@ -553,11 +553,11 @@ export default defineBundledChannelCompatibleEntry({
     // documented agent-default cwd ladder.
     registerOriginWorkspaceReader(api);
     registerDashboardBindingRuntime(api);
-    // §25 AFTER the binding runtime: the dual-reset driver's resolve reads the
+    // 25 (dual-reset driver: work reset + conversation reset legs) AFTER the binding runtime: the dual-reset driver's resolve reads the
     // adapter (getDashboardBindingAdapter) that the line above populates.
     registerDualResetDriverSeam(api);
     registerHarnessReplyClaimHook(api);
-    // BRIDGE §19: settlement infra — sweep hooks gateway_start; the claim
+    // the 19 design (claim-path conversation settle): settlement infra — sweep hooks gateway_start; the claim
     // handler receives the same store surface for per-turn settlement + the
     // V39 spawnedBy stamp.
     registerStuckSessionSweep(api, createSessionStoreApi(api));
@@ -568,14 +568,14 @@ export default defineBundledChannelCompatibleEntry({
     // plugin itself (config option plugins.entries['acp-dashboard-binding']
     // .config.autoProvision, default true; harnessSessions = manual override).
     registerHarnessAutoProvision(api);
-    // BRIDGE.md §4.1: the bridge after registerChannel. It registers its own
+    // the 4.1 design (dashboard bridge: webchat adapter + hook wiring): the bridge after registerChannel. It registers its own
     // webchat adapter only while "webchat:default" is still free — channel.ts
     // just registered ours, so the bridge lands in hooks-only mode (it never
-    // double-registers; the adapter keeps Turn-1 synthesis via §4.2
+    // double-registers; the adapter keeps Turn-1 synthesis via 4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19))
     // row-miss delegation). Creation stays un-awaited because the host calls
     // registerFull synchronously (core-*.mjs: registerFull?.(api)).
-    // Phase 2.19 (BRIDGE.md §4.2a): the bridge-not-yet-active window is SAFE —
-    // the adapter's §4.2 delegation passes a config-driven roster, so Turn-1
+    // Phase 2.19 (the 4.2a design (phase 2.19 turn-1 race fix)): the bridge-not-yet-active window is SAFE —
+    // the adapter's 4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19)) delegation passes a config-driven roster, so Turn-1
     // resolves answer from the live config (harnessSessions included); the
     // roster/hydration flip to the active bridge cannot change the record.
     let bridge: DashboardBridgeHandle | undefined;

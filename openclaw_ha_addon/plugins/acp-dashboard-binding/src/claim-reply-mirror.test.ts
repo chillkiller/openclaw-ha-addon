@@ -1,5 +1,5 @@
 /**
- * §20 unit tests: claim-reply transcript mirror (see claim-reply-mirror.ts
+ * 20 (claim-reply transcript mirror) unit tests: claim-reply transcript mirror (see claim-reply-mirror.ts
  * for the live-DB evidence the behavior rests on). The live module is
  * dependency-injected (`appendAssistantMirror`) so vitest never touches the
  * host loader; index.ts wires the real dynamic import.
@@ -34,7 +34,7 @@ function sessionStoreWith(sessionId: string) {
   };
 }
 
-describe("BRIDGE §20 — mirrorClaimReplyToOriginTranscript", () => {
+describe("the 20 design (claim-reply transcript mirror) — mirrorClaimReplyToOriginTranscript", () => {
   it("appends the reply with the claim idempotency key + delivery mirror marker", async () => {
     const { append, calls } = stubAppend(async () => ({ ok: true, messageId: "m1" }));
     const done = await mirrorClaimReplyToOriginTranscript({

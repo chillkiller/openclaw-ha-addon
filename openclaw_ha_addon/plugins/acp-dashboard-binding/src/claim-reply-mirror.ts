@@ -1,5 +1,5 @@
 /**
- * Claim-reply transcript mirror (BRIDGE §20 — v0.7.13.22, 2026-10-13).
+ * Claim-reply transcript mirror (the 20 design (claim-reply transcript mirror) — v0.7.13.22, 2026-10-13).
  *
  * Live-proven gap: the host delivers a claim's terminal reply to the UI
  * (`deliverBindingPayload(reply, "terminal", transcriptOwner)`,
@@ -26,7 +26,7 @@
  * deliveryMirror-lookup re-finds its own append on retries, and the host's
  * claim path has no competing writer — verified above, so no double record).
  * Best-effort by design: a failed mirror NEVER fails the claim/reply — it only
- * degrades re-render persistence to the pre-§20 behavior, and the append
+ * degrades re-render persistence to the pre-20 (claim-reply transcript mirror) behavior, and the append
  * returns ok:false with a reason (missing active session, session-rebound) we
  * log at debug.
  */
@@ -89,7 +89,7 @@ export const claimReplyMirrorIdempotencyKey = (claimRunId: string): string =>
 /**
  * Mirrors a claim reply into the origin conversation transcript. Returns true
  * when the append reported ok (or was a dedupe hit), false when it skipped —
- * and NEVER throws: the mirror is strictly best-effort (§20 contract).
+ * and NEVER throws: the mirror is strictly best-effort (20 (claim-reply transcript mirror) contract).
  */
 export async function mirrorClaimReplyToOriginTranscript(
   params: ClaimReplyMirrorParams,

@@ -80,7 +80,7 @@ Modus einstellen unter **Einstellungen → Apps → OpenClaw Assistant → Konfi
 
 ## 🔌 Home-Assistant-Integration
 
-- **Assist-Pipeline** — `enable_openai_api` aktivieren und den OpenAI-kompatiblen Endpoint (`/v1/chat/completions`, Gateway-Port `18789`) als Konversationsagenten nutzen. Schritt für Schritt: [DOCS.md § Assist](DOCS.md#6c-assist-pipeline-integration-openai-api)
+- **Assist-Pipeline** — `enable_openai_api` aktivieren und den OpenAI-kompatiblen Endpoint (`/v1/chat/completions`, Gateway-Port `18789`) als Konversationsagenten nutzen. Schritt für Schritt: [DOCS.md: Assist](DOCS.md#6c-assist-pipeline-integration-openai-api)
 - **Native Integration** — die Drittanbieter-[OpenClaw-Integration für Home Assistant](https://github.com/techartdev/OpenClawHomeAssistantIntegration) ergänzt Auto-Discovery, Chat-Karte und Sprachmodus. Sie ist ein eigenständiges Projekt; Installation über dessen eigenes Repository.
 - **MCP** — mit einem langlebigen HA-Token aktiviert `auto_configure_mcp` die Registrierung von Home Assistant als MCP-Server und gibt OpenClaw direkte Entitätskontrolle
 

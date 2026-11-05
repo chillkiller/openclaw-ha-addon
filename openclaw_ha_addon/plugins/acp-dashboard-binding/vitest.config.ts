@@ -1,4 +1,4 @@
-// §9.2 (register-crash forensics 2026-10-13): the registerFull contract test
+// 9.2 (why boundAgents win over exclusions) (register-crash forensics 2026-10-13): the registerFull contract test
 // imports index.ts, whose static plugin-sdk imports must resolve in vitest.
 // The pinned gateway is aliased read-only from the image's /usr/lib install —
 // same source of truth tsconfig.check.json uses for its `paths`.

@@ -24,10 +24,10 @@
  *   When no plugin root is registered yet (e.g. bare unit tests),
  *   `buildPluginOwnedBindingMetadata()` returns null and the record stays
  *   retarget-based (legacy Phase-2.18b behavior).
- * - Weg B (BRIDGE.md §21, `config.dispatchMode: "native"`): ownership markers
+ * - Weg B (the 21 design (native dispatch via the dispatchMode config gate), `config.dispatchMode: "native"`): ownership markers
  *   are NOT emitted (`buildPluginOwnedBindingMetadata` null) AND the adapter
  *   projects every record it returns through
- *   `stripPluginOwnedBindingMetadata` — also for §4.2 bridge rows persisted in
+ *   `stripPluginOwnedBindingMetadata` — also for 4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19)) bridge rows persisted in
  *   the claim-era shape. The host's native dispatch then runs the turn in the
  *   target ACP session (conversation == ACP session; the Control-UI reads the
  *   target transcript; `/reset` rides the harness). The claim path stays in the
@@ -47,7 +47,7 @@
  * session key when one is configured; unset/invalid falls back to the
  * synthetic key (documented: synthetic targets need a host-side
  * /acp-spawn-initialization that does not exist — Weg B/upstream issue).
- * The bridge's §4.2 row-miss path shares this derivation through the roster
+ * The bridge's 4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19)) row-miss path shares this derivation through the roster
  * (dashboard-bridge resolveDashboardBindingDecision), so both halves agree
  * on one target per conversation.
  *
@@ -90,7 +90,7 @@ import {
   optionalTrim,
 } from "./agent-map.js";
 
-// BRIDGE.md §4.2: row-miss delegation to the bridge's write-free resolvers.
+// the 4.2 design (turn-1 race fix via the config-driven delegation roster (phase 2.19)): row-miss delegation to the bridge's write-free resolvers.
 // resolveDashboardBindingAsync (sync mirror resolveDashboardBinding) consults
 // the ACTIVE bridge's row store/tombstones and otherwise answers with the
 // bridge's Turn-1 synthesis — deterministic, without any write access.
@@ -98,7 +98,7 @@ import {
 // roster (createConfigHarnessRoster(options.getConfig?.())) so the
 // bridge-not-yet-active window (bridge startup is awaited asynchronously
 // behind registerFull, index.ts) synthesizes from the LIVE config instead of
-// an unbacked roster — see BRIDGE.md §4.2a.
+// an unbacked roster — see the 4.2a design (phase 2.19 turn-1 race fix).
 import {
   createConfigHarnessRoster,
   resolveDashboardBinding,
@@ -292,7 +292,7 @@ function deriveBindingRecord(ref: BindingConversationRef, options: DashboardBind
 /**
  * Public derive mirror for reply-claim.ts: the adapter's own Turn-1 synthesis
  * against a caller-provided config (same cascade the adapter resolves with on
- * a §4.2/bridge row-miss).
+ * a 4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19))/bridge row-miss).
  */
 export function deriveDashboardBindingRecord(
   ref: BindingConversationRef,
@@ -304,13 +304,13 @@ export function deriveDashboardBindingRecord(
 /**
  * Weg-B native projection: demotes a record to the generic dispatch shape by
  * stripping the ownership fields from metadata — applied at EVERY adapter
- * return boundary so even §4.2 rows persisted in the claim-era shape (and
+ * return boundary so even 4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19)) rows persisted in the claim-era shape (and
  * explicit binds) answer generically while `dispatchMode: "native"` is set.
  * Deterministic per resolve: the host's resolve → touchAsync → re-resolve
  * stability comparison sees the identical projection both times.
  */
 /**
- * §24 native readiness join at the async return boundaries: a null record
+ * 24 (init race: native readiness join) native readiness join at the async return boundaries: a null record
  * (no binding for the conversation) has no target to wait for; anything else
  * joins its in-flight provision, bounded (agent-map awaitPending...). Record
  * content NEVER changes — the host's resolve → touchAsync → re-resolve
@@ -332,7 +332,7 @@ function projectRecordForDispatchMode(record: DashboardBindingRecord | null): Da
   return { ...record, metadata: stripPluginOwnedBindingMetadata(record.metadata) };
 }
 
-/** Ref projection for the §4.2 delegation into dashboard-bridge. */
+/** Ref projection for the 4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19)) delegation into dashboard-bridge. */
 function toBridgeRef(ref: {
   channel: string;
   accountId: string;
@@ -348,7 +348,7 @@ function toBridgeRef(ref: {
 }
 
 /**
- * §4.2 row-miss consult of the bridge (sync mirror): returns the bridge's
+ * 4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19)) row-miss consult of the bridge (sync mirror): returns the bridge's
  * row/tombstone/synthesis answer — or null (which falls through to our own
  * Turn-1 synthesis so the record exists in bridge-less setups, too).
  */
@@ -387,7 +387,7 @@ export function createDashboardBindingAdapter(options: DashboardBindingAdapterOp
   const ownChannel = normalizeChannelId(options.channel) || BINDING_CHANNEL;
   const ownAccountId = normalizeAccountId(options.accountId) || BINDING_ACCOUNT_ID;
 
-  // §25 reverse-lookup cache: bridged/derived records are computed on the fly
+  // 25 (dual-reset driver: work reset + conversation reset legs) reverse-lookup cache: bridged/derived records are computed on the fly
   // and never stored, so `listBySession` — the targetSessionKey → conversation
   // reverse lookup the dual-reset driver's resolution claims through — could
   // only ever see explicit rows (in-memory MVP binds) and came up EMPTY for
@@ -427,7 +427,7 @@ export function createDashboardBindingAdapter(options: DashboardBindingAdapterOp
     // 1. Prefer an explicit bound record host-side (/acp spawn --bind here …).
     const bound = findExplicit(channel, accountId, conversationId);
     if (bound) return projectRecordForDispatchMode(bound);
-    // 2. BRIDGE.md §4.2 row-miss delegation: consult the bridge's write-free,
+    // 2. the 4.2 design (turn-1 race fix via the config-driven delegation roster (phase 2.19)) row-miss delegation: consult the bridge's write-free,
     //    deterministic resolver (its rows/tombstones, else its Turn-1
     //    synthesis) so both halves agree on one record per conversation.
     const bridged = bridgedRecord(
@@ -504,7 +504,7 @@ export function createDashboardBindingAdapter(options: DashboardBindingAdapterOp
         .filter((record) => record.targetSessionKey === key)
         .map((record) => projectRecordForDispatchMode(record))
         .filter((record): record is DashboardBindingRecord => record !== null);
-      // §25: derived/bridged records are not stored — answer from the cascade
+      // 25 (dual-reset driver: work reset + conversation reset legs): derived/bridged records are not stored — answer from the cascade
       // reverse-lookup cache (records were projected at note time; re-project
       // so a dispatch-mode change since then still applies).
       const cached = derivedByTarget.get(key);
@@ -517,7 +517,7 @@ export function createDashboardBindingAdapter(options: DashboardBindingAdapterOp
 
     // Pure, deterministic — safe to expose synchronously. The host's
     // resolveByConversationAsync prefers the async variant. Both mirrors share
-    // one cascade (explicit row → §4.2 bridge consult → Turn-1 synthesis), so
+    // one cascade (explicit row → 4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19)) bridge consult → Turn-1 synthesis), so
     // the host's resolve → touchAsync → re-resolve stability check sees the
     // identical record through either path.
     resolveByConversation: resolve,
@@ -531,7 +531,7 @@ export function createDashboardBindingAdapter(options: DashboardBindingAdapterOp
       const bound = findExplicit(channel, accountId, conversationId);
       if (bound)
         return await awaitNativeDispatchReadiness(projectRecordForDispatchMode(bound));
-      // §4.2: the mid-cascade row-miss delegation hop goes through the
+      // 4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19)): the mid-cascade row-miss delegation hop goes through the
       // bridge's EXPORTED async resolver (same deterministic core as
       // resolveDashboardBinding, mirrored by the sync variant above).
       // Phase 2.19: config-driven roster so the bridge-not-yet-active window

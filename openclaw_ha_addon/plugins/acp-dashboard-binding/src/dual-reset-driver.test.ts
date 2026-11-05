@@ -1,5 +1,5 @@
 /**
- * §25 dual-reset driver tests (GaRoN 2026-10-16, "Befehle in der
+ * 25 (dual-reset driver: work reset + conversation reset legs) dual-reset driver tests (GaRoN 2026-10-16, "Befehle in der
  * Verbindungs-Session"). The driver must (a) claim ONLY plugin-owned binding
  * keys while the builtin acp reset leg exists, (b) delegate the work-session
  * reset verbatim to the builtin, and (c) add the origin-conversation reset as
@@ -77,7 +77,7 @@ function makeServices(overrides?: Partial<DualResetDriverServices>): DualResetDr
   };
 }
 
-describe("§25 dual-reset driver — resolveTargetBySessionKey", () => {
+describe("25 (dual-reset driver: work reset + conversation reset legs) dual-reset driver — resolveTargetBySessionKey", () => {
   it("claims a plugin-owned binding key and carries the origin conversation key", async () => {
     const driver = createDualResetDriver(makeServices());
     const target = await driver.resolveTargetBySessionKey!({
@@ -147,7 +147,7 @@ describe("§25 dual-reset driver — resolveTargetBySessionKey", () => {
   });
 });
 
-describe("§25 dual-reset driver — resetInPlace", () => {
+describe("25 (dual-reset driver: work reset + conversation reset legs) dual-reset driver — resetInPlace", () => {
   it("delegates BOTH legs to the builtin: work verbatim + conversation with its own key", async () => {
     // Leg 2 must be a host-side builtin delegation, NOT a plugin gateway RPC:
     // the trusted-plugin dispatch stamps authorizedPluginId and the
@@ -326,7 +326,7 @@ describe("§25 dual-reset driver — resetInPlace", () => {
   });
 });
 
-describe("§25 dual-reset driver — registration ordering", () => {
+describe("25 (dual-reset driver: work reset + conversation reset legs) dual-reset driver — registration ordering", () => {
   it("registers into the globalThis symbol map and re-appends a pre-existing builtin after ours", () => {
     const registry: DriverRegistryMap = new Map([["acp", builtinDriver()]]);
     const services = makeServices({ resolveDriverRegistry: () => registry });
@@ -405,7 +405,7 @@ describe("§25 dual-reset driver — registration ordering", () => {
   });
 });
 
-describe("§25 integration — driver claims through the REAL binding adapter", () => {
+describe("25 (dual-reset driver: work reset + conversation reset legs) integration — driver claims through the REAL binding adapter", () => {
   // The 2026-10-16 live /reset test failure lived exactly in this seam: the
   // derived dashboard record was never stored, so the adapter's listBySession
   // reversed nothing and the driver deferred to the builtin (work-session-only

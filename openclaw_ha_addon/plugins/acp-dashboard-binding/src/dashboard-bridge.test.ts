@@ -548,7 +548,7 @@ describe("dashboard-bridge: binding-adapter delegation point", () => {
   });
 });
 
-describe("dashboard-bridge: §4.2 write-free delegation resolvers", () => {
+describe("dashboard-bridge: 4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19)) write-free delegation resolvers", () => {
   it("synthesizes the bridge record deterministically for a config-backed roster", () => {
     const ref = {
       channel: "webchat",
@@ -591,7 +591,7 @@ describe("dashboard-bridge: §4.2 write-free delegation resolvers", () => {
 
   it("Phase 2.19: the context roster is a FALLBACK — an active bridge keeps roster precedence", async () => {
     // Bridge-backed config WITHOUT harnessSessions: the active bridge's roster
-    // answers §4.2-consistently even when the adapter supplies a richer one.
+    // answers 4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19))-consistently even when the adapter supplies a richer one.
     const api = makeApi();
     const handle = await createDashboardBridge({
       api,
@@ -891,7 +891,7 @@ describe("dashboard-bridge: Phase 2.12 F2 boot hydration", () => {
     });
     expect(openCalls).toEqual(["webchat.dashboard-bridge.rows", "webchat.dashboard-bridge.tombstones"]);
     // Hydrated row beats Turn-1 synthesis; hydrated tombstone forces null —
-    // both via handle, adapter, and §4.2-delegation (all await whenReady()).
+    // both via handle, adapter, and 4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19))-delegation (all await whenReady()).
     expect((await handle.resolveDashboardBindingAsync(conversation))?.targetSessionKey).toBe(PERSISTED_TARGET);
     expect(await handle.resolveDashboardBindingAsync(secondConversation)).toBeNull();
     expect((await registeredAdapter!.resolveByConversationAsync(conversation))?.targetSessionKey).toBe(
@@ -1178,7 +1178,7 @@ describe("dashboard-bridge: Phase 2.18b harnessSessions (F3, Weg A) — bridge r
     expect(claudeRoster.harnessSessionTargetKey?.("claude")).toBe(REAL_CLAUDE_KEY);
   });
 
-  it("§4.2-Delegation: claude's binding-adapter bekommt den echten key über die AKTIVE Brücke", async () => {
+  it("4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19))-Delegation: claude's binding-adapter bekommt den echten key über die AKTIVE Brücke", async () => {
     let registeredAdapter: ReturnType<typeof createWebchatDashboardBindingAdapter> | null = null;
     const api = makeApi({
       config: {
@@ -1195,7 +1195,7 @@ describe("dashboard-bridge: Phase 2.18b harnessSessions (F3, Weg A) — bridge r
     };
     const handle = await createDashboardBridge({ api, sessionBindingRuntime: runtime });
     expect(handle.ownsWebchatAdapter).toBe(false);
-    // Adapter ohne eigenes getConfig: die Antwort kommt aus der §4.2-Delegation
+    // Adapter ohne eigenes getConfig: die Antwort kommt aus der 4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19))-Delegation
     // (roster → harnessSessionTargetKey), NICHT aus seiner eigenen Synthese.
     const adapter = createDashboardBindingAdapter({ getConfig: () => undefined });
     const viaAdapter = await adapter.resolveByConversationAsync!(ref);
@@ -1313,7 +1313,7 @@ describe("dashboard-bridge: Phase 2.21 auto-provisioning — bridge roster path"
     expect(decision?.targetSessionKey).toBe(REAL_CODEX_KEY);
   });
 
-  it("§4.2-Parität: Bridge-Resolver UND Adapter-Derive handen denselben provisionierten Klon-Key aus", async () => {
+  it("4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19))-Parität: Bridge-Resolver UND Adapter-Derive handen denselben provisionierten Klon-Key aus", async () => {
     setDashboardBindingProvisioner(async () => {});
     const roster = harnessRoster();
     const shared = resolveDashboardBinding(ref, { roster });
@@ -1365,7 +1365,7 @@ describe("dashboard-bridge: Phase 2.21 auto-provisioning — bridge roster path"
     expect(roster.harnessProvisionedTargetKey?.("codex")).toBe(buildHarnessProvisionedSessionKey({ agentId: "codex" }));
   });
 
-  it("§4.2-Parität mit Origin-Workspace: Bridge-Resolver und Adapter-Derive teilen denselben Klon-Key (cwd in Metadata)", async () => {
+  it("4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19))-Parität mit Origin-Workspace: Bridge-Resolver und Adapter-Derive teilen denselben Klon-Key (cwd in Metadata)", async () => {
     setDashboardBindingProvisioner(async () => {});
     setOriginWorkspaceReader(() => ({ projectId: "openclaw-ha-addon", sessionRoot: ORIGIN_WS_CWD }));
     const roster = createConfigHarnessRoster(harnessRosterConfig());
@@ -1394,8 +1394,8 @@ describe("dashboard-bridge: Phase 2.21 auto-provisioning — bridge roster path"
   });
 });
 
-// --- §24 (Init-Race): native readiness join am async-Ingress (GaRoN 2026-10-15) ---
-  describe("§24: awaitPendingDashboardHarnessProvisioning / async-Ingress readiness join", () => {
+// --- 24 (init race: native readiness join) (Init-Race): native readiness join am async-Ingress (GaRoN 2026-10-15) ---
+  describe("24 (init race: native readiness join): awaitPendingDashboardHarnessProvisioning / async-Ingress readiness join", () => {
     afterEach(() => {
       resetDashboardBindingDispatchModeForTest();
       resetDashboardBindingProvisionerForTest();

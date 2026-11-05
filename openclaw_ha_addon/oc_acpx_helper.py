@@ -9,7 +9,7 @@ the local-model ACP harnesses are ready to use:
      auth.json + /config/.codex/config.toml inheritance source, opencode
      jsonc) moved into the harness-config-writer feature plugin (Repo-Split
      A2, 2026-10-11: previously plugins.entries['acp-dashboard-binding']
-     .config.harnesses, BRIDGE.md §15); deploy_harness_configs/
+     .config.harnesses, the 15 design (generalized harness config (HCW phase 3))); deploy_harness_configs/
      prepare_opencode_home are no-ops now.
   2. Creates a small managed npm project in /config/.openclaw/acpx/.node_project
      with @openclaw/acpx, @openclaw/codex and opencode installed

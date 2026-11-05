@@ -59,7 +59,7 @@
  *    transcript NEVER receives the assistant row in the claimed path.
  *  - Our binding row cannot change this: the host derives the mirror owner
  *    from `record.targetSessionKey` and ignores any row metadata for it (user
- *    options (a)/(b)/(c) all void — see BRIDGE.md Phase 3.5 §). Live
+ *    options (a)/(b)/(c) all void — see BRIDGE.md Phase 3.5 (generalized harness config)). Live
  *    visibility of the answer in GaRoN's chat is therefore broadcast-only;
  *    the full turn history (user+assistant) persists in the TARGET/harness
  *    session — the designed acpx-thread layout (the control-ui reads the
@@ -120,11 +120,11 @@ const MIN_HARNESS_REPLY_WAIT_MS = 1_000;
 const MAX_HARNESS_REPLY_WAIT_MS = 15 * 60_000;
 
 /**
- * Post-settle yield (Punkt 1 / BRIDGE §17, 2026-10-11): the host's run-terminal
+ * Post-settle yield (Punkt 1 / the 17 design (terminal write-owner race (post-settle yield fix)), 2026-10-11): the host's run-terminal
  * session-entry persistence (`session-entry.patch` via
  * `captureAgentRunTerminalWriteContext`) races with the binding mirror writes
  * our claim reply triggers (`deliverBindingPayload` fires immediately after we
- * return). Every claimed turn in the §17 live window failed its terminal commit
+ * return). Every claimed turn in the 17 (terminal write-owner race (post-settle yield fix)) live window failed its terminal commit
  * with "Terminal write owner changed before commit", leaving the binding
  * session entry `status:"running"` with a dangling lifecycleRunId; the counter-
  * example (main-klon Session without the claim mirror) committed cleanly.
@@ -188,7 +188,7 @@ function clampWaitMs(value: unknown): number {
   );
 }
 
-/** Clamps the §17 yield (non-finite/negative → disabled; bounded above). */
+/** Clamps the 17 (terminal write-owner race (post-settle yield fix)) yield (non-finite/negative → disabled; bounded above). */
 function clampYieldMs(value: unknown): number {
   if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
     return 0;
@@ -288,12 +288,12 @@ export type HarnessReplyClaimOptions = {
   waitRetryCallBudgetMs?: number;
   /**
    * Post-settle yield before returning a TERMINAL reply (default
-   * DEFAULT_POST_SETTLE_YIELD_MS; 0 disables). §17 terminal-write race window —
+   * DEFAULT_POST_SETTLE_YIELD_MS; 0 disables). 17 (terminal write-owner race (post-settle yield fix)) terminal-write race window —
    * see the constant's comment. Tests override to keep them fast.
    */
   postSettleYieldMs?: number;
   /**
-   * BRIDGE §19 (v0.7.13.22-Paket a/c): the plugin-sdk session-store surface
+   * the 19 design (claim-path conversation settle) (v0.7.13.22-Paket a/c): the plugin-sdk session-store surface
    * (patchSessionEntry/getSessionEntry). When present, the claim settles the
    * origin conversation node after EVERY return and the clone node after a
    * TERMINAL wait — the host never writes those run-terminal entries for
@@ -303,14 +303,14 @@ export type HarnessReplyClaimOptions = {
    */
   sessionStore?: SessionStoreApi | null;
   /**
-   * BRIDGE §20 (v0.7.13.22): mirrors the claim's terminal reply into the ORIGIN
+   * the 20 design (claim-reply transcript mirror) (v0.7.13.22): mirrors the claim's terminal reply into the ORIGIN
    * conversation transcript (appendAssistantMirrorMessageByIdentity — the host
    * delivers the reply to the origin conversation but never transcribes it
    * there, so re-renders lost it: the "Flüchtigkeit" root). Best-effort
    * contract: never throws, never blocks the reply. Injected from index.ts
    * (live: dynamic import of the types-less
    * `openclaw/plugin-sdk/session-transcript-runtime` host export). Absent →
-   * re-render persistence stays the pre-§20 behavior.
+   * re-render persistence stays the pre-20 (claim-reply transcript mirror) behavior.
    */
   mirrorClaimReply?: (params: {
     originSessionKey: string;
@@ -328,7 +328,7 @@ function readClaimMessage(event: InboundClaimEventLike): string | null {
 }
 
 /**
- * Same target cascade the binding adapter answers with (§4.2 bridge resolver →
+ * Same target cascade the binding adapter answers with (4.2 (turn-1 race fix via the config-driven delegation roster (phase 2.19)) bridge resolver →
  * adapter derive). Keeping the identical deterministic target ensures the
  * host's resolve → touch → re-resolve stability comparison and this claim see
  * one consistent session key per conversation.
@@ -367,9 +367,9 @@ export function createHarnessReplyClaimHandler(options: HarnessReplyClaimOptions
     event: InboundClaimEventLike,
     ctx: InboundClaimContextLike,
   ): Promise<InboundClaimResultLike> => {
-    // BRIDGE §20: mirrors a handled claim's terminal reply into the origin
+    // the 20 design (claim-reply transcript mirror): mirrors a handled claim's terminal reply into the origin
     // transcript before the result leaves the handler. Same origin-key guard as
-    // §19; a broken/unset mirror never affects the reply itself.
+    // 19 (claim-path conversation settle); a broken/unset mirror never affects the reply itself.
     const finishReply = async (
       result: InboundClaimResultLike,
       originSessionKey: string,
@@ -391,7 +391,7 @@ export function createHarnessReplyClaimHandler(options: HarnessReplyClaimOptions
     const cfg = options.getConfig?.();
     const binding = ctx.pluginBinding;
     try {
-      // Weg-B native mode (BRIDGE.md §21): generic records never reach this hook
+      // Weg-B native mode (the 21 design (native dispatch via the dispatchMode config gate)): generic records never reach this hook
       // host-side (dispatch-from-config only claims plugin-owned records); this
       // gate is the second line of defense for a mode flip mid-flight (live
       // config reload before a stale plugin-owned row was re-resolved). The
@@ -455,7 +455,7 @@ export function createHarnessReplyClaimHandler(options: HarnessReplyClaimOptions
         }
       }
 
-      // BRIDGE §19 (V39) + γ archive-when-idle: before the turn starts, stamp
+      // the 19 design (claim-path conversation settle) (V39) + γ archive-when-idle: before the turn starts, stamp
       // the clone's spawnedBy provenance (requester resolution — the host's
       // metadata seed leaves it NULL) and clear OUR previous archive stamp —
       // the `agent` gateway method this dispatch rides REFUSES work on
@@ -468,7 +468,7 @@ export function createHarnessReplyClaimHandler(options: HarnessReplyClaimOptions
       // (stampCloneHidden) and by the boot sweep — an archive-while-runnable
       // would break the NEXT turn on this conversation-deterministic clone key
       // (agent-map acpBindingHash: sha256(channel:account:conversationId)).
-      // §19a: with the session store wired we also settle the conversation
+      // 19a (claim settle lane variant): with the session store wired we also settle the conversation
       // nodes after the turn — see the terminal branch below.
       if (options.sessionStore) {
         const originSessionKey = (binding?.conversationId ?? "").trim();
@@ -514,7 +514,7 @@ export function createHarnessReplyClaimHandler(options: HarnessReplyClaimOptions
       if (settled.errorMessage !== undefined) {
         const note = settled.errorMessage;
         log.warn?.(`[${CHANNEL_ID}] inbound_claim: waitForRun failed for run ${runId} — ${note}`);
-        // §19a: the fallback reply ENDS the origin dispatch from the user's
+        // 19a (claim settle lane variant): the fallback reply ENDS the origin dispatch from the user's
         // view (terminal delivery) — settle the origin node now (nonterminal:
         // the clone run may genuinely still be going) or the Denken-Spinner
         // resurfaces on this error edge.
@@ -545,7 +545,7 @@ export function createHarnessReplyClaimHandler(options: HarnessReplyClaimOptions
           runId,
         );
       }
-      // §17 (Punkt 1): only a TERMINAL wait result schedules the host's
+      // 17 (terminal write-owner race (post-settle yield fix)) (Punkt 1): only a TERMINAL wait result schedules the host's
       // run-terminal entry persistence — yield before replying so that commit
       // precedes the binding mirror writes our reply triggers.
       const wait = settled.wait;
@@ -557,14 +557,14 @@ export function createHarnessReplyClaimHandler(options: HarnessReplyClaimOptions
           await sleep(yieldMs);
         }
       }
-      // BRIDGE §19a: settle the session-node entries the claimed turn leaves
+      // the 19a design (claim settle lane variant): settle the session-node entries the claimed turn leaves
       // behind. The host completes the dispatch but never writes the ORIGIN
       // conversation node's run-terminal entry (live-DB proof: 99d8daf5… stuck
       // `running` with the claim's lifecycleRunId even after a CLEAN completed
       // claim turn) — that stuck status is the Denken-Spinner root. The TARGET
       // node is settled only on a terminal wait: for timeout/pending the
       // harness run is genuinely still going. Idempotent — no-ops when the
-      // host's own terminal write already won the §17 window.
+      // host's own terminal write already won the 17 (terminal write-owner race (post-settle yield fix)) window.
       if (options.sessionStore) {
         const originSessionKey = (binding?.conversationId ?? "").trim();
         if (parseAgentIdFromConversationId(originSessionKey)) {
@@ -606,7 +606,7 @@ export function createHarnessReplyClaimHandler(options: HarnessReplyClaimOptions
           }
         }
       }
-      // §20: mirror the terminal reply (answer or notice) into the origin
+      // 20 (claim-reply transcript mirror): mirror the terminal reply (answer or notice) into the origin
       // transcript before the host delivers it — the agent-run finalization
       // never transcribes claim replies (live-DB proof 048d96d7…: no assistant
       // record), which is why re-renders lost them.

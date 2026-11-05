@@ -1,5 +1,5 @@
 /**
- * §25 — Dual-Reset stateful binding target driver (GaRoN 2026-10-16 "wir
+ * 25 (dual-reset driver: work reset + conversation reset legs) — Dual-Reset stateful binding target driver (GaRoN 2026-10-16 "wir
  * kriegen es also noch hin, dass in zukunft Befehle auch in der
  * verbindungs-Session, nicht nur in der acp-Session greifen").
  *
@@ -74,7 +74,7 @@ type StatefulTargetLike = {
   sessionKey?: unknown;
   agentId?: unknown;
   /**
-   * §25 extension: the connector conversation session-key text taken from the
+   * 25 (dual-reset driver: work reset + conversation reset legs) extension: the connector conversation session-key text taken from the
    * owning binding record. Only our driver's targets carry it.
    */
   conversationSessionKey?: string;
@@ -231,7 +231,7 @@ export function createDualResetDriver(
         bindingTarget: params.bindingTarget,
       });
       if (!work?.ok) return work;
-      // LEG 2 — connector conversation (§25, GaRoN). Delegated to the SAME
+      // LEG 2 — connector conversation (25 (dual-reset driver: work reset + conversation reset legs), GaRoN). Delegated to the SAME
       // builtin driver with the conversation key: host-side reset primitive,
       // no plugin-ownership gate (the RPC path is gated; see file header).
       // Best-effort: every failure path below keeps the work result (never a
@@ -298,7 +298,7 @@ export function createDualResetDriver(
 }
 
 /**
- * Registers the §25 driver into the host's stateful-target registry. Called
+ * Registers the 25 (dual-reset driver: work reset + conversation reset legs) driver into the host's stateful-target registry. Called
  * from registerFull AFTER the binding runtime (the adapter lookup must be
  * live). Registration guarantees ours sits BEFORE the builtin in the map's
  * insertion order — the builtin's key-shape fallback claims our binding keys

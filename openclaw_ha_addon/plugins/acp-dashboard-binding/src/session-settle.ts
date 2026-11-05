@@ -1,6 +1,6 @@
 /**
  * Claim-path conversation settlement + subagent-provenance stamping
- * (BRIDGE §19 — v0.7.13.22-Paket a/c + V39, 2026-10-12).
+ * (the 19 design (claim-path conversation settle) — v0.7.13.22-Paket a/c + V39, 2026-10-12).
  *
  * Two live-proven defects (v0.7.13.21 evidence) share one mechanism gap: a
  * claimed turn's session-node entries are never terminal-settled.
@@ -17,7 +17,7 @@
  *    restart-recovery DELIVERY claimed turns can never satisfy — the
  *    "Denken-Spinner" state. The mark is the consequence; the missing
  *    settlement is the root.
- *  - TARGET (harness-clone) node: the §17 terminal-write race still loses on
+ *  - TARGET (harness-clone) node: the 17 (terminal write-owner race (post-settle yield fix)) terminal-write race still loses on
  *    the DIRECT dispatch path (reason=acp_dispatch; 4 live events through
  *    20:24 — runs 427c5075/e2a4d134/12fc5c04/76f1d871, all "terminal session
  *    persistence failed session=agent:claude:acp:binding:webchat:default:
@@ -260,7 +260,7 @@ async function settleOne(params: {
  * always (the host ends the origin dispatch with our reply, but never writes
  * its run-terminal entry). Target: only after a TERMINAL wait — for
  * timeout/pending the harness run keeps going and MUST stay `running`.
- * Idempotent/no-op when the host already settled the entry itself (§17 yield
+ * Idempotent/no-op when the host already settled the entry itself (17 (terminal write-owner race (post-settle yield fix)) yield
  * made its terminal commit win) — buildClaimSettlePatch returns null then.
  */
 export async function settleClaimedTurnSessions(params: {
@@ -485,10 +485,10 @@ export async function unarchiveHiddenClone(params: {
 }
 
 /**
- * §19c boot sweep: at gateway_start no in-process run can predate the process,
+ * 19c (claim settle orphan binding) boot sweep: at gateway_start no in-process run can predate the process,
  * so owned entries still `running` with a PRE-SWEEP updatedAt are orphans the
  * host's main-session recovery does not cover (it restores sessions it can
- * recover; our claimed conversations + the direct-path §17 races it marks with
+ * recover; our claimed conversations + the direct-path 17 (terminal write-owner race (post-settle yield fix)) races it marks with
  * a restart-recovery delivery debt that claimed turns cannot satisfy — the
  * Denken-Spinner never clears on its own). We settle them with the same
  * host-parity patch, using the recovery run as the settle runId so the debt
@@ -558,7 +558,7 @@ export async function sweepStuckHarnessSessions(params: {
   return { settled };
 }
 /**
- * §19c store-sweep variant: enumerates the agent store's own entries instead
+ * 19c (claim settle orphan binding) store-sweep variant: enumerates the agent store's own entries instead
  * of walking explicit binding rows (derived Turn-1 Synthesis persists NO row —
  * the adapter answers on the fly — so rows would miss exactly the sessions in
  * evidence). Scope is strictly our key grammar, per roster harness agent:
@@ -619,7 +619,7 @@ export async function sweepOwnedStuckSessions(params: {
         });
         if (hidden) archived.push(sessionKey);
       }
-      // §19c orphan-settle leg (clones + dashboard-origin conversations).
+      // 19c (claim settle orphan binding) orphan-settle leg (clones + dashboard-origin conversations).
       const isOwned = CLONE_KEY_REST_RE.test(rest) || DASHBOARD_KEY_REST_RE.test(rest);
       if (!isOwned) continue;
       const status = typeof entry.status === "string" ? entry.status : "";
@@ -646,7 +646,7 @@ export async function sweepOwnedStuckSessions(params: {
 }
 
 /**
- * §23 boot-heal retry schedule (drives runBootHealWithRetries below).
+ * 23 (main-session reset bug: native-mode un-archive) boot-heal retry schedule (drives runBootHealWithRetries below).
  * Attempt 0 runs immediately (pre-.31 single-shot semantic), then backs off.
  * Total budget ≈ 7:45 — LIVE 2026-10-15: the gateway's 5-second foreground
  * startup budget elapses for EVERY agent on a big store and admission
@@ -706,7 +706,7 @@ export async function runBootHealWithRetries(params: {
 }
 
 /**
- * Native-mode boot heal (§23 reset-bug, GaRoN directive 2026-10-14): clears
+ * Native-mode boot heal (23 (main-session reset bug: native-mode un-archive) reset-bug, GaRoN directive 2026-10-14): clears
  * OUR γ archive stamps from OUR owned key shapes at gateway_start so the host
  * never refuses dispatch on an archived binding target again. The claim path
  * heals per dispatch (unarchiveHiddenClone), but in native dispatch mode
@@ -778,7 +778,7 @@ export async function unarchiveOwnedLegacyStamps(params: {
 }
 
 /**
- * V39 over-hiding boot heal (§23.2 dry-run finding 2026-10-15: the host's
+ * V39 over-hiding boot heal (23.2 (fix legs (native mode)) dry-run finding 2026-10-15: the host's
  * listing predicate — readSessionListSelectionFacts, session-list-target-
  * C2rmz7hN.mjs:39 — treats ANY set spawnedBy outside a `dashboard:` rest as
  * isSubagent, so provenance-stamped clone rows drop out of every standard

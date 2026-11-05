@@ -2,7 +2,7 @@
 // (OWASP LLM01:2026 Control #5, add-on unicode-guard).
 //
 // Vectors 1–8 are binding acceptance criteria from
-// agents/prompt-engineer/findings/2026-10-08-owasp-a-unicode-stripping-spec.md §3.
+// agents/prompt-engineer/findings/2026-10-08-owasp-a-unicode-stripping-spec.md 3 (owasp unicode-stripping spec section (external reference)).
 //
 // Run:  node --test openclaw_ha_addon/unicode-guard/
 // Optional dist verification (after apply-unicode-guard-patch.mjs ran on a copy):

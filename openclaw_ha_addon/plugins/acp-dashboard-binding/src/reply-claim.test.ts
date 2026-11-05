@@ -227,7 +227,7 @@ describe("F4 reply-delivery fix — inbound_claim dispatch (Weg A: subagent surf
   }
 
   /**
-   * §19 test seam: in-memory session store with the settle/stamp read+patch
+   * 19 (claim-path conversation settle) test seam: in-memory session store with the settle/stamp read+patch
    * surface, pre-seeded with the running origin/clone entries a claimed turn
    * leaves in evidence (99d8daf5/4fbefeb9 live-DB shapes).
    */
@@ -418,7 +418,7 @@ describe("F4 reply-delivery fix — inbound_claim dispatch (Weg A: subagent surf
   });
 
   it("waitForRun throwing is reported as handled:true wait-failure notice", async () => {
-    // §19a: even on the wait-failure edge the fallback reply terminates the
+    // 19a (claim settle lane variant): even on the wait-failure edge the fallback reply terminates the
     // ORIGIN dispatch — the origin node must settle (nonterminal: clone not).
     const store = fakeClaimStore();
     const handler = createHarnessReplyClaimHandler({
@@ -874,7 +874,7 @@ describe("inbound_claim: MAIN-Klon barrier (Phase 2.24b)", () => {
   });
 });
 
-describe("Punkt 1 (BRIDGE §17) — post-settle yield before terminal reply", () => {
+describe("Punkt 1 (the 17 design (terminal write-owner race (post-settle yield fix))) — post-settle yield before terminal reply", () => {
   beforeEach(() => {
     setDashboardBindingPluginRoot(PLUGIN_ROOT);
   });
@@ -963,7 +963,7 @@ describe("Punkt 1 (BRIDGE §17) — post-settle yield before terminal reply", ()
   });
 });
 
-describe("BRIDGE §20 — claim-reply transcript mirror", () => {
+describe("the 20 design (claim-reply transcript mirror) — claim-reply transcript mirror", () => {
   function stub(
     waitBehavior: () => Promise<Record<string, unknown>>,
     runBehavior?: () => Promise<{ runId: string }>,
@@ -974,7 +974,7 @@ describe("BRIDGE §20 — claim-reply transcript mirror", () => {
     };
   }
 
-  it("mirrors the terminal harness reply into the origin transcript (§20)", async () => {
+  it("mirrors the terminal harness reply into the origin transcript (20 (claim-reply transcript mirror))", async () => {
     const mirrors: Array<{ originSessionKey: string; agentId: string; claimRunId: string; replyText: string }> = [];
     const handler = createHarnessReplyClaimHandler({
       getConfig: () => codexConfig(),
@@ -1034,7 +1034,7 @@ describe("BRIDGE §20 — claim-reply transcript mirror", () => {
     expect(result.reply?.text).toBe("the answer");
   });
 
-  it("absent mirror keeps the pre-§20 behavior (no call, reply unchanged)", async () => {
+  it("absent mirror keeps the pre-20 (claim-reply transcript mirror) behavior (no call, reply unchanged)", async () => {
     const handler = createHarnessReplyClaimHandler({
       getConfig: () => codexConfig(),
       subagent: stub(async () => ({ status: "ok", terminalReply: { disposition: "visible", text: "the answer" } })),
@@ -1047,14 +1047,14 @@ describe("BRIDGE §20 — claim-reply transcript mirror", () => {
   });
 });
 
-// --- Weg B: native dispatch mode stands the claim hook down (BRIDGE.md §21) --
+// --- Weg B: native dispatch mode stands the claim hook down (the 21 design (native dispatch via the dispatchMode config gate)) --
 //
 // Host-side, a generic record never reaches this hook at all (dispatch-from-config
 // only claims plugin-owned records; toPluginConversationBinding → null). This
 // gate is the plugin's second line of defense for a mid-flight flip (config
 // reload before a stale plugin-owned row was re-resolved): with dispatchMode
 // "native" the handler returns {handled:false} BEFORE any guard, preflight,
-// run, wait, settle or §20-mirror machinery runs — the host falls through to
+// run, wait, settle or 20 (claim-reply transcript mirror)-mirror machinery runs — the host falls through to
 // native dispatch.
 describe("Weg B — native dispatch mode stands the claim hook down", () => {
   afterEach(() => {
@@ -1078,7 +1078,7 @@ describe("Weg B — native dispatch mode stands the claim hook down", () => {
     return { subagent, runCalls, waitCalls };
   }
 
-  /** Local settle recorder: proves the §19 settle machinery stays silent. */
+  /** Local settle recorder: proves the 19 (claim-path conversation settle) settle machinery stays silent. */
   function recorderStore(): { sessionStore: never; patches: unknown[]; reads: string[] } {
     const patches: unknown[] = [];
     const reads: string[] = [];
