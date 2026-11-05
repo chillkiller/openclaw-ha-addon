@@ -6,14 +6,21 @@
  */
 
 import {
+  dirname,
+  join,
+  resolve,
+} from "node:path";
+import {
   existsSync,
+  mkdirSync,
   mkdtempSync,
   readFileSync,
   rmSync,
   statSync,
+  writeFileSync,
 } from "node:fs";
+import { spawn } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
@@ -60,6 +67,81 @@ const OLLAMA: HarnessConfigEntry = {
 };
 
 const SILENT = { debug: () => {}, info: () => {}, warn: () => {} };
+
+function buildSampleModelCatalog() {
+  return buildModelCatalog(
+    {
+      models: {
+        providers: {
+          ollama: {
+            baseUrl: "http://localhost:11434/v1",
+            models: [{ id: "kimi-k2.7-code:cloud", contextWindow: 128000 }],
+          },
+        },
+      },
+    },
+    [],
+  );
+}
+
+async function runGeneratedWrapper(
+  entry: HarnessConfigEntry,
+  p: HarnessWriterPaths,
+  options: {
+    modelCatalog?: ReturnType<typeof buildModelCatalog>;
+    createCatalog?: boolean;
+    createStableAdapter?: boolean;
+    extraArgs?: string[];
+  } = {},
+): Promise<{
+  exitCode: number | null;
+  stdout: string;
+  stderr: string;
+  wrapperPath: string;
+  configPath: string;
+  authPath: string;
+  catalogPath: string;
+}> {
+  const wrapperPath = resolveCodexHcwWrapperPath(p);
+  const configPath = resolveCodexHcwConfigPath(p);
+  const authPath = resolveCodexHcwAuthPath(p);
+  const catalogPath = resolveCodexHcwCatalogPath(p);
+
+  const script = buildCodexHcwWrapperScript(entry, p, options.modelCatalog);
+  mkdirSync(p.acpxDir, { recursive: true, mode: 0o700 });
+  writeFileSync(wrapperPath, script, { mode: 0o700 });
+
+  if (options.createCatalog) {
+    mkdirSync(dirname(catalogPath), { recursive: true, mode: 0o700 });
+    writeFileSync(catalogPath, JSON.stringify({ models: [] }), { mode: 0o600 });
+  }
+
+  if (options.createStableAdapter) {
+    const stableAdapterPath = resolve(p.acpxDir, "../extensions/acpx/node_modules/@agentclientprotocol/codex-acp/dist/index.js");
+    mkdirSync(dirname(stableAdapterPath), { recursive: true, mode: 0o700 });
+    writeFileSync(
+      stableAdapterPath,
+      `const fs = require("node:fs");\nconst marker = process.argv.find(a => a.startsWith("--marker="));\nif (marker) fs.writeFileSync(marker.slice(9), "spawned", "utf-8");\n`,
+      { mode: 0o700 },
+    );
+  }
+
+  return new Promise((res, rej) => {
+    const child = spawn(
+      process.execPath,
+      [wrapperPath, ...(options.extraArgs ?? [])],
+      { env: { ...process.env, CODEX_API_KEY: "test-key" } },
+    );
+    let stdout = "";
+    let stderr = "";
+    child.stdout?.on("data", (chunk: Buffer) => (stdout += chunk.toString("utf-8")));
+    child.stderr?.on("data", (chunk: Buffer) => (stderr += chunk.toString("utf-8")));
+    child.on("error", rej);
+    child.on("close", (exitCode) => {
+      res({ exitCode, stdout, stderr, wrapperPath, configPath, authPath, catalogPath });
+    });
+  });
+}
 
 describe("buildCodexHcwAuthJson", () => {
   it("emits the exact acpx-wrapper auth.json shape", () => {
@@ -108,29 +190,26 @@ describe("buildCodexHcwWrapperScript", () => {
     expect(script).toContain("kimi-k2.7-code:cloud");
   });
 
-  it("embeds the absolute catalog path only when a catalog is built", () => {
+  it("does not embed catalog content; keeps the absolute catalog path reference when a catalog is built", () => {
     const p = paths();
-    const catalog = buildModelCatalog(
-      {
-        models: {
-          providers: {
-            ollama: {
-              baseUrl: "http://localhost:11434/v1",
-              models: [{ id: "kimi-k2.7-code:cloud", contextWindow: 128000 }],
-            },
-          },
-        },
-      },
-      [],
-    );
+    const catalog = buildSampleModelCatalog();
     const scriptNoCatalog = buildCodexHcwWrapperScript(OLLAMA, p);
-    expect(scriptNoCatalog).toContain("const CATALOG_JSON = null");
+    expect(scriptNoCatalog).toContain("const CATALOG_PATH =");
+    expect(scriptNoCatalog).not.toMatch(/const CATALOG_JSON\s*=/);
 
     const script = buildCodexHcwWrapperScript({ ...OLLAMA, models: ["kimi-k2.7-code:cloud"] }, p, catalog);
     const expectedCatalogPath = resolveCodexHcwCatalogPath(p);
     expect(script).toContain(JSON.stringify(expectedCatalogPath));
-    expect(script).toContain("const CATALOG_JSON =");
-    expect(script).not.toContain("const CATALOG_JSON = null");
+    expect(script).not.toMatch(/const CATALOG_JSON\s*=/);
+  });
+
+  it("is small (< 20 KB) and contains no model catalog base-prompt content", () => {
+    const p = paths();
+    const catalog = buildSampleModelCatalog();
+    const script = buildCodexHcwWrapperScript({ ...OLLAMA, models: ["kimi-k2.7-code:cloud"] }, p, catalog);
+    expect(script.length).toBeLessThan(20 * 1024);
+    expect(script).not.toContain("base_instructions");
+    expect(script).not.toContain("context_window");
   });
 
   it("passes received args through to the adapter unchanged", () => {
@@ -144,16 +223,17 @@ describe("buildCodexHcwWrapperScript", () => {
     expect(script).toContain("const env = { ...process.env, CODEX_HOME };");
   });
 
-  it("tries the installed adapter bin first, then npm exec, then npx", () => {
+  it("checks the stable relative adapter path first at runtime, then capture, then npm exec, then npx", () => {
     const script = buildCodexHcwWrapperScript(OLLAMA, paths());
-    expect(script).toContain("node_modules/@agentclientprotocol/codex-acp/dist/index.js");
+    expect(script).toContain("const stable = resolve(wrapperDir, STABLE_ADAPTER_REL_PATH);");
+    expect(script).toContain("if (existsSync(stable))");
+    expect(script).toContain("const capture =");
     expect(script).toContain('"exec", "--yes", "--package", "@agentclientprotocol/codex-acp@2.1.1"');
     expect(script).toContain('"--yes", "--package", "@agentclientprotocol/codex-acp@2.1.1", "--", "codex-acp"');
+    expect(script).toMatch(/STABLE_ADAPTER_REL_PATH = "\.\.\/[^"]+"/);
   });
-
-
-
 });
+
 describe("deployCodexHcwWrapper", () => {
   it("writes wrapper, config.toml, and auth.json into the HCW home", () => {
     const p = paths();
@@ -176,19 +256,7 @@ describe("deployCodexHcwWrapper", () => {
 
   it("writes the model catalog when models with contextWindow are available", () => {
     const p = paths();
-    const catalog = buildModelCatalog(
-      {
-        models: {
-          providers: {
-            ollama: {
-              baseUrl: "http://localhost:11434/v1",
-              models: [{ id: "kimi-k2.7-code:cloud", contextWindow: 128000 }],
-            },
-          },
-        },
-      },
-      [],
-    );
+    const catalog = buildSampleModelCatalog();
     const result = deployCodexHcwWrapper({ ...OLLAMA, models: ["kimi-k2.7-code:cloud"] }, p, SILENT, catalog);
     expect(result.catalogPath).toBeDefined();
     expect(existsSync(result.catalogPath!)).toBe(true);
@@ -204,6 +272,59 @@ describe("deployCodexHcwWrapper", () => {
     deployCodexHcwWrapper(OLLAMA, p, SILENT);
     expect(readText(resolveCodexHcwWrapperPath(p))).toBe(firstWrapper);
     expect(readText(resolveCodexHcwConfigPath(p))).toBe(firstToml);
+  });
+});
+
+describe("generated wrapper runtime behaviour", () => {
+  it("keeps model_catalog_json when the catalog file exists", async () => {
+    const p = paths();
+    const catalog = buildSampleModelCatalog();
+    const { exitCode, stderr, configPath } = await runGeneratedWrapper(
+      { ...OLLAMA, models: ["kimi-k2.7-code:cloud"] },
+      p,
+      { modelCatalog: catalog, createCatalog: true, createStableAdapter: true },
+    );
+    expect(exitCode).toBe(0);
+    const toml = readText(configPath);
+    expect(stderr).not.toContain("missing; omitting model_catalog_json reference");
+  });
+
+  it("omits model_catalog_json when the catalog file is missing at runtime", async () => {
+    const p = paths();
+    const catalog = buildSampleModelCatalog();
+    const { exitCode, configPath } = await runGeneratedWrapper(
+      { ...OLLAMA, models: ["kimi-k2.7-code:cloud"] },
+      p,
+      { modelCatalog: catalog, createStableAdapter: true },
+    );
+    expect(exitCode).toBe(0);
+    const toml = readText(configPath);
+    expect(toml).not.toContain("model_catalog_json");
+  });
+
+  it("contains runtime stderr warning logic for a dangling catalog reference", () => {
+    const p = paths();
+    const catalog = buildSampleModelCatalog();
+    const script = buildCodexHcwWrapperScript(
+      { ...OLLAMA, models: ["kimi-k2.7-code:cloud"] },
+      p,
+      catalog,
+    );
+    expect(script).toContain("missing; omitting model_catalog_json reference");
+    expect(script).toContain('process.stderr.write("[hcw-codex-wrapper] " + CATALOG_PATH + " missing');
+    expect(script).toContain("if (hasReference && !existsSync(CATALOG_PATH))");
+  });
+
+  it("spawns the adapter via the stable relative adapter path", async () => {
+    const p = paths();
+    const markerPath = join(p.acpxDir, "adapter-marker.txt");
+    const { exitCode } = await runGeneratedWrapper(OLLAMA, p, {
+      createStableAdapter: true,
+      extraArgs: [`--marker=${markerPath}`],
+    });
+    expect(exitCode).toBe(0);
+    expect(existsSync(markerPath)).toBe(true);
+    expect(readText(markerPath)).toBe("spawned");
   });
 });
 

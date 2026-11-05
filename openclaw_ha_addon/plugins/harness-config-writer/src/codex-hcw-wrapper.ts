@@ -5,18 +5,21 @@
  *   --openclaw-run-configured <this-wrapper> <adapter-args>
  * auf. Der HCW-Wrapper ist ein eigener Prozess und darf daher CODEX_HOME in
  * seiner ENV auf ein eigenes Home setzen. Er schreibt auth.json + config.toml
- * + model-catalog.json selbst (idempotent) und startet den Adapter direkt.
+ * selbst (idempotent) und startet den Adapter direkt. Der Modellkatalog wird
+ * vom Writer als separate Datei neben config.toml abgelegt; der Wrapper
+ * enthält den Kataloginhalt NICHT inline, sondern prüft zur Laufzeit, ob
+ * die Katalogdatei existiert, bevor er config.toml auf den Verweis schreibt.
  *
  * Format-Quellen (live aus laufendem acpx-Wrapper belegt):
  *   - auth.json: {OPENAI_API_KEY: <key>, tokens: null, last_refresh: null}, mode 0600
  *   - config.toml: Signatur, model, model_provider, model_reasoning_effort,
  *     model_catalog_json (absoluter Pfad, vor erster Tabelle), sandbox_mode,
  *     [model_providers.*], [projects.*]
- *   - Adapter-Start: node <installedBinPath> (Fallback npm exec / npx)
+ *   - Adapter-Start: node <stableBinPath> (Fallback capture -> npm exec -> npx)
  *
  * WICHTIG: Nur der codex-Pfad wird angefasst - andere Harness-Pfade bleiben
- * unverandert. Die plugin-generierte Datei ~/.openclaw/acpx/codex-acp-wrapper.mjs
- * wird NICHT verandert.
+ * unverändert. Die plugin-generierte Datei ~/.openclaw/acpx/codex-acp-wrapper.mjs
+ * wird NICHT verändert.
  */
 
 import {
@@ -44,6 +47,9 @@ export const HCW_CODEX_HOME_DIR = "codex-home-hcw";
 export const HCW_CATALOG_FILE = "model-catalog.json";
 export const HCW_CONFIG_FILE = "config.toml";
 export const HCW_AUTH_FILE = "auth.json";
+
+/** Relativer Pfad vom Wrapper-Verzeichnis zum stabilen acpx-Extension-Install. */
+const STABLE_ADAPTER_REL_PATH = "../extensions/acpx/node_modules/@agentclientprotocol/codex-acp/dist/index.js";
 
 export function resolveCodexHcwWrapperPath(paths: HarnessWriterPaths): string {
   return join(paths.acpxDir, HCW_WRAPPER_NAME);
@@ -105,10 +111,12 @@ export function buildCodexHcwWrapperScript(
     builtCatalog ? catalogPath : undefined,
     postTurnCompactThresholdPercent,
   );
-  const catalogJson = builtCatalog ? builtCatalog.content : null;
   const authJson = buildCodexHcwAuthJson(entry.apiKey ?? "ollama");
 
-  const installedBinPath = resolve(
+  // Fallback Capture-Pfad (legacy): aus dem Writer-Source-Stand zur
+  // Generierungszeit abgeleitet. Wird nur geprüft, wenn der stabile
+  // Extension-Pfad nicht existiert.
+  const captureBinPath = resolve(
     dirname(fileURLToPath(import.meta.url)),
     "..",
     "..",
@@ -147,10 +155,10 @@ const AUTH_PATH = ${JSON.stringify(authPath)};
 const CONFIG_PATH = ${JSON.stringify(configPath)};
 const CATALOG_PATH = ${JSON.stringify(catalogPath)};
 const CONFIG_TOML = ${JSON.stringify(configToml)};
-const CATALOG_JSON = ${catalogJson ? JSON.stringify(catalogJson) : "null"};
 const AUTH_JSON = ${JSON.stringify(authJson)};
 const POST_TURN_COMPACT = ${JSON.stringify(postTurnCompactThresholdPercent)};
 const SIGNATURE_LINE = ${signatureLine};
+const STABLE_ADAPTER_REL_PATH = ${JSON.stringify(STABLE_ADAPTER_REL_PATH)};
 
 function atomicWrite(filePath, content, mode) {
   const dir = dirname(filePath);
@@ -174,8 +182,14 @@ function readText(path) {
 }
 
 function writeManagedConfigToml() {
+  let desired = CONFIG_TOML;
+  const hasReference = desired.includes("model_catalog_json =");
+  if (hasReference && !existsSync(CATALOG_PATH)) {
+    process.stderr.write("[hcw-codex-wrapper] " + CATALOG_PATH + " missing; omitting model_catalog_json reference (codex falls back to built-in catalog)\\n");
+    desired = desired.split("\\n").filter((line) => !line.startsWith("model_catalog_json =")).join("\\n");
+  }
   if (!existsSync(CONFIG_PATH)) {
-    atomicWrite(CONFIG_PATH, CONFIG_TOML);
+    atomicWrite(CONFIG_PATH, desired);
     return "created";
   }
   const current = readText(CONFIG_PATH);
@@ -183,9 +197,9 @@ function writeManagedConfigToml() {
     process.stderr.write("[hcw-codex-wrapper] " + CONFIG_PATH + " unreadable; leaving intact\\n");
     return "note (customized, left intact)";
   }
-  if (current === CONFIG_TOML) return "unchanged";
+  if (current === desired) return "unchanged";
   if (current.startsWith(SIGNATURE_LINE)) {
-    atomicWrite(CONFIG_PATH, CONFIG_TOML);
+    atomicWrite(CONFIG_PATH, desired);
     return "updated";
   }
   process.stderr.write("[hcw-codex-wrapper] " + CONFIG_PATH + " is customized; leaving intact\\n");
@@ -201,19 +215,15 @@ function writeAuthJson() {
   atomicWrite(AUTH_PATH, content, 0o600);
 }
 
-function writeCatalogIfReferenced() {
-  if (!CATALOG_JSON) return "skipped";
-  const current = readText(CONFIG_PATH) ?? "";
-  if (!current.includes(JSON.stringify(CATALOG_PATH))) return "not referenced";
-  if (existsSync(CATALOG_PATH) && readText(CATALOG_PATH) === CATALOG_JSON) return "unchanged";
-  atomicWrite(CATALOG_PATH, CATALOG_JSON);
-  return "created/updated";
-}
-
 function resolveAdapterCommand() {
-  const installed = ${JSON.stringify(installedBinPath)};
-  if (installed && existsSync(installed)) {
-    return { command: process.execPath, args: [installed] };
+  const wrapperDir = dirname(fileURLToPath(import.meta.url));
+  const stable = resolve(wrapperDir, STABLE_ADAPTER_REL_PATH);
+  if (existsSync(stable)) {
+    return { command: process.execPath, args: [stable] };
+  }
+  const capture = ${JSON.stringify(captureBinPath)};
+  if (capture && existsSync(capture)) {
+    return { command: process.execPath, args: [capture] };
   }
   const npmCliPath = resolve(dirname(process.execPath), "..", "lib", "node_modules", "npm", "bin", "npm-cli.js");
   if (existsSync(npmCliPath)) {
@@ -232,7 +242,6 @@ function main() {
   mkdirSync(CODEX_HOME, { recursive: true, mode: 0o700 });
   writeAuthJson();
   const tomlAction = writeManagedConfigToml();
-  const catalogAction = writeCatalogIfReferenced();
 
   const { command, args: adapterArgs } = resolveAdapterCommand();
   const passedArgs = process.argv.slice(2);
