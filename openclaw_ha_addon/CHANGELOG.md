@@ -9,11 +9,22 @@ For a release-facing summary, see the root [CHANGELOG.md](../CHANGELOG.md).
 
 ---
 
-## [Unreleased]
+## [0.7.13.36] — 2026-11-05
 
 ### Fixed
 
 - **harness-config-writer copilot BYOK provider variables:** `COPILOT_PROVIDER_TYPE`, `_MODEL_ID`, `_WIRE_MODEL`, `_WIRE_API`, and `_MAX_PROMPT_TOKENS` are now written when the values are derivable from the harness entry and model catalog. Unknown provider-specific values are left unset and reported in warnings instead of guessed. Existing foreign keys in `copilot.env` are preserved on update (merge semantics).
+- **Helper rolls back every file the writer created:** the managed file set now covers the
+  Codex-HCW wrapper, its own Codex home (`auth.json`, `config.toml`, `model-catalog.json`),
+  the Claude Code settings file and the pi agent configuration (`models.json`, `settings.json`).
+  Those files survived a disable of the writer before — including the file that holds the API
+  key. The restore allow-list was extended with the Claude and pi roots accordingly.
+- **Codex ACP adapter resolution in the add-on:** the stable relative adapter path does not
+  exist in the container, because the adapter ships inside the plugin capture. The helper now
+  publishes the adapter paths that do exist in `<state>/acpx/adapter-paths.json`; the wrapper
+  reads that file first, expands the capture glob (newest capture first) and only then falls
+  back to the stable path and the runtime package download. The wrapper logs which adapter it
+  starts and where it was resolved from.
 
 ### Added
 
@@ -34,9 +45,22 @@ For a release-facing summary, see the root [CHANGELOG.md](../CHANGELOG.md).
 - **harness-config-writer no longer writes into operator-owned config sections:** the post-turn compaction threshold was inserted into the operator part of `config.toml`, which duplicated the key and placed it inside a provider table where Codex ignores it. The key is now written once, at the top level of the managed section, before the first table header. Operator content stays byte-preserved.
 - **harness-config-writer reasoning default and provider detection:** `default_reasoning_level` no longer falls back to the last entry of the reasoning-level list, because that list does not state which level is the default. The OpenAI provider detection no longer treats every `gpt-` prefixed model as an OpenAI model, which would have skipped the compaction safety margin for Ollama-served `gpt-oss` models.
 
+- **Optional provider policy for the Codex harness:** providers can declare a context-window factor, an auto-compaction factor, a post-turn compaction threshold, and the supported reasoning levels. The policy applies per provider and can be overridden per model. Nothing changes for existing configurations until a policy is set, and providers flagged as OpenAI are never adjusted.
+
 ### Added
 
-- **Optional provider policy for the Codex harness:** providers can declare a context-window factor, an auto-compaction factor, a post-turn compaction threshold, and the supported reasoning levels. The policy applies per provider and can be overridden per model. Nothing changes for existing configurations until a policy is set, and providers flagged as OpenAI are never adjusted.
+- **Apache-2.0 attribution for the bundled Codex prompt:** the bundled Codex base instructions
+  are a modified excerpt of the OpenAI Codex CLI (Apache-2.0). The plugin ships a `NOTICES.md`
+  with upstream project, upstream file, license and the applied modifications, and the prompt
+  file carries the same notice in its header. The notice is stripped before the prompt reaches
+  the model — only blocks carrying the `ATTRIBUTION-END` marker are removed, unrelated leading
+  comments stay untouched.
+
+### Changed
+
+- **OpenClaw pinned to 2026.10.10** (was 2026.10.4) in the container image; the post-install
+  version gate stays in place and fails the build on a wrong registry manifest. The control
+  interface is served from the packaged version and therefore uses the new layout.
 
 ---
 

@@ -10,6 +10,26 @@ Each entry summarizes user-visible changes. Full engineering notes:
 
 ---
 
+## [0.7.13.36] — 2026-11-05
+
+OpenClaw 2026.10.10 with working harness configuration for Codex, Claude Code, pi and OpenCode, plus a license notice for the bundled Codex prompt.
+
+### Added
+
+- **Harness configuration for Codex, Claude Code and pi:** when a harness is enabled, the add-on now writes the configuration these tools actually read — a Codex adapter wrapper with its own Codex home (including a usable model catalog with the Codex base instructions), a Claude Code `settings.json`, and a pi agent configuration. The OpenCode configuration path is resolved from the running process environment, so the generated file is read instead of ignored.
+- **License notice for the bundled Codex prompt:** the bundled Codex base instructions are a modified excerpt of the OpenAI Codex CLI (Apache-2.0). The add-on ships a notices file with upstream project, upstream file, license and the applied modifications, and the prompt file carries the same notice in its header. The notice never reaches the model.
+
+### Fixed
+
+- **Disabling the harness writer now removes everything it wrote:** the Codex wrapper, its Codex home (including the file that holds the API key), the Claude Code settings and the pi agent configuration are part of the managed file set and are rolled back with the rest.
+- **The Codex ACP adapter no longer downloads a package at runtime:** the add-on publishes the adapter paths that exist in the container, the wrapper reads them first and prefers the newest plugin capture. It logs which adapter it starts and where it came from.
+
+### Changed
+
+- **OpenClaw updated to 2026.10.10** (was 2026.10.4). The control interface ships with the new layout and is served from the packaged version.
+
+---
+
 ## [0.7.13.35] — 2026-10-18
 
 ### Fixed
