@@ -367,6 +367,17 @@ def _deploy_and_register_plugin(plugin_name: str, force_enable: bool = False) ->
                 copy_src = src / copy_name
                 if copy_src.is_file():
                     _write_bytes_and_cache(dst / copy_name, copy_src.read_bytes(), written)
+            # Runtime assets: the bundled extension is a compiled bundle, so
+            # non-source assets are not part of index.mjs and would be lost.
+            # The writer resolves them relative to the module directory
+            # (fixtures/<file> next to index.mjs) - without this copy the
+            # Codex catalog is written without base_instructions.
+            for asset_rel in ("fixtures/codex-base-instructions.txt",):
+                asset_src = src / "src" / asset_rel
+                if asset_src.is_file():
+                    asset_dst = dst / asset_rel
+                    asset_dst.parent.mkdir(parents=True, exist_ok=True)
+                    _write_bytes_and_cache(asset_dst, asset_src.read_bytes(), written)
             if external_dst.exists():
                 shutil.rmtree(external_dst)
                 log(f"Removed stale external plugin deploy {external_dst} "
