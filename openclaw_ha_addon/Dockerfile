@@ -292,8 +292,8 @@ ENV NODE_LLAMA_CPP_POSTINSTALL=skip
 # engine bump). npm itself verifies the registry dist.integrity for the pinned
 # version; the post-install gate re-checks the exact installed version so a
 # silently wrong registry manifest fails the build loudly.
-RUN npm install -g openclaw@2026.10.4 \
-    && node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('/usr/lib/node_modules/openclaw/package.json','utf8'));if(p.version!=='2026.10.4'){console.error('ERROR: unexpected OpenClaw version installed: '+p.version);process.exit(1)};console.log('OpenClaw pin verified: '+p.version)" \
+RUN npm install -g openclaw@2026.10.10 \
+    && node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('/usr/lib/node_modules/openclaw/package.json','utf8'));if(p.version!=='2026.10.10'){console.error('ERROR: unexpected OpenClaw version installed: '+p.version);process.exit(1)};console.log('OpenClaw pin verified: '+p.version)" \
     && npm install -g node-llama-cpp@3.20.0 \
     && npm install -g mcporter@0.12.3 \
     && npm install -g pnpm \
