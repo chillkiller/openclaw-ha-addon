@@ -35,6 +35,7 @@ import {
   renderEnvFile,
   resolveEntryModels,
   resolveHarnessWriterPaths,
+  resolveOpencodeGlobalDir,
   withV1Suffix,
   type HarnessConfigEntry,
   type HarnessWriterPaths,
@@ -50,11 +51,11 @@ afterEach(() => {
   rmSync(root, { recursive: true, force: true });
 });
 
-function paths(): HarnessWriterPaths {
+function paths(home = root): HarnessWriterPaths {
   return {
     acpxDir: join(root, "state", "acpx"),
     codexSourceHome: join(root, "config", ".codex"),
-    opencodeGlobalDir: join(root, "config", "opencode"),
+    opencodeGlobalDir: resolveOpencodeGlobalDir({ HOME: home }) ?? join(home, ".config", "opencode"),
     claudeSourceHome: join(root, "config", ".claude"),
     piAgentDir: join(root, "config", ".pi", "agent"),
   };
@@ -130,7 +131,14 @@ describe("codex writer", () => {
     // Self-Recognition-Signatur (γ) immer erste Zeile.
     expect(toml.startsWith("# harness-config-writer (generated)")).toBe(true);
     expect(report.results[0].mechanism).toBe("file-codex");
-    expect(report.results[0].files.map((f) => f.action)).toEqual(["created", "created"]);
+    // Schritt 4: zusätzlich HCW-eigener Wrapper + Home (config.toml + auth.json).
+    expect(report.results[0].files.map((f) => f.action)).toEqual([
+      "created",
+      "created",
+      "created",
+      "created",
+      "created",
+    ]);
   });
 
   it("thinking set → model_reasoning_effort; empty → absent", () => {
@@ -405,7 +413,13 @@ describe("codex writer", () => {
     const p = paths();
     DEPLOY({ harnesses: { codex: OLLAMA } }, p);
     const report = DEPLOY({ harnesses: { codex: OLLAMA } }, p);
-    expect(report.results[0].files.map((f) => f.action)).toEqual(["unchanged", "unchanged"]);
+    expect(report.results[0].files.map((f) => f.action)).toEqual([
+      "unchanged",
+      "unchanged",
+      "unchanged",
+      "unchanged",
+      "unchanged",
+    ]);
   });
 
   it("existing auth.json is NEVER touched — even different content (helper semantics)", () => {
@@ -1380,6 +1394,9 @@ describe("codex model metadata catalog (γ.1)", () => {
     expect(report.results[0].files.map((f) => f.action)).toEqual([
       "created",
       "created",
+      "created",
+      "created",
+      "created",
     ]);
     expect(readText(join(p.codexSourceHome, "config.toml"))).not.toMatch(
       /^model_catalog_json =/m,
@@ -1869,15 +1886,35 @@ describe("env models comment (no multi-model env surface)", () => {
 // ---------------------------------------------------------------------------
 
 describe("resolveHarnessWriterPaths", () => {
-  it("STATE /config/.openclaw → helper-equivalent constant layout", () => {
-    const p = resolveHarnessWriterPaths({ OPENCLAW_STATE_DIR: "/config/.openclaw" });
+  it("STATE /config/.openclaw → opencodeGlobalDir aus Prozess-HOME aufgelöst", () => {
+    const p = resolveHarnessWriterPaths({
+      OPENCLAW_STATE_DIR: "/config/.openclaw",
+      HOME: "/home/testuser",
+    });
     expect(p).toEqual({
       acpxDir: "/config/.openclaw/acpx",
       codexSourceHome: "/config/.codex",
-      opencodeGlobalDir: "/config/opencode",
+      opencodeGlobalDir: "/home/testuser/.config/opencode",
       claudeSourceHome: "/config/.claude",
       piAgentDir: "/config/.pi/agent",
     });
+  });
+
+  it("honours XDG_CONFIG_HOME for opencodeGlobalDir", () => {
+    const p = resolveHarnessWriterPaths({
+      OPENCLAW_STATE_DIR: "/config/.openclaw",
+      HOME: "/home/testuser",
+      XDG_CONFIG_HOME: "/xdg/config",
+    });
+    expect(p?.opencodeGlobalDir).toBe("/xdg/config/opencode");
+  });
+
+  it("two different HOME values yield two different, correct opencodeGlobalDir paths", () => {
+    const a = resolveHarnessWriterPaths({ OPENCLAW_STATE_DIR: "/config/.openclaw", HOME: "/home/alice" });
+    const b = resolveHarnessWriterPaths({ OPENCLAW_STATE_DIR: "/config/.openclaw", HOME: "/home/bob" });
+    expect(a?.opencodeGlobalDir).toBe("/home/alice/.config/opencode");
+    expect(b?.opencodeGlobalDir).toBe("/home/bob/.config/opencode");
+    expect(a?.opencodeGlobalDir).not.toBe(b?.opencodeGlobalDir);
   });
 
   it("unresolvable env → null (honest degrade)", () => {

@@ -77,6 +77,12 @@ import {
 } from "node:fs";
  import { dirname, join, resolve } from "node:path";
 
+import {
+  deployCodexHcwWrapper,
+  resolveCodexHcwWrapperPath,
+  type CodexHcwWrapperDeployResult,
+} from "./codex-hcw-wrapper.js";
+
 // Repo-Split A2 (2026-10-11): resolveOpenClawStateDir lebt hier als EIGENE
 // Kopie (origin: acp-dashboard-binding/src/agent-map.ts, Byte-identisch).
 // Absichtlich dupliziert statt Cross-Import — die beiden Plugins sind
@@ -103,6 +109,24 @@ function resolveOpenClawStateDir(env?: Record<string, string | undefined>): stri
   if (xdg) return `${xdg.replace(/\/+$/, "")}/.openclaw`;
   const home = typeof e.HOME === "string" ? e.HOME.trim() : "";
   if (home) return `${home.replace(/\/+$/, "")}/.openclaw`;
+  return null;
+}
+
+/**
+ * OpenCode-Config-Verzeichnis, portabel vom HOME des laufenden Prozesses.
+ * OpenCode sucht seine Config nach XDG unter `$XDG_CONFIG_HOME/opencode`,
+ * sonst unter `$HOME/.config/opencode` (Binary-Strings belegt). Kein absoluter
+ * Pfad, kein hardcodiertes Home — damit Host-Addon und Container gleichermassen
+ * korrekt auflösen.
+ */
+export function resolveOpencodeGlobalDir(
+  env?: Record<string, string | undefined>,
+): string | null {
+  const e = env ?? (typeof process !== "undefined" ? process.env : undefined) ?? {};
+  const xdg = typeof e.XDG_CONFIG_HOME === "string" ? e.XDG_CONFIG_HOME.trim() : "";
+  if (xdg) return `${xdg.replace(/\/+$/, "")}/opencode`;
+  const home = typeof e.HOME === "string" ? e.HOME.trim() : "";
+  if (home) return `${home.replace(/\/+$/, "")}/.config/opencode`;
   return null;
 }
 
@@ -150,7 +174,7 @@ export type HarnessWriterPaths = {
   acpxDir: string;
   /** Parent/state-dir/.codex — die acpx-Inheritance-Quelle (config.toml). */
   codexSourceHome: string;
-  /** Parent/state-dir/opencode — OpenCode global config dir. */
+  /** `$XDG_CONFIG_HOME/opencode` bzw. `$HOME/.config/opencode` — OpenCode global config dir. */
   opencodeGlobalDir: string;
   /** Parent/state-dir/.claude — Claude Code settings.json (model/env). */
   claudeSourceHome: string;
@@ -192,8 +216,8 @@ export type HarnessWriterLogger = {
 // (Repo-Split A2: EIGENE Kopie oben, kein Cross-Import — beide Plugins
 // unabhängig pflegbar).
 // Auf dem Host ist STATE /config/.openclaw → codexSourceHome /config/.codex,
-// opencodeGlobalDir /config/opencode — exakt die Helper-Konstanten
-// CODEX_SOURCE_HOME / OPENCODE_GLOBAL_DIR (oc_acpx_helper.py:35-48).
+// opencodeGlobalDir hingegen wird aus dem laufenden Prozess-HOME (XDG) aufgelöst,
+// weil OpenCode seine Config tatsächlich unter ~/.config/opencode sucht.
 // ---------------------------------------------------------------------------
 
 export function resolveHarnessWriterPaths(
@@ -201,12 +225,14 @@ export function resolveHarnessWriterPaths(
 ): HarnessWriterPaths | null {
   const stateDir = resolveOpenClawStateDir(env);
   if (!stateDir) return null;
+  const opencodeGlobalDir = resolveOpencodeGlobalDir(env);
+  if (!opencodeGlobalDir) return null;
   const state = stateDir.replace(/\/+$/, "");
   const parent = dirname(state);
   return {
     acpxDir: `${state}/acpx`,
     codexSourceHome: `${parent}/.codex`,
-    opencodeGlobalDir: `${parent}/opencode`,
+    opencodeGlobalDir,
     claudeSourceHome: `${parent}/.claude`,
     piAgentDir: `${parent}/.pi/agent`,
   };
@@ -1748,8 +1774,7 @@ function deepEqualsWriter(a: unknown, b: unknown): boolean {
 }
 
 /**
- * Deploy in BEIDE Dirs wie der Helper (opencode-home der ACPX_DIR + global
- * /config/opencode), bytes-sync; das legacy config.toml (comment-only) wird
+ * Deploy in BEIDE Dirs (opencode-home der ACPX_DIR + global opencode-Config-Dir), bytes-sync; das legacy config.toml (comment-only) wird
  * in opencode-home neutralisiert (Helper copy-on-diff verbatim).
  */
 export function deployOpencodeHarnessFiles(
@@ -2282,12 +2307,22 @@ export function deployHarnessConfigs(
           ? // γ.1: Katalog (metabyId) für die codex-Metadaten-Datei mitgeben.
             deployCodexHarnessFiles(enriched, paths, logger, harnessId, modelCatalog)
           : deployOpencodeHarnessFiles(enriched, paths, logger, harnessId);
+      // Schritt 4 (Weg A'): zusätzlich HCW-eigenen Codex-Wrapper + Home
+      // deployen, damit acpx diesen Wrapper über agents.codex.command aufrufen
+      // kann. Der bestehende FILE-Mechanismus bleibt aktiv (kein Verhaltens-
+      // Change ohne Config-Setzung).
+      const hcwWrapper: CodexHcwWrapperDeployResult | null =
+        harnessId === "codex" && enriched.baseUrl
+          ? deployCodexHcwWrapper(enriched, paths, logger, modelCatalog)
+          : null;
+      const hcwFiles = hcwWrapper ? hcwWrapper.files : [];
       results.push({
         harnessId,
         mechanism: harnessId === "codex" ? "file-codex" : "file-opencode",
         ...deploy,
         warnings: [...entryWarnings, ...deploy.warnings],
         modelsSource: resolvedModels?.source,
+        files: [...deploy.files, ...hcwFiles],
       });
       continue;
     }

@@ -17,6 +17,16 @@ For a release-facing summary, see the root [CHANGELOG.md](../CHANGELOG.md).
 
 ### Added
 
+- **harness-config-writer Codex ACP catalog delivery:** the generated model catalog is now also
+  delivered to Codex ACP sessions. The writer deploys a dedicated adapter wrapper and its own
+  Codex home, and points the ACP Codex command at it. The catalog file is written before the
+  adapter starts, and the wrapper starts the adapter with that home. The ACP command is only
+  written when it differs from the current value, so an unchanged deployment performs no config
+  write, no reload and no restart. The plugin-owned adapter wrapper is left untouched.
+- **harness-config-writer OpenCode config path:** the OpenCode global config directory is now
+  resolved from the running process home (`XDG_CONFIG_HOME/opencode`, otherwise
+  `HOME/.config/opencode`) instead of a fixed path. OpenCode ignores a configuration outside its
+  own config directory, so the generated file had no effect on the model in use.
 - **harness-config-writer Claude Code settings file:** when a `claude` harness is configured, the writer also deploys `~/.claude/settings.json` with `model`, optional `effort`, and the managed `env` block (`ANTHROPIC_BASE_URL`, `ANTHROPIC_AUTH_TOKEN`, `ANTHROPIC_SMALL_FAST_MODEL`). The file is merged with any existing operator settings, atomically written with `0600`, and idempotent.
 - **harness-config-writer pi coding agent config:** a new `pi` harness writes `<home>/.pi/agent/models.json` and `settings.json`. The generated `settings.json` always contains `enabledModels: ["<providerId>/*"]` so pi starts on the configured provider instead of failing with an Anthropic 401. Provider metadata and thinking levels are validated; existing foreign providers and settings keys are preserved on merge.
 

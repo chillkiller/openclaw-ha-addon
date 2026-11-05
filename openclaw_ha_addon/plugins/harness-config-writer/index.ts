@@ -31,6 +31,10 @@ import {
   resolveHarnessWriterPaths,
   type HarnessWriterLogger,
 } from "./src/harness-config-writer.js";
+import {
+  resolveCodexHcwWrapperPath,
+  setAcpxCodexCommand,
+} from "./src/codex-hcw-wrapper.js";
 
 const PLUGIN_ID = "harness-config-writer";
 
@@ -162,6 +166,26 @@ export function registerHarnessConfigDeployment(api: OpenClawPluginApi): void {
         api.logger?.warn?.(`[${PLUGIN_ID}] harness ${result.harnessId}: ${warning}`);
       }
     }
+
+    // Schritt 4 (Weg A'): wenn ein codex-Harness deployt wurde, acpx auf den
+    // HCW-eigenen Wrapper umleiten. Nur der codex-Pfad wird angefasst; ohne
+    // diese Setzung bleibt alles wie heute (kein Verhaltens-Change).
+    if (report.results.some((r) => r.harnessId === "codex")) {
+      const wrapperPath = resolveCodexHcwWrapperPath(paths);
+      void (async () => {
+        const { changed } = await setAcpxCodexCommand(api, wrapperPath, api.logger);
+        if (changed) {
+          api.logger?.info?.(
+            `[${PLUGIN_ID}] set plugins.entries.acpx.config.agents.codex.command = ${wrapperPath}`,
+          );
+        } else {
+          api.logger?.debug?.(
+            `[${PLUGIN_ID}] plugins.entries.acpx.config.agents.codex.command already points to ${wrapperPath}`,
+          );
+        }
+      })();
+    }
+
     api.logger?.info?.(
       `[${PLUGIN_ID}] harness config deployment: ${report.results
         .map((r) => (r.modelsSource ? `${r.harnessId}=${r.mechanism} (models:${r.modelsSource})` : `${r.harnessId}=${r.mechanism}`))
