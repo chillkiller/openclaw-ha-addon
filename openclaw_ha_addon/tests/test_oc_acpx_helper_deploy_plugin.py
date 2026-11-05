@@ -894,6 +894,26 @@ class BundledRootDeployTest(unittest.TestCase):
         entry = cfg["plugins"]["entries"]["harness-config-writer"]
         self.assertIs(entry["enabled"], True)
 
+    def test_bundled_deploy_copies_runtime_assets(self) -> None:
+        # A compiled bundle cannot carry the codex base-instructions fixture,
+        # so the deploy must copy it next to index.mjs. Without it the writer
+        # finds no fixture and writes the catalog without base_instructions.
+        self.bundled_dir.mkdir(parents=True)
+        mock.patch.object(helper, "_find_esbuild",
+                          lambda: "/fake/esbuild").start()
+        self.addCleanup(mock.patch.stopall)
+        mock.patch.object(helper, "_compile_bundled_plugin",
+                          lambda src, _bin: b"BUNDLE-BYTES").start()
+        asset = (self.src_root / helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME
+                 / "src" / "fixtures" / "codex-base-instructions.txt")
+        asset.parent.mkdir(parents=True, exist_ok=True)
+        asset.write_text("FIXTURE-BYTES\n")
+        self.assertTrue(helper._deploy_and_register_plugin(
+            helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME))
+        copied = (self.bundled_dst() / "fixtures" / "codex-base-instructions.txt")
+        self.assertTrue(copied.is_file())
+        self.assertEqual(copied.read_text(), "FIXTURE-BYTES\n")
+
     def test_bundled_deploy_removes_stale_external_copy(self) -> None:
         self.bundled_dir.mkdir(parents=True)
         external = self.config_dir / "plugins" / helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME
