@@ -1243,6 +1243,23 @@ function resolveBaseInstructions(modelId: string, meta: ModelMeta, warnings: str
  *      through Ollama. …" ersetzen,
  *   3) die übrigen Zeilen unverändert übernehmen.
  */
+/**
+ * Apache-2.0 section 4: The fixture is a modified derivative of the Codex base
+ * prompt and therefore carries a prominent attribution notice in its file head.
+ * That notice must not become part of the prompt handed to the model, so it is
+ * removed before use. Only a block carrying the `ATTRIBUTION-END` marker is
+ * stripped; unrelated leading comments stay untouched.
+ */
+const ATTRIBUTION_MARKER = "ATTRIBUTION-END";
+
+function stripAttributionHeader(raw: string): string {
+  if (!raw.startsWith("<!--")) return raw;
+  const end = raw.indexOf("-->");
+  if (end < 0) return raw;
+  if (!raw.slice(0, end).includes(ATTRIBUTION_MARKER)) return raw;
+  return raw.slice(end + 3).replace(/^\r?\n/, "");
+}
+
 function loadCodexBaseInstructionsFixture(warnings: string[]): string | null {
   const fileName = "codex-base-instructions.txt";
   const candidates = new Set<string>();
@@ -1264,7 +1281,7 @@ function loadCodexBaseInstructionsFixture(warnings: string[]): string | null {
   for (const path of candidates) {
     try {
       if (existsSync(path)) {
-        return readFileSync(path, "utf-8");
+        return stripAttributionHeader(readFileSync(path, "utf-8"));
       }
     } catch { /* try next */ }
   }

@@ -1561,6 +1561,41 @@ describe("codex model metadata catalog (γ.2)", () => {
     expect(warnings).toHaveLength(0);
   });
 
+  it("fixture carries the Apache-2.0 attribution notice (section 4 compliance)", () => {
+    const raw = readFileSync(
+      new URL("./fixtures/codex-base-instructions.txt", import.meta.url),
+      "utf-8",
+    );
+    expect(raw.startsWith("<!--")).toBe(true);
+    expect(raw).toContain("ATTRIBUTION-END");
+    expect(raw).toContain("Apache License");
+    expect(raw).toContain("openai/codex");
+  });
+
+  it("attribution header is stripped from the prompt handed to codex", () => {
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            ollama: {
+              baseUrl: "http://localhost:11434",
+              models: [{ id: "llama3", contextWindow: 128000 }],
+            },
+          },
+        },
+      },
+      [],
+    );
+    const warnings: string[] = [];
+    const built = buildCodexModelCatalogJson(["llama3"], catalog.metaById, warnings);
+    const model = JSON.parse(built!.content).models[0];
+    expect(model.base_instructions.startsWith("You are Codex")).toBe(true);
+    expect(model.base_instructions).not.toContain("ATTRIBUTION-END");
+    expect(model.base_instructions).not.toContain("Apache License");
+    expect(model.base_instructions).not.toContain("<!--");
+    expect(model.base_instructions).toContain("llama3");
+  });
+
   it("baseInstructions fixture loads template with model substitution", () => {
     const catalog = buildModelCatalog(
       {

@@ -1,3 +1,28 @@
+<!--
+NOTICE AND ATTRIBUTION
+
+This file is a modified derivative of the Codex CLI base_instructions prompt
+and is used under the terms of the Apache License, Version 2.0.
+
+  Upstream project: OpenAI Codex CLI (https://github.com/openai/codex)
+  Upstream source:  codex-rs/protocol/src/openai_models.rs (ModelInfo field
+                    `base_instructions`)
+  Upstream license: Apache License, Version 2.0
+                    (https://www.apache.org/licenses/LICENSE-2.0)
+
+Modifications applied to the upstream text:
+
+  1. The opening line was replaced with a model placeholder so the prompt
+     names the operator-configured model instead of a fixed upstream model.
+  2. This attribution header was prepended.
+  3. The remaining lines are byte-identical to the upstream base_instructions.
+
+The plugin removes this header before the prompt is handed to Codex, so the
+model never sees it. Regenerate the template after a Codex upstream update:
+see the provenance note in src/harness-config-writer.ts.
+
+ATTRIBUTION-END
+-->
 You are Codex, a coding agent powered by {{model}} through Ollama. You and the user share one workspace, and your job is to collaborate with them until their goal is genuinely handled.
 
 # Personality
