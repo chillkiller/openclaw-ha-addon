@@ -17,6 +17,7 @@ For a release-facing summary, see the root [CHANGELOG.md](../CHANGELOG.md).
 - **Bounded shutdown (`run.sh`):** the gateway was waited for indefinitely, so the supervisor killed the container (exit code 137). Shutdown now uses a bounded stop budget (SIGTERM, poll, then SIGKILL) for the gateway, nginx, ttyd, avahi and dbus.
 - **Health probe (`Dockerfile`):** the probe requested an endpoint the gateway no longer offers and sent the request without a host header, so every probe failed and a healthy add-on was reported as unhealthy and restarted by the supervisor. The probe now uses the gateway health endpoint with an explicit host header.
 - **Automatic repair timeout (`run.sh`):** the repair was limited to 300 seconds, which cut it off mid-way on every attempt before it could change anything. The budget is now 1800 seconds and configurable via `gateway_doctor_repair_timeout` (300..7200).
+- **Repair snapshot retention (`run.sh`):** every `doctor --fix` run writes a snapshot of the complete agent database set (1-6 GB per run) and nothing removed them, so the configuration directory grew by tens of gigabytes and every snapshot copy pulled gigabytes through memory. The add-on now keeps only the newest snapshots (`gateway_doctor_capture_keep`, 1..10, default 2) after each repair run.
 
 ### Changed
 

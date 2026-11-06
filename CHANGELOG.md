@@ -22,10 +22,12 @@ The web terminal stays up while it is healthy, the add-on reports its real healt
 - **The add-on no longer reports itself as unhealthy while it is running.** The health probe asked the gateway for an endpoint that no longer exists and sent the request without a host header, so every probe failed and the add-on was marked unhealthy and restarted by the supervisor while it was serving normally. The probe now uses the gateway's health endpoint with an explicit host header.
 - **The automatic repair is no longer cut off before it finishes.** The repair was given 300 seconds. On a system with several agent databases the inspection pass needs longer, so the repair was terminated mid-way on every attempt and never changed anything. The budget is now 1800 seconds and can be configured.
 - **A failed automatic repair is retried as a full repair.** The non-interactive repair only performs safe migrations, so a blocked agent database lease survived it and the gateway kept failing to start. The add-on now retries once as a full repair, which is the form that releases the lease.
+- **The add-on no longer fills its own storage with repair snapshots.** Every automatic repair wrote a snapshot of the complete agent database set (1–6 GB per run) and nothing ever removed them, so the configuration directory grew by tens of gigabytes while the copies pulled gigabytes through memory on every attempt. Only the two most recent snapshots are now kept.
 
 ### Changed
 
 - **OpenClaw updated to 2026.11.1** (was 2026.10.10). The new patch release fixes Doctor reporting success when an inspection is blocked, lets an update restart a service that Doctor stopped, and reduces how often unchanged databases are re-read.
+- **The number of retained repair snapshots is configurable** (`gateway_doctor_capture_keep`, 1 to 10, default 2).
 
 ## [0.7.13.36] — 2026-11-05
 

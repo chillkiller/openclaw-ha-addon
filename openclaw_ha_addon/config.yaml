@@ -248,6 +248,11 @@ options:
     # A shorter timeout cut the repair off mid-flight, so it never finished;
     # 1800 s lets the full inspection set complete.
     gateway_doctor_repair_timeout: 1800
+    # How many `doctor --fix` snapshots to keep. Every repair run snapshots the
+    # complete agent database set (1-6 GB per run); without a limit the config
+    # volume grows without bound and every snapshot copy pulls gigabytes
+    # through the page cache.
+    gateway_doctor_capture_keep: 2
 
   runtime:
     # Optional: Space-separated list of apt packages to install at container startup.
@@ -318,6 +323,7 @@ schema:
     upgrade_backup_keep: int(1,10)?
     gateway_doctor_repair_max: int(0,10)?
     gateway_doctor_repair_timeout: int(300,7200)?
+    gateway_doctor_capture_keep: int(1,10)?
   runtime:
     runtime_apt_packages: str?
     custom_init_script: str?

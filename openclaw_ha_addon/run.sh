@@ -254,6 +254,16 @@ case "$GW_DOCTOR_REPAIR_TIMEOUT" in
 esac
 if [ "$GW_DOCTOR_REPAIR_TIMEOUT" -lt 300 ]; then GW_DOCTOR_REPAIR_TIMEOUT=300; fi
 if [ "$GW_DOCTOR_REPAIR_TIMEOUT" -gt 7200 ]; then GW_DOCTOR_REPAIR_TIMEOUT=7200; fi
+# How many `doctor --fix` snapshots to keep. Every repair run snapshots the
+# complete agent database set (1-6 GB per run), so an unbounded number of
+# snapshots fills the config volume and every snapshot copy pulls gigabytes
+# through the page cache.
+GW_DOCTOR_CAPTURE_KEEP=$(jq -r 'if has("gateway_doctor_capture_keep") and (.gateway_doctor_capture_keep != null) then (.gateway_doctor_capture_keep|tonumber) else 2 end' "$OPTIONS_FILE")
+case "$GW_DOCTOR_CAPTURE_KEEP" in
+  ''|*[!0-9]*) GW_DOCTOR_CAPTURE_KEEP=2 ;;
+esac
+if [ "$GW_DOCTOR_CAPTURE_KEEP" -lt 1 ]; then GW_DOCTOR_CAPTURE_KEEP=1; fi
+if [ "$GW_DOCTOR_CAPTURE_KEEP" -gt 10 ]; then GW_DOCTOR_CAPTURE_KEEP=10; fi
 
 # ACPX harnesses (Claude Code, Codex, OpenCode). Default OFF (v0.7.13.30):
 # all acp(x) switches are opt-in (acpx_enabled / harness_config_writer_enabled /
@@ -2426,6 +2436,20 @@ while true; do
         echo "INFO: 'openclaw doctor --fix' (full repair) completed."
       else
         echo "WARN: 'openclaw doctor --fix' (full repair) exited non-zero — repair may be incomplete."
+      fi
+    fi
+    # --- Doctor-Snapshots aufraeumen ----------------------------------------
+    # Jeder Reparaturlauf legt einen Snapshot des kompletten Agent-DB-Satzes an
+    # (1-6 GB je Lauf). Ohne Begrenzung waechst /config unbegrenzt, und jeder
+    # Snapshot-Kopiervorgang zieht Gigabyte durch den Page-Cache (RAM). Es
+    # bleiben die neuesten N Snapshots erhalten, damit die manuelle Recovery den
+    # letzten Reparatur-Zustand weiterhin findet.
+    DOCTOR_CAPTURE_DIR="$(dirname "$OPENCLAW_CONFIG_DIR")/.openclaw.update-captures"
+    if [ -d "$DOCTOR_CAPTURE_DIR" ]; then
+      OLD_CAPTURES=$(ls -1dt "$DOCTOR_CAPTURE_DIR"/doctor-* 2>/dev/null | tail -n "+$((GW_DOCTOR_CAPTURE_KEEP + 1))")
+      if [ -n "$OLD_CAPTURES" ]; then
+        echo "$OLD_CAPTURES" | while IFS= read -r old; do rm -rf "$old" 2>/dev/null || true; done
+        echo "INFO: Doctor-Snapshots auf die neuesten ${GW_DOCTOR_CAPTURE_KEEP} bereinigt."
       fi
     fi
   elif [ "$GW_CONSECUTIVE_FAILS" -ge 2 ]; then
