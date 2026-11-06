@@ -243,6 +243,17 @@ BLOCKED_HOSTNAMES=$(jq -r '.blocked_hostnames // empty' "$OPTIONS_FILE")
 ABORT_ON_UPGRADE_BACKUP_FAILURE=$(jq -r 'if has("abort_on_upgrade_backup_failure") then (.abort_on_upgrade_backup_failure|tostring) else "true" end' "$OPTIONS_FILE")
 UPGRADE_BACKUP_KEEP=$(jq -r 'if has("upgrade_backup_keep") and (.upgrade_backup_keep != null) then (.upgrade_backup_keep|tonumber) else 3 end' "$OPTIONS_FILE")
 GW_DOCTOR_REPAIR_MAX=$(jq -r 'if has("gateway_doctor_repair_max") and (.gateway_doctor_repair_max != null) then (.gateway_doctor_repair_max|tonumber) else 3 end' "$OPTIONS_FILE")
+# Timeout for one automatic repair run (seconds). The repair has to finish: with
+# several agent databases the full inspection set takes far longer than 300 s,
+# and a shorter timeout killed the run mid-flight every time (measured on the
+# live add-on: both automatic runs stopped at exactly 301 s and 302 s and
+# always reported failure). Clamped to 300..7200 s.
+GW_DOCTOR_REPAIR_TIMEOUT=$(jq -r 'if has("gateway_doctor_repair_timeout") and (.gateway_doctor_repair_timeout != null) then (.gateway_doctor_repair_timeout|tonumber) else 1800 end' "$OPTIONS_FILE")
+case "$GW_DOCTOR_REPAIR_TIMEOUT" in
+  ''|*[!0-9]*) GW_DOCTOR_REPAIR_TIMEOUT=1800 ;;
+esac
+if [ "$GW_DOCTOR_REPAIR_TIMEOUT" -lt 300 ]; then GW_DOCTOR_REPAIR_TIMEOUT=300; fi
+if [ "$GW_DOCTOR_REPAIR_TIMEOUT" -gt 7200 ]; then GW_DOCTOR_REPAIR_TIMEOUT=7200; fi
 
 # ACPX harnesses (Claude Code, Codex, OpenCode). Default OFF (v0.7.13.30):
 # all acp(x) switches are opt-in (acpx_enabled / harness_config_writer_enabled /
@@ -766,33 +777,56 @@ GW_PID=""
 GW_RELAY_PID=""
 NGINX_PID=""
 TTYD_PID=""
+# Grace period after a (re)start: the port binds ~1 s later. Without it the
+# watchdog fired inside that window and killed the freshly started ttyd.
+TTYD_GRACE_UNTIL=0
 SHUTTING_DOWN="false"
+
+# Bounded stop helper.
+# Why: an unbounded `wait` blocks until the child exits. The gateway drains up to
+# 330 s (Gateway stop policy=330000ms), so PID 1 stayed alive long past
+# Docker's 10 s stop budget -> Docker SIGKILLs the container -> "exited with
+# non-zero exit code 137". Poll first (bounded by the shared shutdown
+# deadline), then escalate to KILL, then reap.
+SHUTDOWN_DEADLINE=0
+shutdown_budget_left() {
+  local left=$(( SHUTDOWN_DEADLINE - $(date +%s) ))
+  [ "${left}" -lt 1 ] && left=1
+  echo "${left}"
+}
+stop_pid_bounded() {
+  local pid="$1" label="$2" budget="${3:-3}" i left
+  [ -n "${pid}" ] || return 0
+  kill -0 "${pid}" 2>/dev/null || return 0
+  kill -TERM "${pid}" 2>/dev/null || true
+  left=$(shutdown_budget_left)
+  [ "${left}" -lt "${budget}" ] && budget="${left}"
+  for ((i = 0; i < budget; i++)); do
+    kill -0 "${pid}" 2>/dev/null || break
+    sleep 1
+  done
+  if kill -0 "${pid}" 2>/dev/null; then
+    echo "WARN: ${label} did not exit on SIGTERM within ${budget}s; escalating to KILL."
+    kill -KILL "${pid}" 2>/dev/null || true
+  fi
+  wait "${pid}" 2>/dev/null || true
+}
 
 shutdown() {
   SHUTTING_DOWN="true"
+  # Docker's stop budget is ~10 s; reserve 8 s for all children, 2 s for cleanup.
+  SHUTDOWN_DEADLINE=$(( $(date +%s) + 8 ))
   echo "Shutdown requested; stopping services..."
 
-  if [ -n "${NGINX_PID}" ] && kill -0 "${NGINX_PID}" >/dev/null 2>&1; then
-    kill -TERM "${NGINX_PID}" >/dev/null 2>&1 || true
-    wait "${NGINX_PID}" || true
-  fi
+  stop_pid_bounded "${NGINX_PID}" "nginx" 2
 
-  if [ -n "${TTYD_PID}" ] && kill -0 "${TTYD_PID}" >/dev/null 2>&1; then
-    kill -TERM "${TTYD_PID}" >/dev/null 2>&1 || true
-    wait "${TTYD_PID}" || true
-  fi
+  stop_pid_bounded "${TTYD_PID}" "ttyd" 2
 
   # Stop Avahi before D-Bus; reverse startup order.
-  if [ -n "${AVAHI_PID:-}" ] && kill -0 "${AVAHI_PID}" >/dev/null 2>&1; then
-    kill -TERM "${AVAHI_PID}" >/dev/null 2>&1 || true
-    wait "${AVAHI_PID}" 2>/dev/null || true
-  fi
+  stop_pid_bounded "${AVAHI_PID:-}" "avahi" 1
 
   # Stop the D-Bus daemon we started, if still running.
-  if [ -n "${DBUS_PID:-}" ] && kill -0 "${DBUS_PID}" >/dev/null 2>&1; then
-    kill -TERM "${DBUS_PID}" >/dev/null 2>&1 || true
-    wait "${DBUS_PID}" 2>/dev/null || true
-  fi
+  stop_pid_bounded "${DBUS_PID:-}" "dbus" 1
 
   if [ -n "${GW_PID}" ] && kill -0 "${GW_PID}" >/dev/null 2>&1; then
     kill -TERM "${GW_PID}" >/dev/null 2>&1 || true
@@ -803,20 +837,24 @@ shutdown() {
     # "addon stops with an error" report). Escalate inside our own budget
     # instead: 3 s poll → KILL → 1 s re-check, so run.sh exits well before
     # Docker's deadline with all cleanup (relay, pid files, locks) done.
-    if ! wait "${GW_PID}" 2>/dev/null; then
+    # Poll FIRST (bounded by the shared shutdown deadline), then escalate, then reap.
+    # The previous `wait` blocked for the gateway's 330 s drain, so the
+    # escalation below was unreachable and Docker's 10 s budget SIGKILLed us.
+    _gw_left=$(shutdown_budget_left)
+    [ "${_gw_left}" -gt 4 ] && _gw_left=4
+    for _i in $(seq 1 "${_gw_left}"); do
+      kill -0 "${GW_PID}" 2>/dev/null || break
+      sleep 1
+    done
+    if kill -0 "${GW_PID}" 2>/dev/null; then
+      echo "WARN: gateway did not exit on SIGTERM; escalating to KILL (shutdown budget)."
+      kill -KILL "${GW_PID}" 2>/dev/null || true
       for _i in 1 2 3; do
         kill -0 "${GW_PID}" 2>/dev/null || break
         sleep 1
       done
-      if kill -0 "${GW_PID}" 2>/dev/null; then
-        echo "WARN: gateway did not exit on SIGTERM; escalating to KILL (shutdown budget)."
-        kill -KILL "${GW_PID}" 2>/dev/null || true
-        for _i in 1 2 3; do
-          kill -0 "${GW_PID}" 2>/dev/null || break
-          sleep 1
-        done
-      fi
     fi
+    wait "${GW_PID}" 2>/dev/null || true
   fi
 
   stop_gw_relay
@@ -1677,10 +1715,25 @@ start_ttyd() {
   ttyd -W -i 127.0.0.1 -p "${TERMINAL_PORT}" -b /terminal bash -il &
   TTYD_PID=$!
   echo "$TTYD_PID" > "$TTYD_PID_FILE"
-  echo "ttyd started with PID $TTYD_PID"
+  TTYD_GRACE_UNTIL=$(( $(date +%s) + 60 ))
+  echo "ttyd started with PID $TTYD_PID (no kill until ${TTYD_GRACE_UNTIL})"
 }
 ttyd_listening() {
-  command -v ss >/dev/null 2>&1 && ss -tlnp 2>/dev/null | grep -q ":${TERMINAL_PORT} "
+  # Robust, dependency-free probe.
+  # Why /proc/net/tcp first: no binary, no process column, no allocation — so it
+  # cannot fail the way `ss -tlnp` did when the process column was unreadable.
+  # LISTEN state is 0A; the port is the hex value of the local address column.
+  local _tn port_hex
+  port_hex=$(printf '%04X' "${TERMINAL_PORT}")
+  for _tn in /proc/net/tcp /proc/net/tcp6; do
+    [ -r "${_tn}" ] || continue
+    awk -v px="${port_hex}" '{ n = split($2, a, ":"); if (n == 2 && a[2] == px && $4 == "0A") f = 1 } END { exit !f }' "${_tn}" 2>/dev/null && return 0
+  done
+  # Fallback: ss. The old pattern ":PORT " required a trailing space and missed
+  # lines that end right after the port; accept both a separator and end-of-line.
+  command -v ss >/dev/null 2>&1 || return 1
+  ss -tln 2>/dev/null | grep -qE ":${TERMINAL_PORT}([[:space:]]|$)" && return 0
+  ss -tlnp 2>/dev/null | grep -qE ":${TERMINAL_PORT}([[:space:]]|$)"
 }
 
 stop_stale_ttyd
@@ -1731,12 +1784,38 @@ fi
 # stopped listening), 30 s cadence, independent of the gateway supervision loop.
 supervise_ttyd() {
   # Always-on since v0.7.13.30 (enable_terminal retired, see boot gate above).
+  TTYD_NOT_LISTENING=0
   while true; do
+    # Skip the probe while a (re)start is still settling.
+    if [ "$(date +%s)" -lt "${TTYD_GRACE_UNTIL:-0}" ]; then
+      sleep 5
+      continue
+    fi
     if ttyd_listening; then
+      TTYD_NOT_LISTENING=0
       sleep 30
       continue
     fi
-    echo "WARN: web terminal (ttyd) not listening on ${TERMINAL_PORT}; restarting it..."
+    # CONFIRMATION: one observation must never kill anything. ttyd 1.7.7 drops
+    # its listener for a fraction of a second now and then; the 30 s cadence hit
+    # exactly that window on 2026-11-05 07:35 and killed a HEALTHY terminal
+    # (the watchdog itself logged the LISTEN socket 0.33 s later). Require the
+    # condition to persist over three consecutive checks.
+    TTYD_NOT_LISTENING=$((TTYD_NOT_LISTENING + 1))
+    if [ "${TTYD_NOT_LISTENING}" -lt 3 ]; then
+      echo "NOTICE: ttyd not listening on ${TERMINAL_PORT} (${TTYD_NOT_LISTENING}/3) — waiting, no kill."
+      sleep 30
+      continue
+    fi
+    # A live ttyd is never SIGTERMed: killing it tears down the whole terminal
+    # tree, so every command running in the web terminal dies with it (measured:
+    # an in-flight `openclaw doctor --fix` was interrupted by SIGTERM).
+    if pgrep -x ttyd >/dev/null 2>&1; then
+      echo "NOTICE: ttyd is alive but not listening on ${TERMINAL_PORT}; leaving it alone (no kill, no SIGTERM to the terminal tree)."
+      sleep 30
+      continue
+    fi
+    echo "WARN: web terminal (ttyd) not listening on ${TERMINAL_PORT} for 3 consecutive checks; restarting it..."
     # Forensic snapshot of the hung process (ttyd 1.7.7 can sit ALIVE but not
     # listening — the kill -0 in stop_stale_ttyd succeeds on every revive; the
     # root cause is still open and this is the only place that sees it live).
@@ -2334,10 +2413,20 @@ while true; do
     ls -1t "${OPENCLAW_CONFIG_DIR}"/openclaw.json.pre-doctor-* 2>/dev/null \
       | tail -n +6 \
       | while IFS= read -r old; do rm -f "$old" 2>/dev/null || true; done || true
-    if timeout 300 openclaw doctor --fix --non-interactive --yes; then
+    if timeout "$GW_DOCTOR_REPAIR_TIMEOUT" openclaw doctor --fix --non-interactive --yes; then
       echo "INFO: 'openclaw doctor --fix' completed."
     else
       echo "WARN: 'openclaw doctor --fix' exited non-zero — repair may be incomplete."
+      # Fallback: the non-interactive form only performs safe migrations, so a
+      # blocked agent-database lease survives it — the state that kept the
+      # gateway from coming up. Retry once as a full repair, which is the form
+      # that releases the lease. Bounded by the same timeout.
+      echo "NOTICE: Retrying the repair as a full repair (openclaw doctor --fix --yes --force)…"
+      if timeout "$GW_DOCTOR_REPAIR_TIMEOUT" openclaw doctor --fix --yes --force; then
+        echo "INFO: 'openclaw doctor --fix' (full repair) completed."
+      else
+        echo "WARN: 'openclaw doctor --fix' (full repair) exited non-zero — repair may be incomplete."
+      fi
     fi
   elif [ "$GW_CONSECUTIVE_FAILS" -ge 2 ]; then
     echo "WARN: doctor repair budget exhausted (runs=${GW_DOCTOR_REPAIR_RUNS}/${GW_DOCTOR_REPAIR_MAX}) or remote mode; continuing with backoff only."

@@ -1,8 +1,8 @@
-# OpenClaw Home Assistant App v0.7.13.36 Configuration
+# OpenClaw Home Assistant App v0.7.13.37 Configuration
 # Full OpenClaw runtime with Ingress Web UI, web terminal, Assist pipeline
 # and MCP integration. Option reference lives in DOCS.md ("Configuration").
 name: OpenClaw Assistant
-version: "0.7.13.36"
+version: "0.7.13.37"
 slug: openclaw_ha_addon
 description: Agentic AI assistant for Home Assistant — full OpenClaw runtime with Ingress Web UI, web terminal, Assist pipeline and MCP integration
 url: https://github.com/chillkiller/openclaw-ha-addon
@@ -244,6 +244,10 @@ options:
     # Automatic `openclaw doctor --fix` runs per app start after 2 consecutive
     # failed gateway starts (openclaw.json snapshotted first). 0 disables.
     gateway_doctor_repair_max: 3
+    # Timeout in seconds for one automatic repair run (300..7200).
+    # A shorter timeout cut the repair off mid-flight, so it never finished;
+    # 1800 s lets the full inspection set complete.
+    gateway_doctor_repair_timeout: 1800
 
   runtime:
     # Optional: Space-separated list of apt packages to install at container startup.
@@ -313,6 +317,7 @@ schema:
     abort_on_upgrade_backup_failure: bool?
     upgrade_backup_keep: int(1,10)?
     gateway_doctor_repair_max: int(0,10)?
+    gateway_doctor_repair_timeout: int(300,7200)?
   runtime:
     runtime_apt_packages: str?
     custom_init_script: str?

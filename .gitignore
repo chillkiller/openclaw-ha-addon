@@ -10,6 +10,9 @@ __pycache__/
 
 # Lokale Task-Liste / Repair-Notizen: nie committen (interne IPs) — Direktive GaRoN 2026-10-07
 REPAIR_STATUS.md
+# Checkout-Layout-Dokument: bleibt bewusst im Repo-Root (Skill openclaw-ha-addon-repo-checkouts
+# verweist darauf), ist aber eine lokale Arbeitsdatei mit Host-Pfaden → nie committen.
+PROJECT.md
 # Windows-Redirect-Artefakt
 nul
 /agents/

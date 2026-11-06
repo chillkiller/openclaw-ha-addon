@@ -9,7 +9,7 @@ FROM ghcr.io/home-assistant/${BUILD_ARCH}-base-debian:bookworm
 
 # Labels required when not using the official GitHub builder action
 LABEL \
-  io.hass.version="0.7.13.36" \
+  io.hass.version="0.7.13.37" \
   io.hass.type="app" \
   io.hass.arch="aarch64|amd64"
 
@@ -292,8 +292,8 @@ ENV NODE_LLAMA_CPP_POSTINSTALL=skip
 # engine bump). npm itself verifies the registry dist.integrity for the pinned
 # version; the post-install gate re-checks the exact installed version so a
 # silently wrong registry manifest fails the build loudly.
-RUN npm install -g openclaw@2026.10.10 \
-    && node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('/usr/lib/node_modules/openclaw/package.json','utf8'));if(p.version!=='2026.10.10'){console.error('ERROR: unexpected OpenClaw version installed: '+p.version);process.exit(1)};console.log('OpenClaw pin verified: '+p.version)" \
+RUN npm install -g openclaw@2026.11.1 \
+    && node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('/usr/lib/node_modules/openclaw/package.json','utf8'));if(p.version!=='2026.11.1'){console.error('ERROR: unexpected OpenClaw version installed: '+p.version);process.exit(1)};console.log('OpenClaw pin verified: '+p.version)" \
     && npm install -g node-llama-cpp@3.20.0 \
     && npm install -g mcporter@0.12.3 \
     && npm install -g pnpm \
@@ -405,7 +405,11 @@ ENV PYTHONPATH=/config/.local/lib/python3.11/site-packages
 # failures during the grace window do not count toward retries, so slow-but-clean boots
 # no longer trip the watchdog; real hangs are still caught fast afterwards (4 consecutive
 # failed probes at a 30s interval).
-# /api/health proves nginx is up; /startupz proves the OpenClaw gateway is ready for traffic.
+# /api/health proves nginx is up; the gateway probe proves the OpenClaw gateway is ready for traffic.
+# The gateway routes by Host header. wget --spider sends HTTP/1.0 without a Host header, which the
+# gateway does not match, so the probe sends an explicit Host header.
+# The gateway exposes /healthz. /startupz no longer exists in current gateway builds and answered
+# 404 on every probe, which marked a healthy container unhealthy on every check.
 # The gateway port is read at check time from the persisted config so it works across
 # ingress_only / lan_http / lan_https internal port differences.
 # TLS (audit 2026-10-09): in tailnet_serve/tailnet_funnel modes the gateway
@@ -418,9 +422,9 @@ HEALTHCHECK --interval=30s --timeout=10s --start-period=420s --retries=4 \
     TLS=$(jq -r ".gateway.tls.enabled // false" "$CONF" 2>/dev/null || echo false); \
     wget --no-verbose --tries=1 --spider http://localhost:49200/api/health || exit 1; \
     if [ "$TLS" = "true" ]; then \
-      wget --no-verbose --tries=1 --spider --no-check-certificate https://127.0.0.1:${GW_PORT}/startupz; \
+      wget --no-verbose --tries=1 --spider --no-check-certificate --header="Host: localhost" https://127.0.0.1:${GW_PORT}/healthz; \
     else \
-      wget --no-verbose --tries=1 --spider http://127.0.0.1:${GW_PORT}/startupz; \
+      wget --no-verbose --tries=1 --spider --header="Host: localhost" http://127.0.0.1:${GW_PORT}/healthz; \
     fi'
 
 ENTRYPOINT [ "/usr/bin/tini", "-g", "--" ]

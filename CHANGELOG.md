@@ -10,6 +10,23 @@ Each entry summarizes user-visible changes. Full engineering notes:
 
 ---
 
+## [0.7.13.37] — 2026-11-06
+
+The web terminal stays up while it is healthy, the add-on reports its real health status, and a gateway that cannot start is repaired once instead of being restarted in a loop.
+
+### Fixed
+
+- **The web terminal is no longer restarted while it is healthy.** The watchdog that keeps the terminal alive acted on a single failed port check and terminated the terminal process, which also ended every command running in that terminal. It now waits for three consecutive failed checks, never terminates a running terminal process, and pauses after a restart before checking again.
+- **Terminal port detection no longer produces false results.** The check read the process column of a socket listing, which is not available in every environment. It now reads the kernel's socket table directly.
+- **The add-on shuts down within the supervisor's stop budget.** The shutdown waited for the gateway indefinitely and was then killed by the supervisor (exit code 137). It now stops the services with a bounded budget and polls the gateway process instead of waiting for it.
+- **The add-on no longer reports itself as unhealthy while it is running.** The health probe asked the gateway for an endpoint that no longer exists and sent the request without a host header, so every probe failed and the add-on was marked unhealthy and restarted by the supervisor while it was serving normally. The probe now uses the gateway's health endpoint with an explicit host header.
+- **The automatic repair is no longer cut off before it finishes.** The repair was given 300 seconds. On a system with several agent databases the inspection pass needs longer, so the repair was terminated mid-way on every attempt and never changed anything. The budget is now 1800 seconds and can be configured.
+- **A failed automatic repair is retried as a full repair.** The non-interactive repair only performs safe migrations, so a blocked agent database lease survived it and the gateway kept failing to start. The add-on now retries once as a full repair, which is the form that releases the lease.
+
+### Changed
+
+- **OpenClaw updated to 2026.11.1** (was 2026.10.10). The new patch release fixes Doctor reporting success when an inspection is blocked, lets an update restart a service that Doctor stopped, and reduces how often unchanged databases are re-read.
+
 ## [0.7.13.36] — 2026-11-05
 
 OpenClaw 2026.10.10 with working harness configuration for Codex, Claude Code, pi and OpenCode, plus a license notice for the bundled Codex prompt.

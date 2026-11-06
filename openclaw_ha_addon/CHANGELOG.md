@@ -9,6 +9,20 @@ For a release-facing summary, see the root [CHANGELOG.md](../CHANGELOG.md).
 
 ---
 
+## [0.7.13.37] — 2026-11-06
+
+### Fixed
+
+- **Web terminal watchdog (`run.sh`):** the terminal was restarted while it was healthy. The check now reads the kernel socket table, a single failed check no longer triggers a restart, a running terminal process is never terminated, and the watchdog pauses after a restart before checking again. Commands running in the web terminal are no longer ended by a terminal restart.
+- **Bounded shutdown (`run.sh`):** the gateway was waited for indefinitely, so the supervisor killed the container (exit code 137). Shutdown now uses a bounded stop budget (SIGTERM, poll, then SIGKILL) for the gateway, nginx, ttyd, avahi and dbus.
+- **Health probe (`Dockerfile`):** the probe requested an endpoint the gateway no longer offers and sent the request without a host header, so every probe failed and a healthy add-on was reported as unhealthy and restarted by the supervisor. The probe now uses the gateway health endpoint with an explicit host header.
+- **Automatic repair timeout (`run.sh`):** the repair was limited to 300 seconds, which cut it off mid-way on every attempt before it could change anything. The budget is now 1800 seconds and configurable via `gateway_doctor_repair_timeout` (300..7200).
+
+### Changed
+
+- **Repair fallback (`run.sh`):** when the non-interactive repair fails, the add-on now retries once as a full repair (`doctor --fix --yes --force`), which is the form that releases a blocked agent database lease. Both attempts are bounded by the repair timeout.
+- **OpenClaw 2026.11.1 (`Dockerfile`):** the pinned runtime version was updated from 2026.10.10. The new patch release fixes Doctor reporting success when an inspection is blocked, lets an update restart a service that Doctor stopped, and reduces how often unchanged databases are re-read.
+
 ## [0.7.13.36] — 2026-11-05
 
 ### Fixed
