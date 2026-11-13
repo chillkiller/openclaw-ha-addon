@@ -101,6 +101,28 @@ export function resolvePluginConfig(api: OpenClawPluginApi): Record<string, unkn
 }
 
 /** Idempotent Harness-Config-Deployment aus der eigenen Plugin-Entry-Config. */
+/**
+ * Gate für den acpx-codex-command-Auto-Write.
+ *
+ * Default: AKTIV (Backward-Compatibility — der Write ist idempotent und
+ * greift nur, wenn der Pfad abweicht). Der Operator kann ihn abschalten:
+ *
+ *   HCW_SET_ACPX_CODEX_COMMAND=0   → aus
+ *   HCW_SET_ACPX_CODEX_COMMAND=1   → an (explizit)
+ *
+ * Zweck: der Write löst im Host einen Plugin-Hot-Reload aus (Restart-Loop-
+ * Risiko, siehe Kommentar an der Aufrufstelle). Wer den command-Pfad
+ * statisch in der openclaw.json setzt, schaltet den Auto-Write hier ab.
+ */
+export function resolveAutoSetCodexCommandGate(
+  env: Record<string, string | undefined> = process.env,
+): boolean {
+  const raw = (env.HCW_SET_ACPX_CODEX_COMMAND ?? "").trim().toLowerCase();
+  if (raw === "") return true; // Default: aktiv (idempotent)
+  if (raw === "0" || raw === "false" || raw === "no" || raw === "off") return false;
+  return true;
+}
+
 export function registerHarnessConfigDeployment(api: OpenClawPluginApi): void {
   try {
     if (!resolveWriterGate()) {
@@ -170,7 +192,32 @@ export function registerHarnessConfigDeployment(api: OpenClawPluginApi): void {
     // Schritt 4 (Weg A'): wenn ein codex-Harness deployt wurde, acpx auf den
     // HCW-eigenen Wrapper umleiten. Nur der codex-Pfad wird angefasst; ohne
     // diese Setzung bleibt alles wie heute (kein Verhaltens-Change).
-    if (report.results.some((r) => r.harnessId === "codex")) {
+    //
+    // RESTART-LOOP-FIX (2026-11-13): dieser Write in plugins.entries.* löst
+    // im Host einen Config-Hot-Reload aus (afterWrite.mode "auto") — und zwar
+    // WÄHREND des Plugin-Loads. Der Reload ersetzt die acpx-Instanz, laufende
+    // Calls sterben mit "PluginInstanceUnavailableError: Plugin acpx was
+    // reloaded or disabled", der Plugin-Cleanup bleibt pending
+    // ("forced retirement after 5000ms: 1 still-running call(s)") und der
+    // nächste Shutdown endet mit exit 1 → systemd restartet → Schleife.
+    // (Live-Beleg: Journal 2026-11-05 05:31:01-05:31:32, Restart-Kette im
+    // gateway-restart.log 2026-11-11 19:18-23:10, alle ~3,5 min.)
+    //
+    // Der Write ist deshalb per ENV-Gate abschaltbar: der Operator setzt
+    // plugins.entries.acpx.config.agents.codex.command STATISCH in der
+    // openclaw.json (der Wert ist pfadstabil) und deaktiviert den
+    // Auto-Write. HCW schreibt dann NICHTS in die openclaw-config → kein
+    // Reload → kein Loop. Der Harness-Dateischreib-Pfad (models.json,
+    // settings.json, codex-config.toml, harness-env/*.env) bleibt
+    // unberührt — er löst keinen Reload aus.
+    const autoSetCodexCommand = resolveAutoSetCodexCommandGate();
+    if (!autoSetCodexCommand) {
+      api.logger?.info?.(
+        `[${PLUGIN_ID}] acpx codex-command auto-set disabled by env gate — ` +
+          `set plugins.entries.acpx.config.agents.codex.command statically instead ` +
+          `(avoids the config-write → plugin-reload → restart-loop chain)`,
+      );
+    } else if (report.results.some((r) => r.harnessId === "codex")) {
       const wrapperPath = resolveCodexHcwWrapperPath(paths);
       void (async () => {
         const { changed } = await setAcpxCodexCommand(api, wrapperPath, api.logger);

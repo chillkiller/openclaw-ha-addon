@@ -127,6 +127,12 @@ OLLAMA_OPENCODE_MODEL = os.environ.get("OLLAMA_OPENCODE_MODEL") or "glm-5.3-flas
 # config.yaml option (historically ambient OLLAMA_ACP_MODEL via run.sh:125ff).
 # Mirror ladder lives in run.sh's ANTHROPIC_MODEL fallback (sync rule).
 OLLAMA_CLAUDE_MODEL_DEFAULT = "glm-5.3-flash:cloud"
+# pi (2026-11-13): der pi-Harness war bisher NICHT in KNOWN_WRITER_HARNESS_IDS —
+# der add-on konnte ihn also nie generieren und ein pi-Entry in der config
+# war immer hand-edited (der Helper schützt hand-edits mit "operator wins").
+# Der pi-Harness nutzt den FILE-Mechanismus (models.json + settings.json) und
+# kennt jetzt den vollen Gateway-Katalog (HCW-Fix: Provider-Key-Vererbung).
+OLLAMA_PI_MODEL = os.environ.get("OLLAMA_PI_MODEL") or "qwen3.5:9b"
 
 # Template tokens that must never be committed as real infra data (AGENTS.md
 # security hygiene: LAN addresses stay out of the repository).
@@ -934,6 +940,10 @@ def _writer_managed_defaults_file() -> Path:
 # synchron halten).
 KNOWN_WRITER_HARNESS_IDS = (
     "codex", "opencode", "claude", "copilot", "droid", "gemini", "iflow", "kimi", "kiro", "qwen",
+    # pi (2026-11-13): FILE-Mechanismus, gleiche Option-Oberfläche wie die
+    # übrigen — der Harness ist lokal installiert und der add-on schreibt
+    # seine native Config (models.json + settings.json).
+    "pi",
 )
 
 
@@ -966,6 +976,10 @@ def _writer_model_for(harness_id: str) -> str:
         return (os.environ.get("OLLAMA_CLAUDE_MODEL", "").strip()
                 or os.environ.get("OLLAMA_ACP_MODEL", "").strip()
                 or OLLAMA_CLAUDE_MODEL_DEFAULT)
+    if harness_id == "pi":
+        # pi-Harness-Default (2026-11-13). Der add-on-Option-Weg ist
+        # harness_pi_model (run.sh → HARNESS_WRITER_PI_MODEL).
+        return os.environ.get("OLLAMA_PI_MODEL", "").strip() or OLLAMA_PI_MODEL
     return ""
 
 

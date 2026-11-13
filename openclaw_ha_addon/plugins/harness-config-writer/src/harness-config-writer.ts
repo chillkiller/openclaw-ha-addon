@@ -617,12 +617,31 @@ export type ModelCatalog = {
   /** normalisierte baseUrl → deduped model-ids (first-occurrence, kuratiert). */
   byBaseUrl: Map<string, string[]>;
   /**
+   * Provider-Key-Vererbung (Variante A): normalisierte baseUrl → der
+   * GATEWAY-Provider-Key (z. B. "ollama"). Der Writer übernimmt damit den
+   * operator-stabilen Schlüssel aus `models.providers` statt einen aus der
+   * URL abzuleiten (`binding_<ip>_<port>`), der bei jedem IP-/Port-Wechsel
+   * bricht und alte Keys als Leichen im Merge liegen lässt.
+   *
+   * Nur gesetzt, wenn die baseUrl GENAU EINEN Gateway-Provider matcht. Bei
+   * mehreren Kandidaten (zwei Provider auf derselben baseUrl) bleibt der
+   * Eintrag leer → der Aufrufer fällt auf deriveProviderId() zurück
+   * (kein Raten).
+   */
+  providerKeyByBaseUrl: Map<string, string>;
+  /**
    * γ.1 codex-Metadaten: model-id → vom Operator in openclaw.json gepflegte
    * Werte (contextWindow — das einzige codex-surfacige Pflichtfeld). NUR
    * belegte Werte landen hier — der Writer rät niemals ein Kontextfenster
    * (Ownership-Regel).
    */
   metaById: Map<string, ModelMeta>;
+  /**
+   * Rohes maxTokens je model-id (separat von metaById, weil die
+   * codex-Catalog-Surface bewusst kein maxTokens-Feld hat — M4-Fix — der
+   * pi-Writer es aber braucht).
+   */
+  rawMaxTokensById: Map<string, number>;
   /** γ.2 Provider-Policy: pro normalisierter baseUrl. */
   policyByBaseUrl: Map<string, ProviderPolicy>;
 };
@@ -676,6 +695,17 @@ export type ModelMeta = {
   defaultReasoningLevel?: string;
   /** Optionale Input-Modalitäten. Default ["text"]. */
   inputModalities?: ("text" | "image")[];
+  /**
+   * Roh-Metadaten aus dem Gateway-Provider-Eintrag (models.providers.*.models[]).
+   * Nur belegte Werte landen hier — der Writer rät niemals.
+   *
+   * `reasoning`: ob das Modell reasoning/denkt (pi-Feld `reasoning`).
+   * `displayName`: Anzeigename des Modells (pi-Feld `name`).
+   * `maxTokens`: Obergrenze der Ausgabe (pi-Feld `maxTokens`).
+   */
+  reasoning?: boolean;
+  displayName?: string;
+  maxTokens?: number;
   /** Optionale Beschreibung. Default HCW-Text. */
   description?: string;
   /** Ob parallele Tool-Calls unterstützt werden. Default false. */
@@ -859,7 +889,10 @@ function parseProviderPolicy(provider: Record<string, unknown>): ProviderPolicy 
 export function buildModelCatalog(fullConfig: unknown, warnings: string[]): ModelCatalog {
   const byBaseUrl = new Map<string, string[]>();
   const metaById = new Map<string, ModelMeta>();
+  const rawMaxTokensById = new Map<string, number>();
   const policyByBaseUrl = new Map<string, ProviderPolicy>();
+  const providerKeyByBaseUrl = new Map<string, string>();
+  const providerKeysByBaseUrl = new Map<string, string[]>();
   try {
     const models = typeof fullConfig === "object" && fullConfig !== null
       ? (fullConfig as Record<string, unknown>).models
@@ -869,11 +902,11 @@ export function buildModelCatalog(fullConfig: unknown, warnings: string[]): Mode
         ? (models as Record<string, unknown>).providers
         : undefined;
     if (providers === null || providers === undefined) {
-      return { byBaseUrl, metaById, policyByBaseUrl };
+      return { byBaseUrl, metaById, rawMaxTokensById, policyByBaseUrl, providerKeyByBaseUrl };
     }
     if (typeof providers !== "object" || Array.isArray(providers)) {
       warnings.push("models.providers: unexpected shape (object expected) — catalog skipped");
-      return { byBaseUrl, metaById, policyByBaseUrl };
+      return { byBaseUrl, metaById, rawMaxTokensById, policyByBaseUrl, providerKeyByBaseUrl };
     }
     let malformed = 0;
     for (const key of Object.keys(providers).sort()) {
@@ -896,6 +929,12 @@ export function buildModelCatalog(fullConfig: unknown, warnings: string[]): Mode
       }
       const providerPolicy = parseProviderPolicy(p);
       policyByBaseUrl.set(normalized, providerPolicy);
+      // Provider-Key-Kandidaten sammeln (erst nach dem baseUrl-Match, damit
+      // der Key eindeutig zum backend passt — Variante A).
+      providerKeysByBaseUrl.set(normalized, [
+        ...(providerKeysByBaseUrl.get(normalized) ?? []),
+        key,
+      ]);
       // γ.1/γ.2 Metadaten: nur positive Zahlen zählen (contextWindow — das
       // einzige Feld mit codex-Katalog-Surface; M4-Fix: maxTokens wird
       // bewusst NICHT gesammelt, es gibt keine konsumierende Surface).
@@ -904,9 +943,65 @@ export function buildModelCatalog(fullConfig: unknown, warnings: string[]): Mode
         const rec = m as Record<string, unknown>;
         const id = typeof rec.id === "string" ? rec.id.trim() : "";
         if (!id || metaById.has(id)) continue;
-        if (typeof rec.contextWindow === "number" && rec.contextWindow > 0) {
-          metaById.set(id, buildModelMeta(rec, providerPolicy));
+        if (typeof rec.maxTokens === "number" && rec.maxTokens > 0 && !rawMaxTokensById.has(id)) {
+          rawMaxTokensById.set(id, rec.maxTokens);
         }
+        // γ.1/γ.2 Metadaten: nur positive Zahlen zählen (contextWindow — das
+        // einzige Feld mit codex-Katalog-Surface; M4-Fix: maxTokens wird
+        // bewusst NICHT gesammelt, es gibt keine konsumierende Surface).
+        //
+        // Ergänzung (pi-Mechanismus): die pi-Metadaten (reasoning / name /
+        // maxTokens) brauchen KEINE codex-Surface, sondern werden direkt in
+        // ~/.pi/agent/models.json konsumiert. Sie werden deshalb hier
+        // gesammelt, aber nur für Einträge, die ÜBERHAUPT Metadaten tragen
+        // (contextWindow ODER reasoning/name/maxTokens) — ein Modell ohne
+        // jedes dieser Felder erzeugt keinen Meta-Eintrag.
+        const hasPiMeta =
+          typeof rec.reasoning === "boolean" ||
+          (typeof rec.name === "string" && rec.name.trim().length > 0) ||
+          (typeof rec.maxTokens === "number" && rec.maxTokens > 0);
+        const hasContextWindow = typeof rec.contextWindow === "number" && rec.contextWindow > 0;
+        if (!hasContextWindow && !hasPiMeta) continue;
+        // buildModelMeta liefert den vollständigen Operator-Meta-Record
+        // (contextWindow + codex-relevante Felder). Der bisherige Code
+        // filterte ihn auf genau die belegten Felder — das bleibt so.
+        const full = buildModelMeta(rec, providerPolicy);
+        const piMeta: ModelMeta = { contextWindow: full.contextWindow };
+        if (full.maxContextWindow !== undefined) piMeta.maxContextWindow = full.maxContextWindow;
+        if (full.contextWindowFactor !== undefined) piMeta.contextWindowFactor = full.contextWindowFactor;
+        if (full.autoCompactFactor !== undefined) piMeta.autoCompactFactor = full.autoCompactFactor;
+        if (full.priority !== undefined) piMeta.priority = full.priority;
+        if (full.thinkingLevels !== undefined) piMeta.thinkingLevels = full.thinkingLevels;
+        if (full.defaultReasoningLevel !== undefined) {
+          piMeta.defaultReasoningLevel = full.defaultReasoningLevel;
+        }
+        if (full.inputModalities !== undefined) piMeta.inputModalities = full.inputModalities;
+        if (full.description !== undefined) piMeta.description = full.description;
+        if (full.supportsParallelToolCalls !== undefined) {
+          piMeta.supportsParallelToolCalls = full.supportsParallelToolCalls;
+        }
+        if (full.supportsSearchTool !== undefined) piMeta.supportsSearchTool = full.supportsSearchTool;
+        if (full.includeUsageInstructions !== undefined) {
+          piMeta.includeUsageInstructions = full.includeUsageInstructions;
+        }
+        if (full.baseInstructions !== undefined) piMeta.baseInstructions = full.baseInstructions;
+        if (full.providerKind !== undefined) piMeta.providerKind = full.providerKind;
+        if (typeof rec.reasoning === "boolean") piMeta.reasoning = rec.reasoning;
+        if (typeof rec.name === "string" && rec.name.trim().length > 0) {
+          piMeta.displayName = rec.name.trim();
+        }
+        // Input-Modalitäten: der Gateway-Provider nutzt `input`
+        // (["text","image"]), der codex-Pfad `inputModalities`. Beide lesen.
+        if (piMeta.inputModalities === undefined) {
+          const rawInput = Array.isArray(rec.input)
+            ? rec.input.filter((v): v is "text" | "image" => v === "text" || v === "image")
+            : [];
+          if (rawInput.length > 0) piMeta.inputModalities = rawInput;
+        }
+        // maxTokens wird bewusst NICHT in den Katalog aufgenommen (M4-Fix:
+        // die codex-Catalog-Surface hat dafür kein Feld). Der pi-Writer holt
+        // sich maxTokens deshalb aus einer eigenen Karte (rawMaxTokensById).
+        metaById.set(id, piMeta);
       }
       const ids = dedupeModelIds(
         rawModels
@@ -928,10 +1023,26 @@ export function buildModelCatalog(fullConfig: unknown, warnings: string[]): Mode
     if (malformed > 0) {
       warnings.push(`models.providers: skipped ${malformed} malformed entries`);
     }
+    // Provider-Key nur bei EINDEUTIGKEIT übernehmen: zwei Provider auf
+    // derselben baseUrl (z. B. "ollama" + "ollama-cloud") → kein Raten,
+    // der Aufrufer fällt auf deriveProviderId() zurück.
+    for (const [normalized, keys] of providerKeysByBaseUrl) {
+      const unique = [...new Set(keys)];
+      if (unique.length === 1) {
+        providerKeyByBaseUrl.set(normalized, unique[0]!);
+        continue;
+      }
+      if (unique.length > 1) {
+        warnings.push(
+          `model catalog (${normalized}): ${unique.length} providers share this baseUrl ` +
+            `(${unique.join(", ")}) — provider key not inherited, URL-derived fallback used`,
+        );
+      }
+    }
   } catch (error) {
     warnings.push(`model catalog build failed (fail-soft): ${briefError(error)}`);
   }
-  return { byBaseUrl, metaById, policyByBaseUrl };
+  return { byBaseUrl, metaById, rawMaxTokensById, policyByBaseUrl, providerKeyByBaseUrl };
 }
 
 /** Default-prepend (claude-Adapter: models[0] = Fallback-Default). */
@@ -1994,7 +2105,9 @@ export function deployHarnessEnvFile(
   modelsComment?: readonly string[],
   modelCatalog?: ModelCatalog,
 ): { warnings: string[]; file: HarnessDeployFile | null } {
-  const mapping = ENV_MECHANISM[harnessId]?.(entry, modelCatalog) ?? null;
+  const mapping = Object.hasOwn(ENV_MECHANISM, harnessId)
+    ? (ENV_MECHANISM[harnessId]?.(entry, modelCatalog) ?? null)
+    : null;
   if (!mapping) {
     return { warnings: [], file: null };
   }
@@ -2050,10 +2163,49 @@ export function derivePiProviderId(baseUrl: string): string {
   return deriveProviderId(baseUrl);
 }
 
+/**
+ * Provider-Key-Auflösung für den pi-Mechanismus (Variante A).
+ *
+ * Präferenz:
+ *  1. `catalog.providerKeyByBaseUrl` — der GATEWAY-Provider-Key (z. B.
+ *     "ollama"). Operator-stabil: überlebt IP-/Port-Wechsel und folgt der
+ *     Gateway-Konfiguration statt einer URL-Ableitung.
+ *  2. `deriveProviderId(baseUrl)` — Fallback, wenn die baseUrl nicht (oder
+ *     nicht eindeutig) im Gateway-Katalog steht.
+ */
+export function resolvePiProviderId(
+  baseUrl: string,
+  catalog: ModelCatalog | null,
+): string {
+  const normalized = normalizeBaseUrlForMatch(baseUrl);
+  const inherited = normalized ? catalog?.providerKeyByBaseUrl.get(normalized) : undefined;
+  if (inherited) return inherited;
+  return derivePiProviderId(baseUrl);
+}
+
+/**
+ * Erkennt einen vom WRITER selbst erzeugten pi-Provider-Block. Ein solcher
+ * Block wird bei jedem Boot bytes-genau aktualisiert (Modelllisten-Änderungen
+ * wirken sofort).
+ *
+ * NUR der vom Writer gesetzte `name` (Präfix "harness-config-writer (")
+ * zählt als writer-owned. Der API-Typ "openai-completions" allein ist KEIN
+ * Kriterium — ein hand-gepflegter Provider nutzt denselben API-Typ, und ein
+ * zu aggressiver Test würde dessen Modelle stillschweigend überschreiben
+ * (Datenverlust).
+ */
+export function deepLooksGeneratedPiProvider(provider: unknown): boolean {
+  if (typeof provider !== "object" || provider === null || Array.isArray(provider)) return false;
+  const p = provider as Record<string, unknown>;
+  const name = typeof p.name === "string" ? p.name : "";
+  return name.startsWith("harness-config-writer (");
+}
+
 export function buildPiModelsJson(
   entry: HarnessConfigEntry,
   providerId: string,
   metaById?: Map<string, ModelMeta>,
+  rawMaxTokensById?: Map<string, number>,
 ): string {
   const baseUrl = withV1Suffix(entry.baseUrl ?? "");
   const modelIds = entry.models && entry.models.length > 0 ? dedupeModelIds(entry.models) : [entry.model];
@@ -2061,9 +2213,22 @@ export function buildPiModelsJson(
     const meta = metaById?.get(id);
     const rec: Record<string, unknown> = {
       id,
-      reasoning: true,
-      input: ["text"],
+      // Modell-Metadaten aus dem Gateway-Katalog übernehmen, statt sie zu
+      // erfinden: ein OCR-Modell mit Bild-Input und reasoning=false wurde
+      // previously als Text-only-Reasoning-Modell geschrieben.
+      reasoning: typeof meta?.reasoning === "boolean" ? meta.reasoning : true,
+      input:
+        Array.isArray(meta?.inputModalities) && meta.inputModalities.length > 0
+          ? [...meta.inputModalities]
+          : ["text"],
     };
+    if (typeof meta?.displayName === "string" && meta.displayName.length > 0) {
+      rec.name = meta.displayName;
+    }
+    const rawMaxTokens = rawMaxTokensById?.get(id);
+    if (typeof rawMaxTokens === "number" && rawMaxTokens > 0) {
+      rec.maxTokens = Math.floor(rawMaxTokens);
+    }
     if (typeof meta?.contextWindow === "number" && meta.contextWindow > 0) {
       rec.contextWindow = Math.floor(meta.contextWindow);
     }
@@ -2148,11 +2313,123 @@ function managePiModelsJson(
       ? (currentObj.providers as Record<string, unknown>)
       : {};
   const mergedProviders: Record<string, unknown> = { ...currentProviders };
-  if (providerId in mergedProviders && !deepEqualsWriter(mergedProviders[providerId], desiredProviders[providerId])) {
-    warnings.push(
-      `pi: provider '${providerId}' already present in ${path} with different content; operator wins, not overwriting`,
-    );
-    return "note (customized, left intact)";
+  // Variante A — Provider-Key-Adoption: existiert bereits ein Provider mit
+  // GLEICHER baseUrl (z. B. ein hand-editer "ollama"), wird er ADOPTIERT
+  // (seine Modelle bleiben erhalten, der Key wird zum Gateway-Key) statt
+  // einen zweiten Provider auf derselben URL anzulegen. Zwei Keys auf
+  // derselben baseUrl sind der Grund, warum der alte "ollama"-Block im
+  // Picker ausgeschlossen war (settings.json whitelistet nur
+  // defaultProvider/*).
+  const desiredBaseUrl =
+    typeof (desiredProviders[providerId] as Record<string, unknown> | undefined)?.baseUrl === "string"
+      ? ((desiredProviders[providerId] as Record<string, unknown>).baseUrl as string)
+      : undefined;
+  if (desiredBaseUrl) {
+    for (const [key, value] of Object.entries(currentProviders)) {
+      if (key === providerId) continue;
+      const existingBaseUrl =
+        typeof value === "object" && value !== null && !Array.isArray(value)
+          ? (value as Record<string, unknown>).baseUrl
+          : undefined;
+      if (typeof existingBaseUrl !== "string") continue;
+      if (normalizeBaseUrlForMatch(existingBaseUrl) !== normalizeBaseUrlForMatch(desiredBaseUrl)) continue;
+      // Modelle des adoptierten Providers mitnehmen, damit nichts
+      // verloren geht (Operator-Owned bleibt unangetastet).
+      const existingModels =
+        typeof value === "object" && value !== null && !Array.isArray(value)
+          ? (value as Record<string, unknown>).models
+          : undefined;
+      if (Array.isArray(existingModels)) {
+        const desiredModels =
+          typeof (desiredProviders[providerId] as Record<string, unknown>).models === "object" &&
+          Array.isArray((desiredProviders[providerId] as Record<string, unknown>).models)
+            ? ((desiredProviders[providerId] as Record<string, unknown>).models as unknown[])
+            : [];
+        // Bestehende Modelle MIT ihren Metadaten übernehmen (nicht nur die
+        // ID) — sonst verliert ein OCR-Modell seinen Bild-Input.
+        const byId = new Map<string, Record<string, unknown>>();
+        for (const m of desiredModels) {
+          if (typeof m === "object" && m !== null && !Array.isArray(m)) {
+            const rec = m as Record<string, unknown>;
+            const id = typeof rec.id === "string" ? rec.id.trim() : "";
+            if (id) byId.set(id, { ...rec });
+          }
+        }
+        for (const m of existingModels) {
+          if (typeof m === "object" && m !== null && !Array.isArray(m)) {
+            const rec = m as Record<string, unknown>;
+            const id = typeof rec.id === "string" ? rec.id.trim() : "";
+            if (!id || byId.has(id)) continue;
+            byId.set(id, { ...rec });
+            continue;
+          }
+          if (typeof m === "string" && m.trim().length > 0) byId.set(m.trim(), { id: m.trim() });
+        }
+        desiredProviders[providerId] = {
+          ...(desiredProviders[providerId] as Record<string, unknown>),
+          models: [...byId.values()],
+        };
+      }
+      delete mergedProviders[key];
+      warnings.push(
+        `pi: adopted existing provider '${key}' (same baseUrl) into '${providerId}'; ` +
+          `duplicate provider key removed`,
+      );
+      break;
+    }
+  }
+  if (
+    providerId in mergedProviders &&
+    !deepEqualsWriter(mergedProviders[providerId], desiredProviders[providerId]) &&
+    !deepLooksGeneratedPiProvider(mergedProviders[providerId])
+  ) {
+    // Operator-owned Provider mit GLEICHEM Key: die Modelle des Operators
+    // bleiben erhalten, die Writer-Modelle kommen OBEN dazu. Der Operator
+    // verliert also nichts — er gewinnt nur die neuen Modelle.
+    const operatorProvider = mergedProviders[providerId];
+    const operatorModels =
+      typeof operatorProvider === "object" && operatorProvider !== null && !Array.isArray(operatorProvider)
+        ? (operatorProvider as Record<string, unknown>).models
+        : undefined;
+    if (Array.isArray(operatorModels) && operatorModels.length > 0) {
+      const desiredModels =
+        typeof (desiredProviders[providerId] as Record<string, unknown>).models === "object" &&
+        Array.isArray((desiredProviders[providerId] as Record<string, unknown>).models)
+          ? ((desiredProviders[providerId] as Record<string, unknown>).models as unknown[])
+          : [];
+      const byId = new Map<string, Record<string, unknown>>();
+      for (const m of desiredModels) {
+        if (typeof m === "object" && m !== null && !Array.isArray(m)) {
+          const rec = m as Record<string, unknown>;
+          const id = typeof rec.id === "string" ? rec.id.trim() : "";
+          if (id) byId.set(id, { ...rec });
+        }
+      }
+      for (const m of operatorModels) {
+        if (typeof m === "object" && m !== null && !Array.isArray(m)) {
+          const rec = m as Record<string, unknown>;
+          const id = typeof rec.id === "string" ? rec.id.trim() : "";
+          if (!id || byId.has(id)) continue;
+          byId.set(id, { ...rec });
+          continue;
+        }
+        if (typeof m === "string" && m.trim().length > 0) byId.set(m.trim(), { id: m.trim() });
+      }
+      desiredProviders[providerId] = {
+        ...(desiredProviders[providerId] as Record<string, unknown>),
+        models: [...byId.values()],
+      };
+      mergedProviders[providerId] = desiredProviders[providerId];
+      warnings.push(
+        `pi: provider '${providerId}' is operator-owned — operator models kept, ` +
+          `writer models merged in (no data loss)`,
+      );
+    } else {
+      warnings.push(
+        `pi: provider '${providerId}' already present in ${path} with different content; operator wins, not overwriting`,
+      );
+      return "note (customized, left intact)";
+    }
   }
   mergedProviders[providerId] = desiredProviders[providerId];
   const merged: Record<string, unknown> = { $schema: desiredObj.$schema, providers: mergedProviders };
@@ -2199,7 +2476,23 @@ function managePiSettingsJson(
   const managedKeys = ["defaultProvider", "defaultModel", "defaultThinkingLevel", "enabledModels"];
   const merged: Record<string, unknown> = {};
   for (const key of managedKeys) {
-    if (key in desiredObj) merged[key] = desiredObj[key];
+    if (!(key in desiredObj)) continue;
+    if (key === "enabledModels") {
+      // Aditiv: bestehende Operator-Einträge behalten + den Writer-Provider
+      // ergänzen. Ein Überschreiben würde hand-gepflegte Provider (z. B. den
+      // bestehenden "ollama"-Block mit eigenen Modellen) aus dem Picker
+      // ausschließen, obwohl models.json sie weiterhin enthält.
+      const desiredList = Array.isArray(desiredObj[key]) ? (desiredObj[key] as unknown[]) : [];
+      const currentList = Array.isArray(currentObj[key]) ? (currentObj[key] as unknown[]) : [];
+      const mergedList = dedupeModelIds(
+        [...currentList, ...desiredList].filter(
+          (v): v is string => typeof v === "string" && v.trim().length > 0,
+        ),
+      );
+      if (mergedList.length > 0) merged[key] = mergedList;
+      continue;
+    }
+    merged[key] = desiredObj[key];
   }
   for (const key of Object.keys(currentObj).sort()) {
     if (!managedKeys.includes(key)) merged[key] = currentObj[key];
@@ -2219,10 +2512,18 @@ export function deployPiHarnessFiles(
 ): { warnings: string[]; files: HarnessDeployFile[] } {
   const warnings: string[] = [];
   const files: HarnessDeployFile[] = [];
-  const providerId = derivePiProviderId(entry.baseUrl ?? "");
+  // Provider-Key (Variante A): der GATEWAY-Provider-Key (z. B. "ollama"),
+  // falls die baseUrl eindeutig im Gateway-Katalog steht — sonst der
+  // URL-abgeleitete Fallback.
+  const providerId = resolvePiProviderId(entry.baseUrl ?? "", modelCatalog ?? null);
   const modelsPath = join(paths.piAgentDir, "models.json");
   const settingsPath = join(paths.piAgentDir, "settings.json");
-  const desiredModels = buildPiModelsJson(entry, providerId, modelCatalog?.metaById);
+  const desiredModels = buildPiModelsJson(
+    entry,
+    providerId,
+    modelCatalog?.metaById,
+    modelCatalog?.rawMaxTokensById,
+  );
   const desiredSettings = buildPiSettingsJson(entry, providerId, warnings);
   const modelsAction = managePiModelsJson(modelsPath, desiredModels, providerId, warnings);
   const settingsAction = managePiSettingsJson(settingsPath, desiredSettings, warnings);
@@ -2262,6 +2563,25 @@ export function deployPiHarnessFiles(
  * non-empty `model: string` tragen (configSchema required); invalide Entries
  * werden mit Warning SKIPPT statt zu crashen (fail-soft).
  */
+/**
+ * Capability-Matrix: Welche Harness-Ids bekommen die aufgelöste Modellliste
+ * aus dem Gateway-Katalog (models.providers)?
+ *
+ * Vorher war das eine an zwei Stellen duplizierte Harness-Namensliste — sie
+ * driftete (pi fehlte, copilot fehlte im Manifest) und ließ genau den
+ * pi-Mechanismus ohne Katalog zurück (er schrieb nur entry.model → genau
+ * EIN Modell). Die Matrix ist damit die EINE Quelle der Wahrheit.
+ *
+ * - codex/opencode/pi: FILE-Mechanismus mit echter Multi-Model-Surface.
+ * - ENV-MECHANISM-Harnesses: bekommen die Liste (echte Surface ist
+ *   claude-spezifisch; bei den übrigen ist sie ein Info-Kommentar).
+ * - alle übrigen (Mechanismus NONE): bekommen nichts.
+ */
+export function harnessSupportsModelCatalog(harnessId: string): boolean {
+  if (harnessId === "codex" || harnessId === "opencode" || harnessId === "pi") return true;
+  return Object.hasOwn(ENV_MECHANISM, harnessId);
+}
+
 export function deployHarnessConfigs(
   pluginConfig: unknown,
   paths: HarnessWriterPaths,
@@ -2290,10 +2610,9 @@ export function deployHarnessConfigs(
       });
       continue;
     }
-    const resolvedModels =
-      harnessId === "codex" || harnessId === "opencode" || harnessId in ENV_MECHANISM
-        ? resolveEntryModels(entry, modelCatalog ?? null)
-        : null;
+    const resolvedModels = harnessSupportsModelCatalog(harnessId)
+      ? resolveEntryModels(entry, modelCatalog ?? null)
+      : null;
     const enriched: HarnessConfigEntry =
       resolvedModels !== null
         ? {
@@ -2343,7 +2662,7 @@ export function deployHarnessConfigs(
       });
       continue;
     }
-    if (harnessId in ENV_MECHANISM) {
+    if (Object.hasOwn(ENV_MECHANISM, harnessId)) {
       const envResult = deployHarnessEnvFile(
         harnessId,
         enriched,

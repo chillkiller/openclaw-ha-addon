@@ -168,6 +168,11 @@ options:
     harness_claude_model: ""
     # Codex (audit) harness model. Default: kimi-k2.7-code:cloud
     harness_codex_model: ""
+    # Pi (ACP) harness model. Feeds the harness-config-writer pi default
+    # (the pi agent writes ~/.pi/agent/models.json + settings.json and
+    # inherits the FULL gateway model catalog for that base URL).
+    # Default: qwen3.5:9b
+    harness_pi_model: ""
     # Optional: comma-separated harness ids EXCLUDED from the shared defaults
     # above (e.g. "codex,opencode").
     harness_excluded_agents: ""
@@ -301,6 +306,7 @@ schema:
     harness_opencode_model: str?
     harness_claude_model: str?
     harness_codex_model: str?
+  harness_pi_model: str?
     harness_excluded_agents: str?
     additional_agents: str?
     acp_dashboard_binding_enabled: bool?

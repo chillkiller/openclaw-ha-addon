@@ -57,6 +57,7 @@ if jq -e 'has("harness") or has("ha_integration")' "$OPTIONS_FILE" >/dev/null 2>
       harness_opencode_model: .harness.harness_opencode_model,
       harness_claude_model: .harness.harness_claude_model,
       harness_codex_model: .harness.harness_codex_model,
+      harness_pi_model: .harness.harness_pi_model,
       harness_excluded_agents: .harness.harness_excluded_agents,
       additional_agents: .harness.additional_agents,
       acp_dashboard_binding_enabled: .harness.acp_dashboard_binding_enabled,
@@ -177,6 +178,9 @@ if [ -n "$HARNESS_BASE_URL" ]; then
   # helper's _writer_model_for claude ladder (OLLAMA_CLAUDE_MODEL → legacy
   # OLLAMA_ACP_MODEL → default glm-5.3-flash:cloud).
   export OLLAMA_CLAUDE_MODEL=$(jq -r '(.harness_claude_model // "" | select(length > 0)) // .ollama_acp_claude_model // empty' "$OPTIONS_FILE")
+  # pi (2026-11-13): the pi harness default — mirrors the helper's
+  # _writer_model_for pi ladder (OLLAMA_PI_MODEL → default qwen3.5:9b).
+  export OLLAMA_PI_MODEL=$(jq -r '(.harness_pi_model // "" | select(length > 0)) // .ollama_acp_pi_model // empty' "$OPTIONS_FILE")
   export ACP_ADDITIONAL_ALLOWED_AGENTS=$(jq -r '(.additional_agents // "" | select(length > 0)) // .acp_additional_allowed_agents // empty' "$OPTIONS_FILE")
   # V36.2 (2026-10-13): utility_model → agents.defaults.utilityModel (helper
   # merge_utility_model). UNSET/empty = no write — operator owns the value.
