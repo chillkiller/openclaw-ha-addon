@@ -145,9 +145,11 @@ options:
     harness_base_url: ""
     # API key handed to generated harness entries (shared writer default).
     harness_api_key: ""
-    # Shared harness default model. Applies to ALL non-excluded harnesses
-    # (codex/opencode/claude keep their per-harness models below unless this
-    # is set). Empty = per-harness defaults win.
+    # Shared harness default model. Applies to ALL ACP harnesses (including the
+    # ENV-only ones: copilot, droid, gemini, iflow, kimi, kiro, qwen) and is
+    # overridden per harness by harness_{codex,claude,opencode,pi}_model below.
+    # Precedence: per-harness option > this option > Gateway-Default.
+    # Empty = Gateway-Default (agents.defaults.model.primary).
     harness_model: ""
     # Utility-Modell-Override für agents.defaults.utilityModel in
     # openclaw.json — das Modell hinter den internen Gateway-Utility-Callouten
@@ -160,14 +162,18 @@ options:
     utility_model: ""
     # Per-harness model overrides (the 3 harnesses come bundled with acpx;
     # everything else is extra — see additional_agents below).
-    # OpenCode (forge) harness model. Default: glm-5.3-flash:cloud
+    # Empty = harness_model (shared), and if that is empty too: Gateway-Default.
+    # OpenCode harness model.
     harness_opencode_model: ""
     # Claude Code harness model. Feeds the ambient ANTHROPIC_MODEL fallback
-    # AND the harness-config-writer claude default (legacy fallback:
-    # gateway_env_vars OLLAMA_ACP_MODEL). Default: glm-5.3-flash:cloud
+    # AND the harness-config-writer claude default.
     harness_claude_model: ""
-    # Codex (audit) harness model. Default: kimi-k2.7-code:cloud
+    # Codex harness model.
     harness_codex_model: ""
+    # Pi (ACP) harness model. Feeds the harness-config-writer pi default
+    # (the pi agent writes ~/.pi/agent/models.json + settings.json and
+    # inherits the FULL gateway model catalog for that base URL).
+    harness_pi_model: ""
     # Optional: comma-separated harness ids EXCLUDED from the shared defaults
     # above (e.g. "codex,opencode").
     harness_excluded_agents: ""
@@ -301,6 +307,7 @@ schema:
     harness_opencode_model: str?
     harness_claude_model: str?
     harness_codex_model: str?
+    harness_pi_model: str?
     harness_excluded_agents: str?
     additional_agents: str?
     acp_dashboard_binding_enabled: bool?

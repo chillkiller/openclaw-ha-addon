@@ -36,6 +36,7 @@ import {
   resolveEntryModels,
   resolveHarnessWriterPaths,
   resolveOpencodeGlobalDir,
+  resolvePiProviderId,
   withV1Suffix,
   type HarnessConfigEntry,
   type HarnessWriterPaths,
@@ -868,6 +869,32 @@ describe("pi file writer", () => {
     expect(piResult?.files.map((f) => f.action)).toEqual(["created", "created"]);
   });
 
+  it("pi models[0] ist das entry.model, auch wenn eine Modellliste mitkommt (pi nimmt models[0] als Default)", () => {
+    const p = paths();
+    DEPLOY(
+      {
+        harnesses: {
+          pi: {
+            model: "kimi-k2.7-code:cloud",
+            models: ["glm-ocr:latest", "qwen2.5:3b"],
+            baseUrl: "http://localhost:11434",
+            apiKey: "tok",
+          },
+        },
+      },
+      p,
+    );
+    const models = JSON.parse(readText(join(p.piAgentDir, "models.json")));
+    const provider = models.providers.binding_localhost_11434;
+    // models.json ist ein ARRAY — pi nimmt models[0] als Default-Modell.
+    expect(provider.models[0].id).toBe("kimi-k2.7-code:cloud");
+    expect(provider.models.map((m: { id: string }) => m.id)).toEqual([
+      "kimi-k2.7-code:cloud",
+      "glm-ocr:latest",
+      "qwen2.5:3b",
+    ]);
+  });
+
   it("pi settings: invalid thinking level → warning and key omitted", () => {
     const p = paths();
     const report = DEPLOY(
@@ -896,6 +923,126 @@ describe("pi file writer", () => {
     expect(models.providers.binding_b).toBeDefined();
   });
 
+  it("pi: adopts an existing provider with the same baseUrl (Variante A)", () => {
+    const p = paths();
+    mkdirSync(p.piAgentDir, { recursive: true });
+    // Bestehender, hand-gepflegter Provider "ollama" auf derselben baseUrl
+    // (mit Bild-Input-Metadaten, die beim Mergie NICHT verloren gehen dürfen).
+    const existing = JSON.stringify(
+      {
+        $schema: "https://pi.dev/schemas/models.schema.json",
+        providers: {
+          ollama: {
+            name: "Ollama (lokal)",
+            baseUrl: "http://localhost:11434/v1",
+            api: "openai-completions",
+            apiKey: "ollama",
+            models: [{ id: "legacy-model", reasoning: false, input: ["text", "image"] }],
+          },
+        },
+      },
+      null,
+      2,
+    );
+    writeFileSync(join(p.piAgentDir, "models.json"), `${existing}\n`, "utf-8");
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            ollama: { baseUrl: "http://localhost:11434", models: [{ id: "m", contextWindow: 32000 }] },
+          },
+        },
+      },
+      [],
+    );
+    DEPLOY({ harnesses: { pi: { model: "m", baseUrl: "http://localhost:11434" } } }, p, catalog);
+    const models = JSON.parse(readText(join(p.piAgentDir, "models.json")));
+    // Genau EIN Provider auf dieser baseUrl — kein Duplikat-Key.
+    expect(Object.keys(models.providers)).toEqual(["ollama"]);
+    // Das neue Gateway-Modell ist da ...
+    expect(models.providers.ollama.models.map((m: { id: string }) => m.id)).toContain("m");
+    // ... und das hand-gepflegte Modell bleibt MIT seinen Metadaten erhalten.
+    const legacy = models.providers.ollama.models.find((m: { id: string }) => m.id === "legacy-model");
+    expect(legacy).toBeDefined();
+    expect(legacy.input).toEqual(["text", "image"]);
+    expect(legacy.reasoning).toBe(false);
+  });
+
+  it("pi: writer-owned provider block is updated, not treated as operator-owned", () => {
+    const p = paths();
+    mkdirSync(p.piAgentDir, { recursive: true });
+    // Ein Block, den der WRITER selbst erzeugt hat (Namens-Präfix) — er
+    // muss bei jedem Boot bytes-genau aktualisiert werden, sonst friert der
+    // erste Boot mit einem Modell alle späteren Boots ein.
+    const existing = JSON.stringify(
+      {
+        $schema: "https://pi.dev/schemas/models.schema.json",
+        providers: {
+          ollama: {
+            name: "harness-config-writer (http://localhost:11434/v1)",
+            baseUrl: "http://localhost:11434/v1",
+            api: "openai-completions",
+            apiKey: "ollama",
+            models: [{ id: "stale" }],
+          },
+        },
+      },
+      null,
+      2,
+    );
+    writeFileSync(join(p.piAgentDir, "models.json"), `${existing}\n`, "utf-8");
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            ollama: { baseUrl: "http://localhost:11434", models: [{ id: "m", contextWindow: 32000 }] },
+          },
+        },
+      },
+      [],
+    );
+    DEPLOY({ harnesses: { pi: { model: "m", baseUrl: "http://localhost:11434" } } }, p, catalog);
+    const models = JSON.parse(readText(join(p.piAgentDir, "models.json")));
+    const ids = models.providers.ollama.models.map((m: { id: string }) => m.id);
+    expect(ids).toContain("m");
+    expect(ids).not.toContain("stale");
+  });
+
+  it("pi: contextWindow / reasoning / input / name / maxTokens come from the gateway catalog", () => {
+    const p = paths();
+    mkdirSync(p.piAgentDir, { recursive: true });
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            ollama: {
+              baseUrl: "http://localhost:11434",
+              models: [
+                {
+                  id: "ocr",
+                  name: "GLM OCR",
+                  reasoning: false,
+                  input: ["text", "image"],
+                  maxTokens: 8192,
+                  contextWindow: 131072,
+                },
+              ],
+            },
+          },
+        },
+      },
+      [],
+    );
+    DEPLOY({ harnesses: { pi: { model: "ocr", baseUrl: "http://localhost:11434" } } }, p, catalog);
+    const models = JSON.parse(readText(join(p.piAgentDir, "models.json")));
+    const rec = models.providers.ollama.models[0];
+    expect(rec.reasoning).toBe(false);
+    expect(rec.input).toEqual(["text", "image"]);
+    expect(rec.name).toBe("GLM OCR");
+    expect(rec.maxTokens).toBe(8192);
+    expect(rec.contextWindow).toBe(131072);
+  });
+
   it("pi settings.json merge preserves foreign keys", () => {
     const p = paths();
     mkdirSync(p.piAgentDir, { recursive: true });
@@ -904,7 +1051,11 @@ describe("pi file writer", () => {
     DEPLOY({ harnesses: { pi: { model: "m", baseUrl: "http://b", apiKey: "k" } } }, p);
     const settings = JSON.parse(readText(join(p.piAgentDir, "settings.json")));
     expect(settings.theme).toBe("dark");
-    expect(settings.enabledModels).toEqual(["binding_b/*"]);
+    // enabledModels ist ADDIV: der vorhandene Operator-Eintrag bleibt und der
+    // Writer-Provider kommt dazu. Vorher wurde die Liste überschrieben — das
+    // schloss hand-gepflegte Provider (z. B. "ollama") aus dem pi-Picker aus,
+    // obwohl models.json sie weiterhin enthielt.
+    expect(settings.enabledModels).toEqual(["other/*", "binding_b/*"]);
   });
 
   it("pi files: idempotent", () => {
@@ -945,7 +1096,11 @@ describe("pi file writer", () => {
     );
     DEPLOY({ harnesses: { pi: { model: "m", baseUrl: "http://localhost:11434" } } }, p, catalog);
     const models = JSON.parse(readText(join(p.piAgentDir, "models.json")));
-    expect(models.providers.binding_localhost_11434.models[0].contextWindow).toBe(32000);
+    // Variante A: der Gateway-Provider-Key ("ollama") wird geerbt, weil die
+    // baseUrl eindeutig im Gateway-Katalog steht. Vorher stand hier der
+    // URL-abgeleitete Key "binding_localhost_11434", der bei jedem
+    // IP-/Port-Wechsel bricht.
+    expect(models.providers.ollama.models[0].contextWindow).toBe(32000);
   });
 });
 
@@ -1048,7 +1203,12 @@ describe("buildModelCatalog", () => {
     // Beide Provider matchen dieselbe normalisierte baseUrl → union, deduped.
     const key = normalizeBaseUrlForMatch("http://b:1234");
     expect(catalog.byBaseUrl.get(key)).toEqual(["x", "y", "z"]);
-    expect(warnings).toEqual([]);
+    // Variante A: zwei Provider auf derselben baseUrl → der Provider-Key wird
+    // NICHT geerbt (kein Raten) und der Operator wird gewarnt.
+    expect(catalog.providerKeyByBaseUrl.has(key)).toBe(false);
+    expect(warnings).toEqual([
+      "model catalog (b:1234): 2 providers share this baseUrl (a, b) — provider key not inherited, URL-derived fallback used",
+    ]);
   });
 
   it("fail-soft: malformed provider/models entries → warning, others survive", () => {

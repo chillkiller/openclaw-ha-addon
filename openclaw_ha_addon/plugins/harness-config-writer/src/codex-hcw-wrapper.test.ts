@@ -330,6 +330,113 @@ describe("generated wrapper runtime behaviour", () => {
 });
 
 describe("setAcpxCodexCommand", () => {
+  it("does not write when the runtime snapshot already points to the wrapper (production case)", async () => {
+    // Produktionsfall 2026-11-14: `api.config` führt den acpx-Eintrag eines
+    // ANDEREN Plugins nicht mit → der alte Vergleich auf api.config lieferte
+    // undefined → Write bei JEDEM Plugin-Load → Config-Hot-Reload → Neustart
+    // → Restart-Loop. Autoritative Quelle ist der Runtime-Snapshot.
+    const p = paths();
+    const wrapperPath = resolveCodexHcwWrapperPath(p);
+    let calls = 0;
+    const api = {
+      config: {}, // Plugin-Sicht: enthält den acpx-Eintrag NICHT
+      runtime: {
+        config: {
+          current: () => ({
+            plugins: {
+              entries: {
+                acpx: { config: { agents: { codex: { command: wrapperPath } } } },
+              },
+            },
+          }),
+          mutateConfigFile: async () => {
+            calls++;
+            return { result: { changed: true } };
+          },
+        },
+      },
+    } as unknown as Parameters<typeof setAcpxCodexCommand>[0];
+
+    const { changed } = await setAcpxCodexCommand(api, wrapperPath);
+
+    expect(calls).toBe(0);
+    expect(changed).toBe(false);
+  });
+
+  it("writes once when the acpx entry is missing entirely", async () => {
+    const p = paths();
+    const wrapperPath = resolveCodexHcwWrapperPath(p);
+    const draft: Record<string, unknown> = {};
+    let calls = 0;
+    const api = {
+      config: {},
+      runtime: {
+        config: {
+          current: () => ({ plugins: { entries: {} } }),
+          mutateConfigFile: async (
+            { mutate }: { mutate: (d: Record<string, unknown>) => unknown },
+          ) => {
+            calls++;
+            const result = mutate(draft);
+            return { result };
+          },
+        },
+      },
+    } as unknown as Parameters<typeof setAcpxCodexCommand>[0];
+
+    const { changed } = await setAcpxCodexCommand(api, wrapperPath);
+
+    expect(calls).toBe(1);
+    expect(changed).toBe(true);
+    const plugins = draft.plugins as Record<string, unknown>;
+    const entries = plugins.entries as Record<string, unknown>;
+    const acpx = entries.acpx as Record<string, unknown>;
+    const acpxConfig = acpx.config as Record<string, unknown>;
+    const agents = acpxConfig.agents as Record<string, unknown>;
+    const codex = agents.codex as Record<string, unknown>;
+    expect(codex.command).toBe(wrapperPath);
+  });
+
+  it("corrects a differing command from the runtime snapshot", async () => {
+    const p = paths();
+    const wrapperPath = resolveCodexHcwWrapperPath(p);
+    const draft: Record<string, unknown> = {};
+    let calls = 0;
+    const api = {
+      config: {},
+      runtime: {
+        config: {
+          current: () => ({
+            plugins: {
+              entries: {
+                acpx: { config: { agents: { codex: { command: "/wrong/path" } } } },
+              },
+            },
+          }),
+          mutateConfigFile: async (
+            { mutate }: { mutate: (d: Record<string, unknown>) => unknown },
+          ) => {
+            calls++;
+            const result = mutate(draft);
+            return { result };
+          },
+        },
+      },
+    } as unknown as Parameters<typeof setAcpxCodexCommand>[0];
+
+    const { changed } = await setAcpxCodexCommand(api, wrapperPath);
+
+    expect(calls).toBe(1);
+    expect(changed).toBe(true);
+    const plugins = draft.plugins as Record<string, unknown>;
+    const entries = plugins.entries as Record<string, unknown>;
+    const acpx = entries.acpx as Record<string, unknown>;
+    const acpxConfig = acpx.config as Record<string, unknown>;
+    const agents = acpxConfig.agents as Record<string, unknown>;
+    const codex = agents.codex as Record<string, unknown>;
+    expect(codex.command).toBe(wrapperPath);
+  });
+
   it("sets command with a single auto-mode write when command differs", async () => {
     const p = paths();
     const wrapperPath = resolveCodexHcwWrapperPath(p);

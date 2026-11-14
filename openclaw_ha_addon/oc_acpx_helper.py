@@ -121,24 +121,40 @@ OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 #   acp codex models  : OLLAMA_CODEX_MODEL  (add-on option: harness_codex_model)
 #   acp opencode models: OLLAMA_OPENCODE_MODEL (add-on option: harness_opencode_model)
 # gemma4 was only ever a budget-emergency placeholder; never ship it as default.
-OLLAMA_CODEX_MODEL = os.environ.get("OLLAMA_CODEX_MODEL") or "kimi-k2.7-code:cloud"
-OLLAMA_OPENCODE_MODEL = os.environ.get("OLLAMA_OPENCODE_MODEL") or "glm-5.3-flash:cloud"
+# Modell-Optionen des Add-ons (leer = weitersuchen, KEIN fest verdrahteter Default):
+#   harness_codex_model    -> OLLAMA_CODEX_MODEL
+#   harness_claude_model   -> OLLAMA_CLAUDE_MODEL
+#   harness_opencode_model -> OLLAMA_OPENCODE_MODEL
+#   harness_pi_model       -> OLLAMA_PI_MODEL
+#   harness_model (geteilt) -> HARNESS_WRITER_MODEL
+# Ohne Optionen greift der Gateway-Default (agents.defaults.model.primary).
+OLLAMA_CODEX_MODEL = os.environ.get("OLLAMA_CODEX_MODEL", "").strip()
+OLLAMA_OPENCODE_MODEL = os.environ.get("OLLAMA_OPENCODE_MODEL", "").strip()
+OLLAMA_CLAUDE_MODEL = os.environ.get("OLLAMA_CLAUDE_MODEL", "").strip()
+OLLAMA_PI_MODEL = os.environ.get("OLLAMA_PI_MODEL", "").strip()
 # γ (2026-10-13): the third flagship harness default — claude never had a
 # config.yaml option (historically ambient OLLAMA_ACP_MODEL via run.sh:125ff).
 # Mirror ladder lives in run.sh's ANTHROPIC_MODEL fallback (sync rule).
-OLLAMA_CLAUDE_MODEL_DEFAULT = "glm-5.3-flash:cloud"
+OLLAMA_CLAUDE_MODEL_DEFAULT = "glm-5.3:cloud"
+# pi (2026-11-13): der pi-Harness war bisher NICHT in KNOWN_WRITER_HARNESS_IDS —
+# der add-on konnte ihn also nie generieren und ein pi-Entry in der config
+# war immer hand-edited (der Helper schützt hand-edits mit "operator wins").
+# Der pi-Harness nutzt den FILE-Mechanismus (models.json + settings.json) und
+# kennt jetzt den vollen Gateway-Katalog (HCW-Fix: Provider-Key-Vererbung).
 
 # Template tokens that must never be committed as real infra data (AGENTS.md
 # security hygiene: LAN addresses stay out of the repository).
-TEMPLATE_SUBSTITUTIONS = {
-    "__OLLAMA_BASE_URL__": OLLAMA_BASE_URL.rstrip("/"),
-    "__CODEX_MODEL__": OLLAMA_CODEX_MODEL,
-    "__OPENCODE_MODEL__": OLLAMA_OPENCODE_MODEL,
-}
+def _template_substitutions() -> dict[str, str]:
+    """Template-Tokens (lazy: die Modelle werden zur Aufrufzeit aufgeloest)."""
+    return {
+        "__OLLAMA_BASE_URL__": OLLAMA_BASE_URL.rstrip("/"),
+        "__CODEX_MODEL__": _resolved_model_for_template("codex"),
+        "__OPENCODE_MODEL__": _resolved_model_for_template("opencode"),
+    }
 
 
 def render_template(text: str) -> str:
-    for token, value in TEMPLATE_SUBSTITUTIONS.items():
+    for token, value in _template_substitutions().items():
         text = text.replace(token, value)
     return text
 
@@ -934,6 +950,10 @@ def _writer_managed_defaults_file() -> Path:
 # synchron halten).
 KNOWN_WRITER_HARNESS_IDS = (
     "codex", "opencode", "claude", "copilot", "droid", "gemini", "iflow", "kimi", "kiro", "qwen",
+    # pi (2026-11-13): FILE-Mechanismus, gleiche Option-Oberfläche wie die
+    # übrigen — der Harness ist lokal installiert und der add-on schreibt
+    # seine native Config (models.json + settings.json).
+    "pi",
 )
 
 
@@ -946,27 +966,61 @@ def _writer_harness_excluded() -> set[str]:
     }
 
 
+def _gateway_default_model() -> str:
+    """Gateway-Default = agents.defaults.model.primary aus openclaw.json.
+
+    Der Provider-Prefix (z. B. "ollama/") wird abgeschnitten: der Writer
+    arbeitet im Modellraum des zur baseUrl gehoerenden Providers. Ohne Default
+    (leer/nicht gesetzt) bleibt das Modell unbestimmt — der Writer schreibt
+    dann keinen Eintrag (kein unbrauchbares Modell erfinden).
+    """
+    try:
+        cfg = read_json(CONFIG_DIR / "openclaw.json") or {}
+        primary = (((cfg.get("agents") or {}).get("defaults") or {}).get("model") or {}).get("primary")
+        if not isinstance(primary, str):
+            return ""
+        primary = primary.strip()
+        if not primary:
+            return ""
+        return primary.rsplit("/", 1)[-1] if "/" in primary else primary
+    except Exception:
+        return ""
+
+
+def _resolved_model_for_template(harness_id: str) -> str:
+    """Aufgeloestes Modell fuer Template-Tokens (nie leer, sonst ungueltiges Config)."""
+    model = _writer_model_for(harness_id)
+    return model or _gateway_default_model()
+
+
 def _writer_model_for(harness_id: str) -> str:
-    """Shared model line wins; codex/opencode keep their existing dedicated
-    add-on options (harness_{codex,opencode}_model, formerly ollama_acp_*)
-    as per-harness default; claude γ: own
-    option (harness_claude_model → OLLAMA_CLAUDE_MODEL) → legacy ambient
-    OLLAMA_ACP_MODEL → default;
-    remaining env-IDs ohne Modellvorgabe → "" (TS-Entry valide: model Pflicht —
-    wir erzeugen sie dann NICHT statt einen unbrauchbaren Eintrag zu
-    schreiben)."""
+    """Modell-Aufloesung (2026-11-14, GaRoN-Vorgabe).
+
+    Reihenfolge (spezifisch -> allgemein):
+      1. pro-Harness-Option  harness_<id>_model  (leer -> weiter)
+      2. geteilte Option    harness_model        (leer -> weiter)
+      3. Gateway-Default    agents.defaults.model.primary (leer -> kein Writer-Eintrag)
+
+    Es gibt KEINEN fest verdrahteten Default: ohne Optionen und ohne
+    Gateway-Default bleibt das Modell unbestimmt, und der Helper erzeugt dann
+    bewusst keinen Eintrag (statt ein unbrauchbares Modell zu schreiben).
+    """
+    per_harness_env = {
+        "codex": "OLLAMA_CODEX_MODEL",
+        "opencode": "OLLAMA_OPENCODE_MODEL",
+        "claude": "OLLAMA_CLAUDE_MODEL",
+        "pi": "OLLAMA_PI_MODEL",
+    }.get(harness_id)
+    if per_harness_env:
+        # Env zur Aufrufzeit lesen (run.sh exportiert die Optionen beim Start;
+        # ein Modul-Import-Zeitpunkt-Snapshot waere veraltet).
+        option = os.environ.get(per_harness_env, "").strip()
+        if option:
+            return option
     shared = os.environ.get("HARNESS_WRITER_MODEL", "").strip()
     if shared:
         return shared
-    if harness_id == "codex":
-        return os.environ.get("OLLAMA_CODEX_MODEL", "").strip() or OLLAMA_CODEX_MODEL
-    if harness_id == "opencode":
-        return os.environ.get("OLLAMA_OPENCODE_MODEL", "").strip() or OLLAMA_OPENCODE_MODEL
-    if harness_id == "claude":
-        return (os.environ.get("OLLAMA_CLAUDE_MODEL", "").strip()
-                or os.environ.get("OLLAMA_ACP_MODEL", "").strip()
-                or OLLAMA_CLAUDE_MODEL_DEFAULT)
-    return ""
+    return _gateway_default_model()
 
 
 def _writer_desired_harnesses() -> dict[str, dict[str, str]]:

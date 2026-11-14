@@ -27,6 +27,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  realpathSync,
   renameSync,
   rmSync,
   writeFileSync,
@@ -398,6 +399,51 @@ function readCurrentAcpxCodexCommand(config: unknown): string | undefined {
 }
 
 /**
+ * Zielvergleich: derselbe Pfad darf nicht als "verschieden" gelten, nur weil
+ * er anders notiert ist (Symlink, relativer Präfix). Beide Pfade müssen dafür
+ * existieren; sonst entscheidet der String-Vergleich.
+ */
+function isSameCommandTarget(current: string | undefined, target: string): boolean {
+  if (!current) return false;
+  if (current === target) return true;
+  try {
+    if (existsSync(current) && existsSync(target)) {
+      return realpathSync(current) === realpathSync(target);
+    }
+  } catch {
+    // fail-soft: Pfad-Auflösung nicht möglich → String-Vergleich gilt
+  }
+  return false;
+}
+
+/**
+ * Effektiver Ist-Wert des acpx-Codex-Commands.
+ *
+ * WICHTIG (Restart-Loop-Fix 2026-11-14): `api.config` ist die Config-Sicht des
+ * aufrufenden Plugins und führt den Eintrag eines ANDEREN Plugins (acpx) nicht
+ * zuverlässig mit. Der äußere Vergleich auf `api.config` lieferte deshalb
+ * dauerhaft `undefined`, der Fast-Path griff nie, und jeder Plugin-Load
+ * schrieb die Config-Datei → afterWrite "auto" → Config-Hot-Reload → Gateway
+ * Neustart → beim nächsten Load wieder derselbe Write (Restart-Loop, ~3,5 min).
+ *
+ * Autoritative Quelle ist der veröffentlichte Runtime-Snapshot
+ * (`api.runtime.config.current()`), der alle Plugin-Einträge enthält. Der
+ * api.config-Wert bleibt als Fallback erhalten (ältere Hosts ohne die API).
+ */
+function readEffectiveAcpxCodexCommand(api: OpenClawPluginApi): string | undefined {
+  try {
+    const snapshot = api.runtime?.config?.current?.();
+    const fromRuntime = readCurrentAcpxCodexCommand(snapshot);
+    if (typeof fromRuntime === "string" && fromRuntime.length > 0) return fromRuntime;
+  } catch {
+    // fail-soft: Host ohne die Runtime-Config-Reader-API
+  }
+  const fromApiConfig = readCurrentAcpxCodexCommand(api.config);
+  if (typeof fromApiConfig === "string" && fromApiConfig.length > 0) return fromApiConfig;
+  return undefined;
+}
+
+/**
  * Setzt plugins.entries.acpx.config.agents.codex.command auf den HCW-eigenen
  * Wrapper. Idempotent: wenn der Pfad bereits gesetzt ist, wird kein Write,
  * kein Reload und kein Restart ausgelöst. Bei tatsächlicher Änderung löst
@@ -412,8 +458,15 @@ export async function setAcpxCodexCommand(
   // Pfadstabil: wrapperPath ist deterministisch aus paths.acpxDir +
   // HCW_WRAPPER_NAME; eine Pfad-Änderung würde bei jedem Boot einen Write
   // + Reload auslösen.
-  const current = readCurrentAcpxCodexCommand(api.config);
-  if (current === wrapperPath) {
+  //
+  // Der Ist-Wert kommt aus der autoritativen Quelle (Runtime-Snapshot), nicht
+  // aus der Plugin-Config-Sicht — sonst schreibt der Writer bei JEDEM Plugin-
+  // Load und löst damit die Config-Hot-Reload-Kette aus (Restart-Loop).
+  const current = readEffectiveAcpxCodexCommand(api);
+  if (isSameCommandTarget(current, wrapperPath)) {
+    // Bereits korrekt → KEIN mutateConfigFile-Aufruf. Ein Write mit
+    // unverändertem Inhalt wäre zwar inhaltlich harmlos, löst aber trotzdem
+    // den Reload des Hosts aus und damit den Neustart.
     return { changed: false };
   }
 
@@ -428,7 +481,9 @@ export async function setAcpxCodexCommand(
         const agents = (acpxConfig.agents ?? {}) as Record<string, unknown>;
         const codex = (agents.codex ?? {}) as Record<string, unknown>;
 
-        if (codex.command === wrapperPath) return { changed: false };
+        if (isSameCommandTarget(codex.command as string | undefined, wrapperPath)) {
+          return { changed: false };
+        }
 
         codex.command = wrapperPath;
         // Keine args setzen — der Wrapper bekommt alle Args vom acpx-Wrapper

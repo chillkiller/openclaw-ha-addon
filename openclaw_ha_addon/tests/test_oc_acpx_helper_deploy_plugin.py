@@ -732,62 +732,83 @@ class AddonHarnessDefaultsTest(unittest.TestCase):
 
     def _pop_claude_envs(self) -> None:
         for key in ("OLLAMA_CLAUDE_MODEL", "OLLAMA_ACP_MODEL",
-                    "OLLAMA_CODEX_MODEL", "OLLAMA_OPENCODE_MODEL"):
+                    "OLLAMA_CODEX_MODEL", "OLLAMA_OPENCODE_MODEL",
+                    "OLLAMA_PI_MODEL"):
             os.environ.pop(key, None)
 
-    def test_per_harness_model_defaults_for_flagship_trio(self) -> None:
-        # γ (2026-10-13): the three flagship harnesses each carry their own
-        # dedicated default (claude newly: harness_claude_model).
-        os.environ["OLLAMA_CODEX_MODEL"] = "codex-default"
-        os.environ["OLLAMA_OPENCODE_MODEL"] = "opencode-default"
-        os.environ["OLLAMA_CLAUDE_MODEL"] = "claude-default"
+    def _write_gateway_default(self, model: str) -> None:
+        """agents.defaults.model.primary setzen (Gateway-Default)."""
+        self.config_dir.joinpath("openclaw.json").write_text(json.dumps({
+            "agents": {"entries": {},
+                       "defaults": {"model": {"primary": f"ollama/{model}"}}},
+        }))
+
+    def test_model_ladder_per_harness_then_shared_then_gateway_default(self) -> None:
+        # 2026-11-14 (Owner-Vorgabe): leere Felder = weitersuchen, KEIN im Code
+        # verdrahteter Default.
+        #   1. pro-Harness-Option  2. geteilte Option  3. Gateway-Default
+        self._pop_claude_envs()
         self.addCleanup(self._pop_claude_envs)
         self.set_env(base_url="http://10.0.0.5:11434")
+        self._write_gateway_default("gateway-default-model")
+        os.environ["OLLAMA_CODEX_MODEL"] = "codex-option"
+        os.environ["OLLAMA_OPENCODE_MODEL"] = "opencode-option"
+        os.environ["OLLAMA_CLAUDE_MODEL"] = "claude-option"
         self.assertTrue(helper.deploy_plugins())
         harnesses = self.harnesses()
-        self.assertEqual(harnesses["codex"]["model"], "codex-default")
-        self.assertEqual(harnesses["opencode"]["model"], "opencode-default",
-                         "dedicated harness_* defaults without shared model")
-        self.assertEqual(harnesses["claude"]["model"], "claude-default")
-        # env-ids without any model line → deliberately not generated:
-        self.assertEqual(set(harnesses),
-                         {"codex", "opencode", "claude"})
+        self.assertEqual(harnesses["codex"]["model"], "codex-option")
+        self.assertEqual(harnesses["opencode"]["model"], "opencode-option")
+        self.assertEqual(harnesses["claude"]["model"], "claude-option")
+        # ENV-IDs ohne eigene Option erben den Gateway-Default:
+        self.assertEqual(harnesses["copilot"]["model"], "gateway-default-model")
+        self.assertEqual(harnesses["qwen"]["model"], "gateway-default-model")
+        # Die geteilte Option schlägt den Gateway-Default, aber nicht die
+        # pro-Harness-Option:
+        os.environ["HARNESS_WRITER_MODEL"] = "shared-option"
+        self.assertTrue(helper.deploy_plugins())
+        harnesses = self.harnesses()
+        self.assertEqual(harnesses["copilot"]["model"], "shared-option")
+        self.assertEqual(harnesses["codex"]["model"], "codex-option")
+
+    def test_without_any_model_no_harness_entries_are_written(self) -> None:
+        # Ohne Optionen UND ohne Gateway-Default bleibt das Modell unbestimmt →
+        # der Writer erzeugt bewusst keinen Eintrag (kein unbrauchbares Modell).
+        self._pop_claude_envs()
+        self.addCleanup(self._pop_claude_envs)
+        self.set_env(base_url="http://10.0.0.5:11434")
+        self.config_dir.joinpath("openclaw.json").write_text(
+            json.dumps({"agents": {"entries": {}}}))
+        self.assertTrue(helper.deploy_plugins())
+        self.assertEqual(self.harnesses(), {})
 
     def test_claude_default_is_generated_even_without_options(self) -> None:
-        # γ behavior change (CHANGELOG-Nota): with the claude ladder (option →
-        # legacy OLLAMA_ACP_MODEL → default) a base_url-enabled setup now gets
-        # a claude entry out of the box. Operator-removal stays possible (set
-        # the option empty does NOT suppress — exclusion is harness_excluded
-        #_agents and operator hand-edit ownership).
+        # Ohne claude-Option greift die Leiter weiter: geteilte Option, dann
+        # Gateway-Default (agents.defaults.model.primary).
         self._pop_claude_envs()
         self.addCleanup(self._pop_claude_envs)
         self.set_env(base_url="http://10.0.0.5:11434")
+        self._write_gateway_default("gateway-default-model")
         self.assertTrue(helper.deploy_plugins())
         harnesses = self.harnesses()
-        self.assertEqual(harnesses["claude"]["model"],
-                         helper.OLLAMA_CLAUDE_MODEL_DEFAULT)
+        self.assertEqual(harnesses["claude"]["model"], "gateway-default-model")
 
-    def test_claude_model_ladder_option_wins_then_legacy_then_default(self) -> None:
+    def test_claude_model_ladder_option_then_shared_then_gateway_default(self) -> None:
         self._pop_claude_envs()
         self.addCleanup(self._pop_claude_envs)
         self.set_env(base_url="http://10.0.0.5:11434")
+        self._write_gateway_default("gateway-default-model")
         os.environ["OLLAMA_CLAUDE_MODEL"] = "from-new-option"
-        os.environ["OLLAMA_ACP_MODEL"] = "from-legacy-env"
         self.assertTrue(helper.deploy_plugins())
         self.assertEqual(self.harnesses()["claude"]["model"], "from-new-option")
-        # legacy ambient env wins when the new option is unset:
+        # geteilte Option gewinnt vor dem Gateway-Default:
         os.environ.pop("OLLAMA_CLAUDE_MODEL")
-        self.config_dir.joinpath("openclaw.json").write_text(
-            json.dumps({"agents": {"entries": {}}}))
+        os.environ["HARNESS_WRITER_MODEL"] = "from-shared-option"
         self.assertTrue(helper.deploy_plugins())
-        self.assertEqual(self.harnesses()["claude"]["model"], "from-legacy-env")
-        # both unset → the default constant:
-        os.environ.pop("OLLAMA_ACP_MODEL")
-        self.config_dir.joinpath("openclaw.json").write_text(
-            json.dumps({"agents": {"entries": {}}}))
+        self.assertEqual(self.harnesses()["claude"]["model"], "from-shared-option")
+        # beide Optionen leer → Gateway-Default:
+        os.environ.pop("HARNESS_WRITER_MODEL")
         self.assertTrue(helper.deploy_plugins())
-        self.assertEqual(self.harnesses()["claude"]["model"],
-                         helper.OLLAMA_CLAUDE_MODEL_DEFAULT)
+        self.assertEqual(self.harnesses()["claude"]["model"], "gateway-default-model")
 
     def test_operator_model_array_entry_is_untouched_and_refresh_stable(self) -> None:
         # γ multi-model: a hand-written models array differs from the managed
