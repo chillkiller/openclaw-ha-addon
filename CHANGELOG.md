@@ -10,6 +10,24 @@ Each entry summarizes user-visible changes. Full engineering notes:
 
 ---
 
+## [0.7.13.38] — 2026-11-14
+
+The add-on now ships the current OpenClaw runtime, and the agent harnesses use the model that is actually configured instead of a built-in fallback.
+
+### Changed
+
+- **The bundled runtime was updated to OpenClaw 2026.11.3.** This release includes upstream security fixes: certificate verification for worker transfers with blank fingerprints, sandbox image previews kept inside their allowed folders, and reduced credential exposure. It also contains upstream fixes for a stale gateway lock that was not recovered after a process-ID reuse, for backup and update discovery runs that failed on large agent databases, and for memory pressure during transcript search index repairs.
+- **The bundled tools were updated.** The local embedding runtime moved to 3.22.3, the Model Context Protocol client to 0.17.0, and the package manager is now pinned to a fixed version so that repeated image builds stay reproducible. The image build also fails immediately when the Node.js version no longer satisfies the runtime's engine requirement, instead of failing later at runtime.
+- **Harness models follow the configured model order.** Every agent harness receives the model that is configured for it. A harness without its own model uses the shared model setting; if that setting is empty as well, the gateway's default model is used. A fixed fallback model was written before, even when nothing was configured, and the effective model was not visible in the harness configuration.
+- **The first configured model of a harness list is used as its default.** The harness previously took a separately configured default that could differ from the model list it was given.
+
+### Fixed
+
+- **A configured provider key is now inherited by the agent harnesses.** The key of the matching gateway provider is used instead of one derived from the provider address. The derived key broke whenever an address or port changed and left the old key behind as a leftover.
+- **The Codex command line of the integration is no longer rewritten on every write.** That write triggered a configuration reload of the running gateway during plugin startup, which could end in a reload loop with the integration being retired while calls were still running.
+
+---
+
 ## [0.7.13.37] — 2026-11-06
 
 The web terminal stays up while it is healthy, the add-on reports its real health status, and a gateway that cannot start is repaired once instead of being restarted in a loop.
