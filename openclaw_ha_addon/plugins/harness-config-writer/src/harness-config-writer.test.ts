@@ -2005,6 +2005,38 @@ describe("opencode writer multi-model", () => {
       "glm-5.3-flash:cloud",
     ]);
   });
+
+  it("writes native context/output limits from gateway model metadata", () => {
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            ollama: {
+              baseUrl: "http://localhost:11434",
+              models: [{ id: "kimi-k2.7-code:cloud", contextWindow: 262144, maxTokens: 8192 }],
+            },
+          },
+        },
+      },
+      [],
+    );
+    const cfg = JSON.parse(buildOpencodeConfigJsonc(OLLAMA, catalog)) as {
+      provider: Record<
+        string,
+        { models: Record<string, { limit?: { context: number; output: number } }> }
+      >;
+    };
+    expect(cfg.provider.binding_localhost_11434.models["kimi-k2.7-code:cloud"]).toEqual({
+      limit: { context: 262144, output: 8192 },
+    });
+  });
+
+  it("keeps unknown model metadata empty when no limits are available", () => {
+    const cfg = JSON.parse(buildOpencodeConfigJsonc(OLLAMA)) as {
+      provider: Record<string, { models: Record<string, unknown> }>;
+    };
+    expect(cfg.provider.binding_localhost_11434.models["kimi-k2.7-code:cloud"]).toEqual({});
+  });
 });
 
 describe("claude env multi-model", () => {
@@ -2031,6 +2063,48 @@ describe("claude env multi-model", () => {
     const env = readText(join(p.acpxDir, "harness-env", "claude.env"));
     expect(env).not.toContain("CLAUDE_MODEL_CONFIG");
     expect(env).toContain(`ANTHROPIC_MODEL='gemma4'`);
+  });
+
+  it("writes native model windows and preserves explicit operator compaction metadata", () => {
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            ollama: {
+              baseUrl: "http://localhost:11434",
+              models: [{ id: "gemma4", contextWindow: 128000, maxTokens: 8192 }],
+            },
+          },
+        },
+      },
+      [],
+    );
+    const initial = JSON.parse(
+      buildClaudeSettingsJson(
+        { model: "gemma4", baseUrl: "http://localhost:11434", apiKey: "ollama" },
+        [],
+        catalog,
+      ),
+    );
+    expect(initial.modelSettings.gemma4.autoCompactWindow).toBe(128000);
+
+    const p = paths();
+    mkdirSync(p.claudeSourceHome, { recursive: true });
+    writeFileSync(
+      join(p.claudeSourceHome, "settings.json"),
+      JSON.stringify({ modelSettings: { gemma4: { autoCompactWindow: 100000 } } }),
+    );
+    DEPLOY(
+      {
+        harnesses: {
+          claude: { model: "gemma4", baseUrl: "http://localhost:11434", apiKey: "ollama" },
+        },
+      },
+      p,
+      catalog,
+    );
+    const written = JSON.parse(readText(join(p.claudeSourceHome, "settings.json")));
+    expect(written.modelSettings.gemma4.autoCompactWindow).toBe(100000);
   });
 });
 

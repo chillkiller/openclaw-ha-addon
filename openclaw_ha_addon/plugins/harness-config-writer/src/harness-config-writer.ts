@@ -1690,7 +1690,10 @@ export function deployCodexHarnessFiles(
  * multi-Backend-safe. Plain JSON ist valid JSONC (OpenCode parst JSON(C)
  * unabhängig vom Dateinamen, Helper-Doku verbatim).
  */
-export function buildOpencodeConfigJsonc(entry: HarnessConfigEntry): string {
+export function buildOpencodeConfigJsonc(
+  entry: HarnessConfigEntry,
+  modelCatalog?: ModelCatalog,
+): string {
   const baseUrl = entry.baseUrl ?? "";
   const providerId = deriveProviderId(baseUrl);
   const smallModel = nonEmpty(entry.smallModel) ?? entry.model;
@@ -1718,7 +1721,20 @@ export function buildOpencodeConfigJsonc(entry: HarnessConfigEntry): string {
           baseURL: withV1Suffix(baseUrl),
           apiKey: entry.apiKey ?? "ollama",
         },
-        models: Object.fromEntries(modelIds.map((id) => [id, {}])),
+        models: Object.fromEntries(
+          modelIds.map((id) => {
+            const contextWindow = modelCatalog?.metaById.get(id)?.contextWindow;
+            const maxTokens = modelCatalog?.rawMaxTokensById.get(id);
+            const limit: Record<string, number> = {};
+            if (typeof contextWindow === "number" && contextWindow > 0) {
+              limit.context = Math.floor(contextWindow);
+            }
+            if (typeof maxTokens === "number" && maxTokens > 0) {
+              limit.output = Math.floor(maxTokens);
+            }
+            return [id, Object.keys(limit).length > 0 ? { limit } : {}];
+          }),
+        ),
       },
     },
     model: `${providerId}/${entry.model}`,
@@ -1910,10 +1926,11 @@ export function deployOpencodeHarnessFiles(
   paths: HarnessWriterPaths,
   logger?: HarnessWriterLogger,
   harnessId = "opencode",
+  modelCatalog?: ModelCatalog,
 ): { warnings: string[]; files: HarnessDeployFile[] } {
   const warnings: string[] = [];
   const files: HarnessDeployFile[] = [];
-  const desired = buildOpencodeConfigJsonc(entry);
+  const desired = buildOpencodeConfigJsonc(entry, modelCatalog);
   for (const targetDir of [join(paths.acpxDir, "opencode-home"), paths.opencodeGlobalDir]) {
     const path = join(targetDir, "opencode.jsonc");
     // M3-Fix (2026-10-14): die Datei trägt den apiKey in Klartext → 0600
@@ -1957,7 +1974,11 @@ export function deployOpencodeHarnessFiles(
 
 const CLAUDE_EFFORT_LEVELS = new Set(["low", "medium", "high", "xhigh", "max"]);
 
-export function buildClaudeSettingsJson(entry: HarnessConfigEntry, warnings: string[]): string {
+export function buildClaudeSettingsJson(
+  entry: HarnessConfigEntry,
+  warnings: string[],
+  modelCatalog?: ModelCatalog,
+): string {
   const model = nonEmpty(entry.model);
   const baseUrl = nonEmpty(entry.baseUrl);
   const apiKey = nonEmpty(entry.apiKey);
@@ -1978,6 +1999,15 @@ export function buildClaudeSettingsJson(entry: HarnessConfigEntry, warnings: str
     ANTHROPIC_AUTH_TOKEN: apiKey,
     ANTHROPIC_SMALL_FAST_MODEL: smallModel,
   };
+  const modelSettings = Object.fromEntries(
+    dedupeModelIds([...(model ? [model] : []), ...(entry.models ?? [])]).flatMap((modelId) => {
+      const contextWindow = modelCatalog?.metaById.get(modelId)?.contextWindow;
+      return typeof contextWindow === "number" && contextWindow > 0
+        ? [[modelId, { autoCompactWindow: Math.floor(contextWindow) }]]
+        : [];
+    }),
+  );
+  if (Object.keys(modelSettings).length > 0) cfg.modelSettings = modelSettings;
   return `${JSON.stringify(cfg, null, 2)}\n`;
 }
 
@@ -2025,8 +2055,44 @@ function manageClaudeSettingsJson(
   }
   const merged: Record<string, unknown> = { model: desiredObj.model, env: mergedEnv };
   if ("effort" in desiredObj) merged.effort = desiredObj.effort;
+  const desiredModelSettings =
+    typeof desiredObj.modelSettings === "object" &&
+    desiredObj.modelSettings !== null &&
+    !Array.isArray(desiredObj.modelSettings)
+      ? (desiredObj.modelSettings as Record<string, unknown>)
+      : {};
+  const currentModelSettings =
+    typeof currentObj.modelSettings === "object" &&
+    currentObj.modelSettings !== null &&
+    !Array.isArray(currentObj.modelSettings)
+      ? (currentObj.modelSettings as Record<string, unknown>)
+      : {};
+  if (
+    Object.keys(desiredModelSettings).length > 0 ||
+    Object.keys(currentModelSettings).length > 0
+  ) {
+    const modelSettings: Record<string, unknown> = { ...desiredModelSettings };
+    for (const [modelId, value] of Object.entries(currentModelSettings)) {
+      const desiredValue = desiredModelSettings[modelId];
+      modelSettings[modelId] =
+        typeof value === "object" && value !== null && !Array.isArray(value)
+          ? {
+              ...(typeof desiredValue === "object" &&
+              desiredValue !== null &&
+              !Array.isArray(desiredValue)
+                ? desiredValue
+                : {}),
+              ...value,
+            }
+          : value;
+    }
+    // Existing per-model settings are operator-owned; HCW only fills absent metadata.
+    merged.modelSettings = modelSettings;
+  }
   for (const key of Object.keys(currentObj).sort()) {
-    if (key !== "model" && key !== "effort" && key !== "env") merged[key] = currentObj[key];
+    if (key !== "model" && key !== "effort" && key !== "env" && key !== "modelSettings") {
+      merged[key] = currentObj[key];
+    }
   }
   const next = `${JSON.stringify(merged, null, 2)}\n`;
   if (next === current) return "unchanged";
@@ -2040,10 +2106,11 @@ export function deployClaudeHarnessFiles(
   warnings: string[],
   logger?: HarnessWriterLogger,
   harnessId = "claude",
+  modelCatalog?: ModelCatalog,
 ): { files: HarnessDeployFile[] } {
   const files: HarnessDeployFile[] = [];
   const path = join(paths.claudeSourceHome, "settings.json");
-  const desired = buildClaudeSettingsJson(entry, warnings);
+  const desired = buildClaudeSettingsJson(entry, warnings, modelCatalog);
   const action = manageClaudeSettingsJson(path, desired, entry, warnings);
   if (action !== "unchanged") {
     logger?.info?.(`[${harnessId}] ${action} ${path} (settings.json)`);
@@ -2647,7 +2714,7 @@ export function deployHarnessConfigs(
         harnessId === "codex"
           ? // γ.1: Katalog (metabyId) für die codex-Metadaten-Datei mitgeben.
             deployCodexHarnessFiles(enriched, paths, logger, harnessId, modelCatalog)
-          : deployOpencodeHarnessFiles(enriched, paths, logger, harnessId);
+          : deployOpencodeHarnessFiles(enriched, paths, logger, harnessId, modelCatalog);
       // Schritt 4 (Weg A'): zusätzlich HCW-eigenen Codex-Wrapper + Home
       // deployen, damit acpx diesen Wrapper über agents.codex.command aufrufen
       // kann. Der bestehende FILE-Mechanismus bleibt aktiv (kein Verhaltens-
@@ -2685,7 +2752,14 @@ export function deployHarnessConfigs(
       const envWarnings = [...envResult.warnings];
       // Schritt 2: claude bekommt zusätzlich ~/.claude/settings.json.
       if (harnessId === "claude") {
-        const claudeFiles = deployClaudeHarnessFiles(enriched, paths, envWarnings, logger, harnessId).files;
+        const claudeFiles = deployClaudeHarnessFiles(
+          enriched,
+          paths,
+          envWarnings,
+          logger,
+          harnessId,
+          modelCatalog,
+        ).files;
         files.push(...claudeFiles);
       }
       results.push({
