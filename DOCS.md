@@ -919,6 +919,19 @@ Home Assistant checks for app updates automatically. When an update is available
 - Everything under `/config/` is preserved (config, skills, workspace, keys)
 - Homebrew and brew-installed packages are preserved (synced to `/config/.linuxbrew/`)
 - The OpenClaw binary is updated to the version in the new image
+- Bundled skills stay package-local; managed skills in `/config/.openclaw/skills`
+  are operator-owned and keep precedence over bundled skills
+
+**Important — do not run OpenClaw's own update inside the container**
+
+The OpenClaw runtime inside this add-on is pinned by the image. Never run
+`openclaw update` (or accept an in-container update prompt) inside the web
+terminal: the container is replaced on every app update, so an in-container
+runtime update is always temporary, and package-swap operations can fail
+against the container filesystem. The supported update path for the bundled
+runtime is an app update — every app release carries its pinned OpenClaw
+version (see the release notes and `DEPLOYMENT.md`). To check what your
+running container holds, use `openclaw --version` in the web terminal.
 
 ### Checking your version
 

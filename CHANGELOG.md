@@ -23,6 +23,7 @@ The add-on now ships the current OpenClaw runtime, and the agent harnesses use t
 
 ### Fixed
 
+- **The bundled skills survived inside the container, but the copy mechanism behind it broke runtime updates.** Startup copied every bundled skill into the persistent configuration directory and replaced the package directory with a symlink. Such a symlink aborts the package-swap rollback scan of an OpenClaw runtime update, and a copied skill would shadow every future bundled update. Bundled skills now stay package-local, user-created skills in the persistent skills directory keep working and keep precedence, and existing copies there are left untouched.
 - **A configured provider key is now inherited by the agent harnesses.** The key of the matching gateway provider is used instead of one derived from the provider address. The derived key broke whenever an address or port changed and left the old key behind as a leftover.
 - **The Codex command line of the integration is no longer rewritten on every write.** That write triggered a configuration reload of the running gateway during plugin startup, which could end in a reload loop with the integration being retired while calls were still running.
 

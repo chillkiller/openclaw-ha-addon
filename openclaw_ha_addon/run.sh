@@ -467,33 +467,31 @@ export XDG_CONFIG_HOME=/config
 mkdir -p /config/.openclaw /config/.openclaw/identity /config/clawd /config/keys /config/secrets
 
 # ------------------------------------------------------------------------------
-# Sync built-in OpenClaw skills from image to persistent storage
-# On each startup, copy new/updated built-in skills so they survive rebuilds.
-# We sync them to /config/.openclaw/skills and symlink back.
-# NOTE: We cannot use `npm root -g` here because HOME=/config may contain a
-# persisted .npmrc with a custom prefix from a previous run. Instead, we
-# resolve the real image path by temporarily overriding HOME.
+# ------------------------------------------------------------------------------
+# Bundled OpenClaw skills stay package-local (v0.7.13.38).
+# The bundled skills ship inside the OpenClaw package and are loaded from
+# there. OpenClaw additionally loads MANAGED skills from
+# $OPENCLAW_CONFIG_DIR/skills with higher precedence, so operator-added and
+# operator-edited skills keep working from the persistent directory without
+# any copy or symlink.
+# Copying the bundles into the state directory was removed on purpose: those
+# copies would shadow every future bundle update (managed skills win).
+# Replacing the package directory with a symlink was removed because it broke
+# the package-swap rollback scan of an OpenClaw runtime update
+# ("Package rollback symlink leaves the retained tree"), and the gateway
+# never runs a runtime update inside the container - runtime updates ship
+# exclusively with a new add-on release.
+# Existing managed skills in /config/.openclaw/skills are preserved as-is;
+# they retain managed precedence. Remove a copied skill there when it should
+# follow the bundled update again.
+# NOTE: We cannot use `npm root -g` with the regular HOME here because
+# HOME=/config may contain a persisted .npmrc with a custom prefix set below.
 # ------------------------------------------------------------------------------
 IMAGE_SKILLS_DIR="$(HOME=/root npm root -g 2>/dev/null)/openclaw/skills"
-PERSISTENT_SKILLS_DIR="/config/.openclaw/skills"
-
-if [ -d "$IMAGE_SKILLS_DIR" ] && [ ! -L "$IMAGE_SKILLS_DIR" ]; then
-  mkdir -p "$PERSISTENT_SKILLS_DIR"
-  # Sync skills: --update replaces older files so upgrades propagate,
-  # but doesn't delete user-added files in persistent storage.
-  if command -v rsync >/dev/null 2>&1; then
-    rsync -a --update "$IMAGE_SKILLS_DIR/" "$PERSISTENT_SKILLS_DIR/" 2>/dev/null || true
-  else
-    cp -ru "$IMAGE_SKILLS_DIR/"* "$PERSISTENT_SKILLS_DIR/" 2>/dev/null || true
-  fi
-  # Replace image skills dir with symlink to persistent copy
-  rm -rf "$IMAGE_SKILLS_DIR"
-  ln -sf "$PERSISTENT_SKILLS_DIR" "$IMAGE_SKILLS_DIR"
-  echo "INFO: Synced built-in skills to persistent storage at $PERSISTENT_SKILLS_DIR"
-elif [ -L "$IMAGE_SKILLS_DIR" ]; then
-  echo "INFO: Built-in skills already linked to persistent storage"
+if [ -d "$IMAGE_SKILLS_DIR" ]; then
+  echo "INFO: Bundled skills remain package-local at $IMAGE_SKILLS_DIR (managed skills dir: $OPENCLAW_CONFIG_DIR/skills)"
 else
-  echo "WARN: Built-in skills directory not found at $IMAGE_SKILLS_DIR"
+  echo "WARN: Bundled skills directory not found at $IMAGE_SKILLS_DIR"
 fi
 
 # ------------------------------------------------------------------------------
