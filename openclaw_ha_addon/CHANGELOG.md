@@ -9,6 +9,27 @@ For a release-facing summary, see the root [CHANGELOG.md](../CHANGELOG.md).
 
 ---
 
+## [0.7.13.38] — 2026-11-14
+
+### Changed
+
+- **Runtime pin (`Dockerfile`):** OpenClaw `2026.11.1` -> `2026.11.3` (npm `latest`, stable). The tarball was verified before the bump: the unicode-guard byte anchors and the sanitize anchor are still present, and `@homebridge/ciao` stays pinned at `1.3.12`, so the mDNS patch anchor is unchanged. The Node engine floor of the runtime (`>=24.16.0 <25 || >=26.1.0`) is unchanged; the build now verifies the installed Node version and fails the image build immediately when it no longer satisfies the floor.
+- **Tool pins (`Dockerfile`):** `node-llama-cpp` `3.20.0` -> `3.22.3` (the `NLC_BUILD_PARALLEL` patch marker `getParallelBuildThreadsToUse` is present in both versions), `mcporter` `0.12.3` -> `0.17.0`, and `pnpm` is now pinned to `12.18.0` instead of tracking the newest release, so repeated image builds stay reproducible. Engine floors are satisfied by the Node version the image installs.
+- **Model resolution (`oc_acpx_helper.py`):** the ladder for harness models is now `harness_<id>_model` -> shared `harness_model` -> gateway default `agents.defaults.model.primary` -> no entry. The previously hard-wired per-harness defaults were removed, and an empty result produces no writer entry instead of an unusable model. The option values are read from the environment at call time, and the template substitutions are resolved lazily so that the model resolution happens per write.
+- **Default model of a harness (`plugins/harness-config-writer/src/harness-config-writer.ts`):** the first model of the configured list is used as the harness default, so the effective model matches the model list the harness was given.
+
+### Fixed
+
+- **Provider key inheritance (`plugins/harness-config-writer/src/harness-config-writer.ts`):** the key of the matching gateway provider is inherited by the harness instead of one derived from the provider URL. The derived key broke on every address or port change and left the previous key behind as a leftover in the merged configuration. The key is only taken when exactly one gateway provider matches the base URL; otherwise the previous fallback applies.
+- **Reload loop on startup (`plugins/harness-config-writer/index.ts`):** the write of the Codex command into `plugins.entries` triggered a configuration reload of the running gateway while the plugin was being loaded, which could end with the integration being retired while calls were still running. The write is now gated and can be disabled with `HCW_SET_ACPX_CODEX_COMMAND=0`.
+
+### Tests
+
+- `openclaw_ha_addon/tests/test_oc_acpx_helper_deploy_plugin.py`: the model ladder tests were rewritten for the new precedence and a case was added that verifies that no harness entry is written when neither an option nor a gateway default exists.
+- `plugins/harness-config-writer/src/harness-config-writer.test.ts`: regression tests for the provider key inheritance, the full model catalog and the default model taken from the model list.
+
+---
+
 ## [0.7.13.37] — 2026-11-06
 
 ### Fixed
