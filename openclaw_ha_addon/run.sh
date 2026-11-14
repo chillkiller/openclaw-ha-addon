@@ -657,6 +657,10 @@ fi
 # Homebrew installs to /home/linuxbrew/.linuxbrew/ which is ephemeral.
 # We sync it to /config/.linuxbrew and symlink back so brew-installed CLI
 # tools (gog, gh, bw, etc.) survive app updates.
+  # Unlike the bundled skills (v0.7.13.38), the symlink stays correct here:
+  # brew lives outside the OpenClaw package tree, so the runtime's package-swap
+  # rollback scan never sees it, and Homebrew has no native persistence in the
+  # state directory to replace this mechanism with.
 # ------------------------------------------------------------------------------
 IMAGE_BREW_DIR="/home/linuxbrew/.linuxbrew"
 PERSISTENT_BREW_DIR="/config/.linuxbrew"
