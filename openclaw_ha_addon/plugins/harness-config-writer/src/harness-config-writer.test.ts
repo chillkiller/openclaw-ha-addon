@@ -16,21 +16,27 @@ import {
   chmodSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   buildClaudeSettingsJson,
   buildCodexConfigToml,
   buildCodexModelCatalogJson,
+  buildHarnessNativeSettingsJson,
+  buildKiloConfigJson,
+  buildKimiConfigToml,
   buildModelCatalog,
   buildOpencodeConfigJsonc,
   buildPiModelsJson,
   buildPiSettingsJson,
+  buildQwenSettingsJson,
   deployHarnessConfigs,
   derivePiProviderId,
   deriveProviderId,
+  mergeNativeConfigRecord,
   normalizeBaseUrlForMatch,
+  overlayCodexCatalog,
   OPENCODE_LEGACY_PLACEHOLDER,
   renderEnvFile,
   resolveEntryModels,
@@ -59,6 +65,16 @@ function paths(home = root): HarnessWriterPaths {
     opencodeGlobalDir: resolveOpencodeGlobalDir({ HOME: home }) ?? join(home, ".config", "opencode"),
     claudeSourceHome: join(root, "config", ".claude"),
     piAgentDir: join(root, "config", ".pi", "agent"),
+    kiloGlobalDir: join(home, ".config", "kilo"),
+    qwenHome: join(home, ".qwen"),
+    nativeHomes: {
+      gemini: join(home, ".gemini"),
+      copilot: join(home, ".copilot"),
+      iflow: join(home, ".iflow"),
+      droid: join(home, ".factory"),
+      kiro: join(home, ".kiro"),
+      kimi: join(home, ".kimi-code"),
+    },
   };
 }
 
@@ -111,7 +127,7 @@ describe("codex writer", () => {
     const report = DEPLOY({ harnesses: { codex: OLLAMA } }, p);
     expect(report.skipped).toBe(false);
 
-    const auth = join(p.acpxDir, "codex-home", "auth.json");
+    const auth = join(p.codexSourceHome, "auth.json");
     expect(JSON.parse(readText(auth))).toEqual({
       OPENAI_API_KEY: "ollama",
       tokens: null,
@@ -132,14 +148,7 @@ describe("codex writer", () => {
     // Self-Recognition-Signatur (γ) immer erste Zeile.
     expect(toml.startsWith("# harness-config-writer (generated)")).toBe(true);
     expect(report.results[0].mechanism).toBe("file-codex");
-    // Schritt 4: zusätzlich HCW-eigener Wrapper + Home (config.toml + auth.json).
-    expect(report.results[0].files.map((f) => f.action)).toEqual([
-      "created",
-      "created",
-      "created",
-      "created",
-      "created",
-    ]);
+    expect(report.results[0].files.map((f) => f.action)).toEqual(["created", "created"]);
   });
 
   it("thinking set → model_reasoning_effort; empty → absent", () => {
@@ -177,7 +186,7 @@ describe("codex writer", () => {
     // KEIN Writer-Routing in fremden Dateien (Model-Wahl = Operator).
     expect(after).not.toMatch(/^model_provider = /m);
     expect(after).not.toMatch(/^model_catalog_json = /m);
-    expect(after).toContain("[model_providers.binding_localhost_11434]");
+    expect(after).toContain('[model_providers."binding_localhost_11434"]');
     // Operator-Key model = "gpt-5" unverändert (kein Überschreiben).
     expect(after).toContain('model = "gpt-5"');
   });
@@ -212,7 +221,7 @@ describe("codex writer", () => {
     const after = readText(tomlPath);
     expect(after).toContain('model = "gpt-5"'); // Operator-Zeile unangetastet
     expect(after).not.toContain("[model_providers.binding_localhost_11434]"); // alte Section weg
-    expect(after).toContain("[model_providers.binding_elsewhere_9]"); // neue Section da
+    expect(after).toContain('[model_providers."binding_elsewhere_9"]'); // neue Section da
   });
 
   // ---- Final-Audit r2 Regression: jede behobene Critical/High/Medium-Lücke ----
@@ -414,19 +423,13 @@ describe("codex writer", () => {
     const p = paths();
     DEPLOY({ harnesses: { codex: OLLAMA } }, p);
     const report = DEPLOY({ harnesses: { codex: OLLAMA } }, p);
-    expect(report.results[0].files.map((f) => f.action)).toEqual([
-      "unchanged",
-      "unchanged",
-      "unchanged",
-      "unchanged",
-      "unchanged",
-    ]);
+    expect(report.results[0].files.map((f) => f.action)).toEqual(["unchanged", "unchanged"]);
   });
 
   it("existing auth.json is NEVER touched — even different content (helper semantics)", () => {
     const p = paths();
-    const auth = join(p.acpxDir, "codex-home", "auth.json");
-    mkdirSync(join(p.acpxDir, "codex-home"), { recursive: true });
+    const auth = join(p.codexSourceHome, "auth.json");
+    mkdirSync(p.codexSourceHome, { recursive: true });
     writeFileSync(auth, '{"OPENAI_API_KEY": "native-oauth"}', "utf-8");
     const report = DEPLOY({ harnesses: { codex: OLLAMA } }, p);
     expect(readText(auth)).toBe('{"OPENAI_API_KEY": "native-oauth"}');
@@ -520,6 +523,8 @@ describe("opencode writer", () => {
       "created",
       "created",
       "created",
+      "created",
+      "created",
     ]);
   });
 
@@ -535,6 +540,8 @@ describe("opencode writer", () => {
       p,
     );
     expect(report.results[0].files.map((f) => f.action)).toEqual([
+      "updated",
+      "updated",
       "updated",
       "updated",
       "unchanged",
@@ -638,19 +645,22 @@ describe("env writer", () => {
     expect(env).not.toContain("WIRE_API");
   });
 
-  it("droid/kiro warn (no Base-URL env surface) but still deploy the key", () => {
+  it("droid uses its native Base-URL file; kiro still warns that no Base-URL surface is configured", () => {
+    const p = paths();
     const report = DEPLOY({
       harnesses: {
         droid: { model: "d", baseUrl: "http://fb:1", apiKey: "fk" },
         kiro: { model: "r", baseUrl: "http://rb:2", apiKey: "rk" },
       },
-    });
+    }, p);
     const droid = report.results.find((r) => r.harnessId === "droid");
     const kiro = report.results.find((r) => r.harnessId === "kiro");
-    expect(droid?.warnings.join(" ")).toContain("droid");
+    expect(droid?.warnings.join(" ")).not.toContain("baseUrl ignoriert");
     expect(kiro?.warnings.join(" ")).toContain("kiro");
-    expect(existsSync(join(paths().acpxDir, "harness-env", "droid.env"))).toBe(true);
-    expect(existsSync(join(paths().acpxDir, "harness-env", "kiro.env"))).toBe(true);
+    expect(existsSync(join(p.acpxDir, "harness-env", "droid.env"))).toBe(true);
+    expect(existsSync(join(p.acpxDir, "harness-env", "kiro.env"))).toBe(true);
+    const droidSettings = JSON.parse(readText(join(p.nativeHomes!.droid, "settings.json")));
+    expect(droidSettings.customModels[0].baseUrl).toBe("http://fb:1/v1");
   });
 
   it("sh-safe quoting: values with apostrophes survive sourcing", () => {
@@ -695,6 +705,30 @@ describe("claude file writer", () => {
   it("claude settings: smallModel falls back to model", () => {
     const json = JSON.parse(buildClaudeSettingsJson({ model: "m", baseUrl: "http://b" }, []));
     expect(json.env.ANTHROPIC_SMALL_FAST_MODEL).toBe("m");
+  });
+
+  it("claude settings: native picker receives the deduplicated configured model catalog", () => {
+    const json = JSON.parse(
+      buildClaudeSettingsJson({ model: "m", models: ["m", "fallback", "fallback"], baseUrl: "http://b" }, []),
+    );
+    expect(json.availableModels).toEqual(["m", "fallback"]);
+  });
+
+  it("claude strips a terminal /v1 from both settings.json and the env file", () => {
+    const p = paths();
+    DEPLOY(
+      {
+        harnesses: {
+          claude: { model: "m", baseUrl: "http://localhost:11434/v1/", apiKey: "k" },
+        },
+      },
+      p,
+    );
+    const settings = JSON.parse(readText(join(p.claudeSourceHome, "settings.json")));
+    expect(settings.env.ANTHROPIC_BASE_URL).toBe("http://localhost:11434");
+    const env = readText(join(p.acpxDir, "harness-env", "claude.env"));
+    expect(env).toContain("ANTHROPIC_BASE_URL='http://localhost:11434'");
+    expect(env).not.toContain("ANTHROPIC_BASE_URL='http://localhost:11434/v1");
   });
 
   it("claude settings: thinking absent → effort omitted; invalid thinking → warning", () => {
@@ -750,6 +784,7 @@ describe("claude file writer", () => {
     expect(claude?.files.map((f) => f.path).sort()).toEqual(
       [
         join(p.claudeSourceHome, "settings.json"),
+        join(p.claudeSourceHome, "settings.json.hcw-managed.json"),
         join(p.acpxDir, "harness-env", "claude.env"),
       ].sort(),
     );
@@ -794,6 +829,7 @@ describe("copilot env extended provider variables", () => {
     expect(env).toContain("COPILOT_PROVIDER_WIRE_API='responses'");
     expect(env).toContain("COPILOT_PROVIDER_MAX_PROMPT_TOKENS='128000'");
     expect(env).toContain("COPILOT_MODEL='cp-model'");
+    expect(env).toContain("COPILOT_OFFLINE='true'");
     expect(report.results.find((r) => r.harnessId === "copilot")?.warnings.join(" ")).toContain(
       "COPILOT_PROVIDER_AZURE_API_VERSION",
     );
@@ -829,6 +865,76 @@ describe("copilot env extended provider variables", () => {
     expect(report.results.find((r) => r.harnessId === "copilot")?.files[0]?.action).toBe("unchanged");
   });
 
+  it("copilot derives Anthropic transport from catalog metadata and explicit overrides win", () => {
+    const p = paths();
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            anthropic: {
+              baseUrl: "http://localhost:11434",
+              api: "anthropic-messages",
+              models: [{ id: "cp-model", contextWindow: 128000 }],
+            },
+          },
+        },
+      },
+      [],
+    );
+    DEPLOY(
+      { harnesses: { copilot: { model: "cp-model", baseUrl: "http://localhost:11434", apiKey: "ck" } } },
+      p,
+      catalog,
+    );
+    let env = readText(join(p.acpxDir, "harness-env", "copilot.env"));
+    expect(env).toContain("COPILOT_PROVIDER_TYPE='anthropic'");
+    expect(env).not.toContain("COPILOT_PROVIDER_WIRE_API=");
+
+    DEPLOY(
+      {
+        harnesses: {
+          copilot: {
+            model: "cp-model",
+            baseUrl: "http://localhost:11434",
+            apiKey: "ck",
+            providerType: "openai",
+            wireApi: "responses",
+          },
+        },
+      },
+      p,
+      catalog,
+    );
+    env = readText(join(p.acpxDir, "harness-env", "copilot.env"));
+    expect(env).toContain("COPILOT_PROVIDER_TYPE='openai'");
+    expect(env).toContain("COPILOT_PROVIDER_WIRE_API='responses'");
+  });
+
+  it("copilot derives Completions from catalog metadata", () => {
+    const p = paths();
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            openai: {
+              baseUrl: "http://localhost:11434",
+              api: "openai-completions",
+              models: [{ id: "cp-model" }],
+            },
+          },
+        },
+      },
+      [],
+    );
+    DEPLOY(
+      { harnesses: { copilot: { model: "cp-model", baseUrl: "http://localhost:11434", apiKey: "ck" } } },
+      p,
+      catalog,
+    );
+    const env = readText(join(p.acpxDir, "harness-env", "copilot.env"));
+    expect(env).toContain("COPILOT_PROVIDER_WIRE_API='completions'");
+  });
+
   it("copilot without baseUrl: no provider routing vars, key+model only", () => {
     const p = paths();
     DEPLOY({ harnesses: { copilot: { model: "cp", apiKey: "ck" } } }, p);
@@ -837,6 +943,87 @@ describe("copilot env extended provider variables", () => {
     expect(env).toContain("COPILOT_MODEL='cp'");
     expect(env).not.toContain("COPILOT_PROVIDER_TYPE");
     expect(env).not.toContain("COPILOT_PROVIDER_BASE_URL");
+    expect(env).not.toContain("COPILOT_OFFLINE");
+  });
+
+  it.each(["openai-completions", "openai-responses", "anthropic-messages"])(
+    "copilot without baseUrl never infers BYOK routing from %s catalog metadata",
+    (api) => {
+      const p = paths();
+      const catalog = buildModelCatalog(
+        {
+          models: {
+            providers: {
+              local: {
+                baseUrl: "http://localhost:11434",
+                api,
+                models: [{ id: "shared-model" }],
+              },
+            },
+          },
+        },
+        [],
+      );
+      DEPLOY(
+        { harnesses: { copilot: { model: "shared-model", apiKey: "github-token" } } },
+        p,
+        catalog,
+      );
+      const env = readText(join(p.acpxDir, "harness-env", "copilot.env"));
+      expect(env).toContain("COPILOT_PROVIDER_API_KEY='github-token'");
+      expect(env).not.toContain("COPILOT_PROVIDER_TYPE");
+      expect(env).not.toContain("COPILOT_PROVIDER_WIRE_API");
+      expect(env).not.toContain("COPILOT_OFFLINE");
+    },
+  );
+
+  it("copilot removes stale managed BYOK values on transition to key-only but preserves foreign keys", () => {
+    const p = paths();
+    DEPLOY(
+      { harnesses: { copilot: { model: "cp", baseUrl: "http://localhost:11434", apiKey: "ck" } } },
+      p,
+    );
+    const envPath = join(p.acpxDir, "harness-env", "copilot.env");
+    writeFileSync(envPath, `${readText(envPath)}FOREIGN='keep'\n`, "utf8");
+    DEPLOY({ harnesses: { copilot: { model: "cp", apiKey: "ck" } } }, p);
+    const env = readText(envPath);
+    expect(env).toContain("FOREIGN='keep'");
+    expect(env).toContain("COPILOT_PROVIDER_API_KEY='ck'");
+    expect(env).not.toContain("COPILOT_PROVIDER_BASE_URL");
+    expect(env).not.toContain("COPILOT_PROVIDER_TYPE");
+    expect(env).not.toContain("COPILOT_PROVIDER_WIRE_API");
+    expect(env).not.toContain("COPILOT_OFFLINE");
+  });
+
+  it("copilot drops a stale Responses wire API when the route becomes Anthropic", () => {
+    const p = paths();
+    const catalogFor = (api: string) =>
+      buildModelCatalog(
+        {
+          models: {
+            providers: {
+              local: { baseUrl: "http://localhost:11434", api, models: [{ id: "cp" }] },
+            },
+          },
+        },
+        [],
+      );
+    DEPLOY(
+      { harnesses: { copilot: { model: "cp", baseUrl: "http://localhost:11434", apiKey: "ck" } } },
+      p,
+      catalogFor("openai-responses"),
+    );
+    expect(readText(join(p.acpxDir, "harness-env", "copilot.env"))).toContain(
+      "COPILOT_PROVIDER_WIRE_API='responses'",
+    );
+    DEPLOY(
+      { harnesses: { copilot: { model: "cp", baseUrl: "http://localhost:11434", apiKey: "ck" } } },
+      p,
+      catalogFor("anthropic-messages"),
+    );
+    const env = readText(join(p.acpxDir, "harness-env", "copilot.env"));
+    expect(env).toContain("COPILOT_PROVIDER_TYPE='anthropic'");
+    expect(env).not.toContain("COPILOT_PROVIDER_WIRE_API");
   });
 });
 
@@ -866,7 +1053,73 @@ describe("pi file writer", () => {
     expect(statSync(settingsPath).mode & 0o777).toBe(0o600);
     const piResult = report.results.find((r) => r.harnessId === "pi");
     expect(piResult?.mechanism).toBe("file-pi");
-    expect(piResult?.files.map((f) => f.action)).toEqual(["created", "created"]);
+    expect(piResult?.files.map((f) => f.action)).toEqual(["created", "created", "created", "created"]);
+  });
+
+  it("pi inherits the provider API and complete cost metadata from the gateway catalog", () => {
+    const p = paths();
+    const cost = { input: 1, output: 2, cacheRead: 3, cacheWrite: 4 };
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            ollama: {
+              baseUrl: "http://localhost:11434",
+              api: "openai-responses",
+              models: [{ id: "kimi-k2.7-code:cloud", contextWindow: 128000, cost }],
+            },
+          },
+        },
+      },
+      [],
+    );
+    DEPLOY(
+      {
+        harnesses: {
+          pi: {
+            model: "kimi-k2.7-code:cloud",
+            models: ["kimi-k2.7-code:cloud"],
+            baseUrl: "http://localhost:11434",
+            apiKey: "tok",
+          },
+        },
+      },
+      p,
+      catalog,
+    );
+    const models = JSON.parse(readText(join(p.piAgentDir, "models.json")));
+    const provider = models.providers.ollama;
+    expect(provider.api).toBe("openai-responses");
+    expect(provider.models[0].cost).toEqual(cost);
+  });
+
+  it("invalid metadata does not block a later valid duplicate model record", () => {
+    const cost = { input: 1, output: 2, cacheRead: 3, cacheWrite: 4 };
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            a: {
+              baseUrl: "http://a:11434",
+              api: " ",
+              models: [{ id: "shared", cost: null }],
+            },
+            b: {
+              baseUrl: "http://b:11434",
+              api: "openai-responses",
+              models: [{ id: "shared", contextWindow: 128000, cost }],
+            },
+          },
+        },
+      },
+      [],
+    );
+    const meta = catalog.metaById.get("shared");
+    expect(meta).toMatchObject({
+      contextWindow: 128000,
+      api: "openai-responses",
+      cost,
+    });
   });
 
   it("pi models[0] ist das entry.model, auch wenn eine Modellliste mitkommt (pi nimmt models[0] als Default)", () => {
@@ -1125,17 +1378,17 @@ describe("additive guarantee", () => {
     expect(existsSync(p.acpxDir)).toBe(false);
   });
 
-  it("absent harness leaves sibling harnesses deployed — cursor/kilocode NEVER touched", () => {
+  it("absent harness leaves sibling harnesses deployed — cursor NONE, canonical kilocode writes native config", () => {
     const p = paths();
     const report = DEPLOY(
-      { harnesses: { codex: OLLAMA, cursor: { model: "x" }, kilocode: { model: "x" } } },
+      { harnesses: { codex: OLLAMA, cursor: { model: "x" }, kilocode: { model: "x", baseUrl: "http://localhost:11434" } } },
       p,
     );
     const none = report.results.filter((r) => r.mechanism === "none");
-    expect(none.map((r) => r.harnessId)).toEqual(["cursor", "kilocode"]);
+    expect(none.map((r) => r.harnessId)).toEqual(["cursor"]);
     expect(none.flatMap((r) => r.files)).toEqual([]);
-    // Nur codex-Artefakte existieren — keine cursor/kilocode Files.
     expect(existsSync(join(p.codexSourceHome, "config.toml"))).toBe(true);
+    expect(existsSync(join(p.kiloGlobalDir!, "kilo.json"))).toBe(true);
     expect(existsSync(join(p.acpxDir, "harness-env"))).toBe(false);
   });
 
@@ -1207,7 +1460,7 @@ describe("buildModelCatalog", () => {
     // NICHT geerbt (kein Raten) und der Operator wird gewarnt.
     expect(catalog.providerKeyByBaseUrl.has(key)).toBe(false);
     expect(warnings).toEqual([
-      "model catalog (b:1234): 2 providers share this baseUrl (a, b) — provider key not inherited, URL-derived fallback used",
+      "model catalog (b:1234): 2 providers share this baseUrl (a, b) — route/API-aware provider key selection required",
     ]);
   });
 
@@ -1551,13 +1804,7 @@ describe("codex model metadata catalog (γ.1)", () => {
       SILENT,
       META_CATALOG,
     );
-    expect(report.results[0].files.map((f) => f.action)).toEqual([
-      "created",
-      "created",
-      "created",
-      "created",
-      "created",
-    ]);
+    expect(report.results[0].files.map((f) => f.action)).toEqual(["created", "created"]);
     expect(readText(join(p.codexSourceHome, "config.toml"))).not.toMatch(
       /^model_catalog_json =/m,
     );
@@ -1631,6 +1878,27 @@ describe("codex model metadata catalog (γ.2)", () => {
     const model = JSON.parse(built!.content).models[0];
     expect(model.context_window).toBe(850000);
     expect(model.max_context_window).toBe(1000000);
+    expect(model.auto_compact_token_limit).toBe(600000);
+  });
+
+  it("plugin-owned providerPolicies apply without extending the gateway provider schema", () => {
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            ollama: {
+              baseUrl: "http://localhost:11434",
+              models: [{ id: "llama3", contextWindow: 1000000 }],
+            },
+          },
+        },
+      },
+      [],
+      { ollama: { contextWindowFactor: 0.85, autoCompactFactor: 0.6 } },
+    );
+    const built = buildCodexModelCatalogJson(["llama3"], catalog.metaById);
+    const model = JSON.parse(built!.content).models[0];
+    expect(model.context_window).toBe(850000);
     expect(model.auto_compact_token_limit).toBe(600000);
   });
 
@@ -2026,7 +2294,7 @@ describe("opencode writer multi-model", () => {
         { models: Record<string, { limit?: { context: number; output: number } }> }
       >;
     };
-    expect(cfg.provider.binding_localhost_11434.models["kimi-k2.7-code:cloud"]).toEqual({
+    expect(cfg.provider.ollama.models["kimi-k2.7-code:cloud"]).toEqual({
       limit: { context: 262144, output: 8192 },
     });
   });
@@ -2166,6 +2434,16 @@ describe("resolveHarnessWriterPaths", () => {
       opencodeGlobalDir: "/home/testuser/.config/opencode",
       claudeSourceHome: "/config/.claude",
       piAgentDir: "/config/.pi/agent",
+      kiloGlobalDir: "/home/testuser/.config/kilo",
+      qwenHome: "/home/testuser/.qwen",
+      nativeHomes: {
+        gemini: "/home/testuser/.gemini",
+        iflow: "/home/testuser/.iflow",
+        droid: "/home/testuser/.factory",
+        kiro: "/home/testuser/.kiro",
+        copilot: "/home/testuser/.copilot",
+        kimi: "/home/testuser/.kimi-code",
+      },
     });
   });
 
@@ -2176,6 +2454,17 @@ describe("resolveHarnessWriterPaths", () => {
       XDG_CONFIG_HOME: "/xdg/config",
     });
     expect(p?.opencodeGlobalDir).toBe("/xdg/config/opencode");
+    expect(p?.kiloGlobalDir).toBe("/xdg/config/kilo");
+  });
+
+  it("expands QWEN_HOME exactly like Qwen for tilde, relative and absolute paths", () => {
+    const base = { OPENCLAW_STATE_DIR: "/config/.openclaw", HOME: "/home/testuser" };
+    expect(resolveHarnessWriterPaths({ ...base, QWEN_HOME: "~" })?.qwenHome).toBe("/home/testuser");
+    expect(resolveHarnessWriterPaths({ ...base, QWEN_HOME: "~/qwen" })?.qwenHome).toBe("/home/testuser/qwen");
+    expect(resolveHarnessWriterPaths({ ...base, QWEN_HOME: "relative/qwen" })?.qwenHome).toBe(resolve("relative/qwen"));
+    expect(resolveHarnessWriterPaths({ ...base, QWEN_HOME: "/tmp/qwen/../qwen-final" })?.qwenHome).toBe("/tmp/qwen-final");
+    expect(resolveHarnessWriterPaths({ ...base, QWEN_HOME: "/" })?.qwenHome).toBe("/");
+    expect(resolveHarnessWriterPaths({ ...base, HOME: "/", QWEN_HOME: "~" })?.qwenHome).toBe("/");
   });
 
   it("two different HOME values yield two different, correct opencodeGlobalDir paths", () => {
