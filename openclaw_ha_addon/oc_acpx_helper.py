@@ -711,41 +711,161 @@ def write_adapter_paths_mirror() -> bool:
     return True
 
 
-def harness_writer_managed_files() -> list[Path]:
-    """The writer plugin's complete write surface (canonical/managed set).
+def _hcw_env_value(env: Any, key: str) -> str:
+    value = env.get(key)
+    return value.strip() if isinstance(value, str) else ""
 
-    Mirrors harness-config-writer.ts deploy targets:
-      - codex:    <acpx>/codex-home/auth.json + <.codex>/config.toml
-                  + <.codex>/model-catalog.json (γ.1 metadata catalog)
-      - codex-hcw (γ.2): <acpx>/codex-acp-hcw-wrapper.mjs
-                  + <acpx>/codex-home-hcw/{auth.json,config.toml,model-catalog.json}
-                  (auth.json carries the API key → secret-bearing)
-      - claude (γ.2): <.claude>/settings.json
-      - pi (γ.2):     <.pi/agent>/models.json + <.pi/agent>/settings.json
-      - opencode: <acpx>/opencode-home/opencode.jsonc, <opencode>/opencode.jsonc
-                  + legacy <acpx>/opencode-home/config.toml neutralization
-      - env:      <acpx>/harness-env/<id>.env for canonical ENV-MECHANISM ids
+
+def _absolute_native_path(value: str | Path) -> Path:
+    """Absolute lexical path, matching Node's path resolution without
+    dereferencing symlinks. HCW accepts relative QWEN/COPILOT/KIMI homes;
+    making the same location absolute keeps backup entries restorable."""
+    return Path(os.path.abspath(os.fspath(value)))
+
+
+def _resolve_xdg_native_root(dirname: str, env: Any = None) -> Path | None:
+    """Mirror HCW resolveOpencodeGlobalDir/resolveKiloGlobalDir: trimmed XDG
+    first, then HOME/.config. Trailing slashes are removed like the TS code."""
+    e = os.environ if env is None else env
+    xdg = _hcw_env_value(e, "XDG_CONFIG_HOME")
+    if xdg:
+        return _absolute_native_path(f"{xdg.rstrip('/')}/{dirname}")
+    home = _hcw_env_value(e, "HOME")
+    if home:
+        return _absolute_native_path(f"{home.rstrip('/')}/.config/{dirname}")
+    return None
+
+
+def _resolve_qwen_native_home(env: Any = None) -> Path | None:
+    """Mirror HCW resolveQwenHome, including ~, ~/, ~\\, relative paths,
+    absolute/normalized paths and QWEN_HOME=/."""
+    e = os.environ if env is None else env
+    configured_home = _hcw_env_value(e, "HOME")
+    home = (
+        _absolute_native_path(configured_home)
+        if configured_home
+        else None
+    )
+    qwen_home = _hcw_env_value(e, "QWEN_HOME")
+    if qwen_home == "~" or qwen_home.startswith(("~/", "~\\")):
+        if home is None:
+            return None
+        return home if qwen_home == "~" else home / qwen_home[2:]
+    if qwen_home:
+        return _absolute_native_path(qwen_home)
+    return home / ".qwen" if home is not None else None
+
+
+def _harness_writer_native_roots() -> dict[str, Path]:
+    """Current HCW roots, resolved at call time from the process environment.
+
+    This never adds HOME as a general restore root. An explicitly configured
+    QWEN_HOME can equal HOME, but the restore path also requires an exact
+    inventoried target, so other home files remain inaccessible.
     """
+    e = os.environ
+    roots = {
+        "acpx": _absolute_native_path(ACPX_DIR),
+        "codex": _absolute_native_path(CODEX_SOURCE_HOME),
+        "claude": _absolute_native_path(CLAUDE_SOURCE_HOME),
+        "pi": _absolute_native_path(PI_AGENT_DIR),
+    }
+    for harness_id, root in (
+        ("opencode", _resolve_xdg_native_root("opencode", e)),
+        ("kilo", _resolve_xdg_native_root("kilo", e)),
+        ("qwen", _resolve_qwen_native_home(e)),
+    ):
+        if root is not None:
+            roots[harness_id] = root
+
+    home = _hcw_env_value(e, "HOME").rstrip("/")
+    if home:
+        for harness_id, dirname in (
+            ("gemini", ".gemini"),
+            ("iflow", ".iflow"),
+            ("droid", ".factory"),
+            ("kiro", ".kiro"),
+        ):
+            roots[harness_id] = _absolute_native_path(f"{home}/{dirname}")
+
+    def explicit_home(key: str) -> str:
+        # HCW explicitHome(): trim and remove all trailing slashes; unlike
+        # QWEN_HOME it performs no tilde expansion of its own.
+        return _hcw_env_value(e, key).rstrip("/")
+
+    copilot = explicit_home("COPILOT_HOME") or (f"{home}/.copilot" if home else "")
+    kimi = explicit_home("KIMI_CODE_HOME") or (f"{home}/.kimi-code" if home else "")
+    if copilot:
+        roots["copilot"] = _absolute_native_path(copilot)
+    if kimi:
+        roots["kimi"] = _absolute_native_path(kimi)
+    return roots
+
+
+def _managed_json_sidecar(config_path: Path) -> Path:
+    """TS managedJsonStatePath(): append, never replace, the JSON suffix."""
+    return Path(f"{config_path}.hcw-managed.json")
+
+
+def harness_writer_managed_files() -> list[Path]:
+    """Complete current and legacy HCW write surface.
+
+    Native roots mirror resolveHarnessWriterPaths() and are recomputed on
+    every call. Every JSON target managed through writeManagedStateIfApplied
+    has its exact .hcw-managed.json sidecar listed here as well.
+    """
+    roots = _harness_writer_native_roots()
+    acpx = roots["acpx"]
+    codex = roots["codex"]
+    claude = roots["claude"]
+    pi = roots["pi"]
+    opencode_acpx = acpx / "opencode-home" / "opencode.jsonc"
+    claude_settings = claude / "settings.json"
+    pi_models = pi / "models.json"
+    pi_settings = pi / "settings.json"
     files = [
-        ACPX_DIR / "codex-home" / "auth.json",
-        CODEX_SOURCE_HOME / "config.toml",
-        CODEX_SOURCE_HOME / "model-catalog.json",
-        ACPX_DIR / "opencode-home" / "opencode.jsonc",
-        OPENCODE_GLOBAL_DIR / "opencode.jsonc",
-        ACPX_DIR / "opencode-home" / "config.toml",
-        ACPX_DIR / CODEX_HCW_WRAPPER_NAME,
-        ACPX_DIR / "codex-home-hcw" / "auth.json",
-        ACPX_DIR / "codex-home-hcw" / "config.toml",
-        ACPX_DIR / "codex-home-hcw" / "model-catalog.json",
-        CLAUDE_SOURCE_HOME / "settings.json",
-        PI_AGENT_DIR / "models.json",
-        PI_AGENT_DIR / "settings.json",
+        # Legacy Codex/ACPX and current relocated direct Codex auth.
+        acpx / "codex-home" / "auth.json",
+        codex / "auth.json",
+        codex / "config.toml",
+        codex / "model-catalog.json",
+        opencode_acpx,
+        acpx / "opencode-home" / "config.toml",
+        acpx / CODEX_HCW_WRAPPER_NAME,
+        acpx / "codex-home-hcw" / "auth.json",
+        acpx / "codex-home-hcw" / "config.toml",
+        acpx / "codex-home-hcw" / "model-catalog.json",
+        claude_settings,
+        pi_models,
+        pi_settings,
     ]
+    managed_json = [opencode_acpx, claude_settings, pi_models, pi_settings]
+    if "opencode" in roots:
+        managed_json.append(roots["opencode"] / "opencode.jsonc")
+    if "kilo" in roots:
+        # kilo and kilocode intentionally share the native Kilo target.
+        managed_json.append(roots["kilo"] / "kilo.json")
+    if "qwen" in roots:
+        managed_json.append(roots["qwen"] / "settings.json")
+    for harness_id in ("gemini", "copilot", "iflow", "droid"):
+        if harness_id in roots:
+            managed_json.append(roots[harness_id] / "settings.json")
+    if "kiro" in roots:
+        managed_json.append(roots["kiro"] / "settings" / "cli.json")
+    if "kimi" in roots:
+        files.append(roots["kimi"] / "config.toml")  # TOML: no JSON sidecar
+
+    # Stable manifest order simplifies audits/upgrades; sidecar ordering is
+    # not semantic.
+    for config_path in managed_json:
+        if config_path not in files:
+            files.append(config_path)
+        files.append(_managed_json_sidecar(config_path))
     files.extend(
-        ACPX_DIR / "harness-env" / f"{harness_id}.env"
+        acpx / "harness-env" / f"{harness_id}.env"
         for harness_id in HARNESS_WRITER_ENV_IDS
     )
-    return files
+    return list(dict.fromkeys(files))
 
 
 def _backup_write_manifest(entries: list[dict[str, Any]]) -> None:
@@ -792,9 +912,7 @@ def backup_harness_writer_targets_once() -> bool:
     backup_dir = _harness_writer_backup_dir()
     manifest = backup_dir / "manifest.json"
     if manifest.is_file():
-        log("INFO: harness-config-writer backup already present (first-enable "
-            "snapshot is kept until the writer option is turned off)")
-        return True
+        return _upgrade_legacy_harness_writer_backup(manifest)
     # Audit-Hinweis (Re-Audit 2026-10-11): after a quarantine the manifest is
     # gone — a naive re-snapshot here would capture writer-generated state
     # (empirically proven by the auditor). Consistent with the quarantine
@@ -808,14 +926,7 @@ def backup_harness_writer_targets_once() -> bool:
         return False
     entries: list[dict[str, Any]] = []
     try:
-        managed = harness_writer_managed_files()
-        env_dir = ACPX_DIR / "harness-env"
-        extra_env = []
-        if env_dir.is_dir():
-            extra_env = sorted(
-                p for p in env_dir.glob("*.env") if p not in managed
-            )
-        for path in [*managed, *extra_env]:
+        for path in _harness_writer_snapshot_targets():
             entry: dict[str, Any] = {"path": str(path)}
             if path.is_file():
                 entry["existed"] = True
@@ -836,12 +947,126 @@ def backup_harness_writer_targets_once() -> bool:
     return True
 
 
+def _harness_writer_snapshot_targets() -> list[Path]:
+    """Canonical files plus pre-existing noncanonical env surfaces."""
+    managed = harness_writer_managed_files()
+    env_dir = _harness_writer_native_roots()["acpx"] / "harness-env"
+    extra_env = []
+    if env_dir.is_dir():
+        extra_env = sorted(p for p in env_dir.glob("*.env") if p not in managed)
+    return [*managed, *extra_env]
+
+
+def _upgrade_legacy_harness_writer_backup(manifest: Path) -> bool:
+    """Add newly invented targets to an existing version-1 backup safely.
+
+    The old backup predates the expanded HCW write surface. Existing bytes at
+    a newly added path may already be HCW output, so they are NEVER sampled
+    retrospectively. Such paths remain explicit `upgrade_unverified` entries
+    and are left untouched on OFF. A path absent at upgrade time can safely be
+    recorded absent: if HCW later creates it, OFF removes it.
+    """
+    try:
+        with open(manifest, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        entries = data.get("files")
+        if data.get("version") != HARNESS_WRITER_BACKUP_VERSION or not isinstance(entries, list):
+            # Preserve the established OFF-path quarantine behavior.
+            return True
+        known = {
+            entry.get("path")
+            for entry in entries
+            if isinstance(entry, dict) and isinstance(entry.get("path"), str)
+        }
+        additions: list[dict[str, Any]] = []
+        unverified = 0
+        for path in _harness_writer_snapshot_targets():
+            if str(path) in known:
+                continue
+            if path.is_file():
+                additions.append({
+                    "path": str(path),
+                    "existed": None,
+                    "upgrade_unverified": True,
+                })
+                unverified += 1
+            else:
+                additions.append({
+                    "path": str(path),
+                    "existed": False,
+                    "upgrade_absent": True,
+                })
+        if additions:
+            _backup_write_manifest([*entries, *additions])
+            log(
+                "WARN: upgraded legacy harness-config-writer backup inventory "
+                f"({len(additions)} added; {unverified} existing path(s) left "
+                "unverified, no retrospective content/mode snapshot)"
+            )
+        else:
+            log("INFO: harness-config-writer backup already present (first-enable "
+                "snapshot is kept until the writer option is turned off)")
+        return True
+    except Exception as e:
+        log(f"WARN: legacy harness-config-writer backup upgrade failed: {e}")
+        return False
+
+
+def _restore_path_allowed(
+    path: Path,
+    roots: dict[str, Path],
+    managed_paths: set[Path],
+) -> bool:
+    """Require an exact managed target AND lexical+resolved containment.
+
+    The exact-target check keeps a deliberately broad native root (for
+    example QWEN_HOME=~ or /) from turning the manifest into permission to
+    touch an entire home or filesystem. Noncanonical legacy *.env files are
+    the sole exception and remain confined to ACPX/harness-env.
+    """
+    if not path.is_absolute():
+        return False
+    lexical = _absolute_native_path(path)
+    env_dir = roots["acpx"] / "harness-env"
+    is_extra_env = lexical.parent == env_dir and lexical.suffix == ".env"
+    if lexical not in managed_paths and not is_extra_env:
+        return False
+    resolved = path.resolve()
+    for root in roots.values():
+        lexical_root = _absolute_native_path(root)
+        if lexical == lexical_root or not lexical.is_relative_to(lexical_root):
+            continue
+        resolved_root = root.resolve()
+        if resolved != resolved_root and resolved.is_relative_to(resolved_root):
+            return True
+    return False
+
+
+def _restore_original_bytes(path: Path, content: bytes, mode: int) -> None:
+    """Atomic content+mode restore; secret files never appear with a loose
+    temporary mode before their original mode is applied."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(
+        dir=str(path.parent), prefix=f".{path.name}.", suffix=".restore"
+    )
+    tmp = Path(tmp_name)
+    try:
+        with os.fdopen(fd, "wb") as f:
+            f.write(content)
+        os.chmod(tmp, stat.S_IMODE(mode))
+        os.replace(tmp, path)
+    finally:
+        if tmp.exists():
+            tmp.unlink()
+
+
 def restore_harness_writer_targets() -> bool:
     """Restore the first-enable snapshot (writer option OFF → original
     configs come back: existing files get their pre-enable bytes + mode,
-    writer-only files are deleted). Consumes the snapshot (manifest removed,
-    empty backup dir removed) so a later re-enable takes a FRESH snapshot of
-    the restored state.
+    writer-only files are deleted). A fully verified snapshot is consumed
+    (manifest removed, empty backup dir removed) so a later re-enable takes a
+    FRESH snapshot of the restored state. Legacy entries whose pre-HCW
+    provenance is unknowable stay unresolved and retain the manifest instead.
 
     Fail-soft: an unreadable (parse error) or semantically invalid
     (version/shape) manifest is moved aside as manifest.json.corrupt — both
@@ -876,21 +1101,16 @@ def restore_harness_writer_targets() -> bool:
             data.get("version") != HARNESS_WRITER_BACKUP_VERSION
         ):
             return _quarantine("wrong version/shape")
-        # Path containment: only files under the known writer surfaces may be
-        # touched by a restore (defense against a tampered manifest); resolved
-        # lexically AND after symlink/`..`-resolution (audit H3).
-        allowed_roots = tuple(
-            Path(root).resolve()
-            for root in (
-                ACPX_DIR,
-                CODEX_SOURCE_HOME,
-                OPENCODE_GLOBAL_DIR,
-                CLAUDE_SOURCE_HOME,
-                PI_AGENT_DIR,
-            )
-        )
+        # Exact current targets plus exact dynamic-root containment, both
+        # lexical and resolved. HOME is never accepted as a general surface.
+        roots = _harness_writer_native_roots()
+        managed_paths = {
+            _absolute_native_path(path)
+            for path in harness_writer_managed_files()
+        }
         restored = 0
         removed = 0
+        deferred: list[dict[str, Any]] = []
         for entry in entries:
             if not isinstance(entry, dict) or not isinstance(entry.get("path"), str):
                 continue
@@ -898,23 +1118,36 @@ def restore_harness_writer_targets() -> bool:
             if not path.is_absolute():
                 log(f"WARN: relative backup entry skipped: {entry['path']}")
                 continue
-            if not any(
-                path == root or path.resolve().is_relative_to(root)
-                for root in allowed_roots
-            ):
+            if not _restore_path_allowed(path, roots, managed_paths):
                 log(f"WARN: backup entry outside managed surfaces skipped: {entry['path']}")
                 continue
+            if entry.get("upgrade_unverified") is True:
+                # A legacy backup cannot prove whether these bytes predate
+                # HCW. Leave them alone and retain the unresolved manifest so
+                # re-enable cannot relabel them as a fresh operator snapshot.
+                deferred.append(entry)
+                continue
             if entry.get("existed") is True and isinstance(entry.get("content"), str):
-                path.parent.mkdir(parents=True, exist_ok=True)
-                path.write_bytes(base64.b64decode(entry["content"]))
                 mode = entry.get("mode")
-                if isinstance(mode, int):
-                    path.chmod(mode)
+                if not isinstance(mode, int) or isinstance(mode, bool):
+                    raise ValueError(f"missing/invalid original mode for {path}")
+                content = base64.b64decode(entry["content"], validate=True)
+                _restore_original_bytes(path, content, mode)
                 restored += 1
-            else:
-                if path.is_file():
+            elif entry.get("existed") is False:
+                if path.is_file() or path.is_symlink():
                     path.unlink()
                 removed += 1
+            else:
+                raise ValueError(f"invalid backup entry state for {path}")
+        if deferred:
+            _backup_write_manifest(deferred)
+            log(
+                f"WARN: {len(deferred)} legacy upgrade path(s) have unverified "
+                "pre-HCW provenance; left untouched and snapshot retained. "
+                "Resolve those entries manually before a fresh re-enable snapshot."
+            )
+            return False
         manifest.unlink()
         try:
             backup_dir.rmdir()
@@ -949,7 +1182,7 @@ def _writer_managed_defaults_file() -> Path:
 # plugins/harness-config-writer/src/harness-config-writer.ts — beide Listen
 # synchron halten).
 KNOWN_WRITER_HARNESS_IDS = (
-    "codex", "opencode", "claude", "copilot", "droid", "gemini", "iflow", "kimi", "kiro", "qwen",
+    "codex", "opencode", "kilo", "kilocode", "claude", "copilot", "droid", "gemini", "iflow", "kimi", "kiro", "qwen",
     # pi (2026-11-13): FILE-Mechanismus, gleiche Option-Oberfläche wie die
     # übrigen — der Harness ist lokal installiert und der add-on schreibt
     # seine native Config (models.json + settings.json).

@@ -2179,14 +2179,16 @@ function manageOpencodeJsonc(
   warnings: string[],
   harnessId = "opencode",
   modelCatalog?: ModelCatalog,
+  ownership: ManagedJsonOwnership = { scope: "full" },
 ): FileAction {
   const exists = existsSync(path);
   const current = exists ? tryOr(() => readFileSync(path, "utf-8"), null) : null;
+  const managedState = exists ? readManagedJsonState(path, harnessId) : null;
   if (!exists) {
     atomicWrite(path, desired, 0o600, warnings);
     return "created";
   }
-  if (current === desired) {
+  if (current === desired && (managedState === null || managedState.ownership === "full")) {
     // r3: Mode-Heilung auch bei byte-identischem Bestand (0600-Pflicht, apiKey).
     try {
       if ((statSync(path).mode & 0o777) !== 0o600) chmodSync(path, 0o600);
@@ -2228,17 +2230,6 @@ function manageOpencodeJsonc(
       !Array.isArray(desiredObj.provider)
       ? (desiredObj.provider as Record<string, unknown>)
       : null;
-  const managedState = readManagedJsonState(path, harnessId);
-  if (
-    managedState && currentProviderObj &&
-    Object.values(currentProviderObj).some(deepLooksGenerated)
-  ) {
-    const merged = applyManagedJsonState(harnessId, currentObj, desiredObj, managedState);
-    const next = `${JSON.stringify(merged, null, 2)}\n`;
-    if (next === current) return "unchanged";
-    atomicWrite(path, next, 0o600, warnings);
-    return "updated";
-  }
   // r2-final: Struktur-Marker (npm/name) statt reiner Key-Präsenz — ein
   // Fremd-Block mit UNSERER derived providerId, aber anderem Inhalt, geht
   // in den Merge-Pfad (dort operator-wins-NOTE), nie in den Writer-Replace.
@@ -2265,17 +2256,42 @@ function manageOpencodeJsonc(
       return key === "$schema" || key === "provider" || key === "model" || key === "small_model" ||
         Object.hasOwn(nativeConfig ?? {}, key);
     });
-  if (isWriterOwned) {
-    atomicWrite(path, desired, 0o600, warnings);
-    return "updated";
-  }
-  // MERGE: Operator-Keys erhalten; nur unser provider-Block wandert rein.
   const desiredProviderObj =
     typeof desiredObj?.provider === "object" && desiredObj.provider !== null &&
       !Array.isArray(desiredObj.provider)
       ? (desiredObj.provider as Record<string, unknown>)
       : {};
+  const foreignProjection = mergeNativeConfigRecord(nativeConfig ?? {}, {
+    provider: { [providerId]: desiredProviderObj[providerId] },
+  });
+  if (
+    managedState && currentProviderObj &&
+    Object.values(currentProviderObj).some(deepLooksGenerated)
+  ) {
+    const legacyAugmented = managedState.ownership === undefined;
+    ownership.scope = managedState.ownership ?? "augmented";
+    ownership.projection = ownership.scope === "augmented" ? foreignProjection : undefined;
+    ownership.pruneUnowned = !legacyAugmented;
+    ownership.retirePaths = legacyAugmented
+      ? managedState.paths.filter((path) =>
+          path[0] === "provider" && path.length > 1 && path[1] !== providerId &&
+          deepLooksGenerated(currentProviderObj[path[1]]) && !Object.hasOwn(desiredProviderObj, path[1])
+        )
+      : undefined;
+    const merged = applyManagedJsonState(harnessId, currentObj, desiredObj, managedState, ownership);
+    const next = `${JSON.stringify(merged, null, 2)}\n`;
+    if (next === current) return "unchanged";
+    atomicWrite(path, next, 0o600, warnings);
+    return "updated";
+  }
+  if (isWriterOwned) {
+    atomicWrite(path, desired, 0o600, warnings);
+    return "updated";
+  }
+  // MERGE: Operator-Keys erhalten; nur unser provider-Block wandert rein.
   const desiredProvider = desiredProviderObj[providerId];
+  ownership.scope = "augmented";
+  ownership.projection = foreignProjection;
   const merged: Record<string, unknown> = nativeConfig
     ? mergeNativeConfigRecord(currentObj, nativeConfig)
     : { ...currentObj };
@@ -2358,13 +2374,14 @@ export function deployOpencodeHarnessFiles(
   const desired = buildOpencodeConfigJsonc(entry, modelCatalog, warnings);
   for (const targetDir of [join(paths.acpxDir, "opencode-home"), paths.opencodeGlobalDir]) {
     const path = join(targetDir, "opencode.jsonc");
+    const ownership: ManagedJsonOwnership = { scope: "full" };
     // M3-Fix (2026-10-14): die Datei trägt den apiKey in Klartext → 0600
     // (Helper-Standard; Mode geht in atomicWrite — kein Exposé-Fenster).
-    const action = manageOpencodeJsonc(path, desired, entry, warnings, "opencode", modelCatalog);
+    const action = manageOpencodeJsonc(path, desired, entry, warnings, "opencode", modelCatalog, ownership);
     if (action !== "unchanged") {
       logger?.info?.(`[${harnessId}] ${action} ${path} (provider config)`);
     }
-    files.push({ path, action }, ...writeManagedStateIfApplied(path, harnessId, desired, action, warnings));
+    files.push({ path, action }, ...writeManagedStateIfApplied(path, harnessId, desired, action, warnings, ownership));
   }
   // Legacy TOML neutralisieren — NUR wenn sie fehlt oder bereits der
   // comment-only Placeholder ist (Augment-Design: echte Operator-Configs
@@ -2404,11 +2421,12 @@ export function deployKiloHarnessFiles(
   }
   const path = join(paths.kiloGlobalDir, "kilo.json");
   const desired = buildKiloConfigJson(entry, modelCatalog, warnings);
-  const action = manageOpencodeJsonc(path, desired, entry, warnings, "kilo", modelCatalog);
+  const ownership: ManagedJsonOwnership = { scope: "full" };
+  const action = manageOpencodeJsonc(path, desired, entry, warnings, "kilo", modelCatalog, ownership);
   if (action !== "unchanged") logger?.info?.(`[kilo] ${action} ${path} (native config)`);
   return {
     warnings,
-    files: [{ path, action }, ...writeManagedStateIfApplied(path, "kilo", desired, action, warnings)],
+    files: [{ path, action }, ...writeManagedStateIfApplied(path, "kilo", desired, action, warnings, ownership)],
   };
 }
 
@@ -2470,14 +2488,16 @@ function manageClaudeSettingsJson(
   desired: string,
   entry: HarnessConfigEntry,
   warnings: string[],
+  ownership: ManagedJsonOwnership = { scope: "full" },
 ): FileAction {
   const exists = existsSync(path);
+  const managedState = exists ? readManagedJsonState(path, "claude") : null;
   if (!exists) {
     atomicWrite(path, desired, 0o600, warnings);
     return "created";
   }
   const current = tryOr(() => readFileSync(path, "utf-8"), null);
-  if (current === desired) {
+  if (current === desired && (managedState === null || managedState.ownership === "full")) {
     try {
       if ((statSync(path).mode & 0o777) !== 0o600) chmodSync(path, 0o600);
     } catch (error) {
@@ -2495,16 +2515,29 @@ function manageClaudeSettingsJson(
     warnings.push(`claude: ${path} is not valid JSON; leaving intact`);
     return "note (customized, left intact)";
   }
-  const managedState = readManagedJsonState(path, "claude");
+  const managedEnvKeys = ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_SMALL_FAST_MODEL"];
+  const nativeSettings = readNativeConfig(entry, warnings).settings;
+  const generatedEnv = Object.fromEntries(
+    managedEnvKeys
+      .filter((key) => isNativeRecord(desiredObj.env) && Object.hasOwn(desiredObj.env, key))
+      .map((key) => [key, (desiredObj.env as Record<string, unknown>)[key]]),
+  );
+  const foreignProjection = mergeNativeConfigRecord({
+    model: desiredObj.model,
+    ...("effort" in desiredObj ? { effort: desiredObj.effort } : {}),
+    env: generatedEnv,
+  }, nativeSettings ?? {});
   if (managedState) {
-    const merged = applyManagedJsonState("claude", currentObj, desiredObj, managedState);
+    const legacyAugmented = managedState.ownership === undefined;
+    ownership.scope = managedState.ownership ?? "augmented";
+    ownership.projection = ownership.scope === "augmented" ? foreignProjection : undefined;
+    ownership.pruneUnowned = !legacyAugmented;
+    const merged = applyManagedJsonState("claude", currentObj, desiredObj, managedState, ownership);
     const next = `${JSON.stringify(merged, null, 2)}\n`;
     if (next === current) return "unchanged";
     atomicWrite(path, next, 0o600, warnings);
     return "updated";
   }
-  const managedEnvKeys = ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_SMALL_FAST_MODEL"];
-  const nativeSettings = readNativeConfig(entry, warnings).settings;
   const nativeEnv = isNativeRecord(nativeSettings?.env) ? nativeSettings.env : {};
   const desiredEnv = (desiredObj.env as Record<string, unknown> | undefined) ?? {};
   const currentEnv =
@@ -2520,6 +2553,8 @@ function manageClaudeSettingsJson(
   for (const key of Object.keys(currentEnv).sort()) {
     if (!managedEnvKeys.includes(key) && !Object.hasOwn(nativeEnv, key)) mergedEnv[key] = currentEnv[key];
   }
+  ownership.scope = "augmented";
+  ownership.projection = foreignProjection;
   const merged: Record<string, unknown> = { ...desiredObj, model: desiredObj.model, env: mergedEnv };
   if ("effort" in desiredObj) merged.effort = desiredObj.effort;
   const desiredModelSettings =
@@ -2591,11 +2626,12 @@ export function deployClaudeHarnessFiles(
   const files: HarnessDeployFile[] = [];
   const path = join(paths.claudeSourceHome, "settings.json");
   const desired = buildClaudeSettingsJson(entry, warnings, modelCatalog);
-  const action = manageClaudeSettingsJson(path, desired, entry, warnings);
+  const ownership: ManagedJsonOwnership = { scope: "full" };
+  const action = manageClaudeSettingsJson(path, desired, entry, warnings, ownership);
   if (action !== "unchanged") {
     logger?.info?.(`[${harnessId}] ${action} ${path} (settings.json)`);
   }
-  files.push({ path, action }, ...writeManagedStateIfApplied(path, "claude", desired, action, warnings));
+  files.push({ path, action }, ...writeManagedStateIfApplied(path, "claude", desired, action, warnings, ownership));
   return { files };
 }
 
@@ -3412,6 +3448,8 @@ export function buildKimiConfigToml(
 type HcwManagedJsonState = {
   version: 1;
   harness: string;
+  /** Full writer-owned output versus an explicit foreign-file ownership projection. */
+  ownership?: "full" | "augmented";
   paths: string[][];
   /** Pi only: previously managed model wildcards (non-secret route identifiers). */
   managedEnabledModels?: string[];
@@ -3451,6 +3489,9 @@ function readManagedJsonState(
   return {
     version: 1,
     harness: harnessId,
+    ...(parsed.ownership === "full" || parsed.ownership === "augmented"
+      ? { ownership: parsed.ownership }
+      : {}),
     paths,
     ...(Array.isArray(parsed.managedEnabledModels)
       ? { managedEnabledModels: parsed.managedEnabledModels.filter((value): value is string => typeof value === "string") }
@@ -3471,16 +3512,50 @@ function deleteManagedJsonPath(root: Record<string, unknown>, path: string[], de
   if (Object.keys(child).length === 0) delete root[key];
 }
 
+function managedJsonPathValue(root: Record<string, unknown>, path: string[]): unknown {
+  let value: unknown = root;
+  for (const segment of path) {
+    if (!isNativeRecord(value) || !Object.hasOwn(value, segment)) return undefined;
+    value = value[segment];
+  }
+  return value;
+}
+
+function setManagedJsonPath(root: Record<string, unknown>, path: string[], value: unknown): void {
+  let target = root;
+  for (const segment of path.slice(0, -1)) {
+    if (!isNativeRecord(target[segment])) target[segment] = {};
+    target = target[segment] as Record<string, unknown>;
+  }
+  const key = path[path.length - 1];
+  if (key !== undefined) target[key] = value;
+}
+
+type ManagedJsonOwnership = {
+  scope: "full" | "augmented";
+  /** Desired subset actually managed in a foreign file; omitted for full ownership. */
+  projection?: Record<string, unknown>;
+  /** Legacy sidecars over-recorded preserved fields: retain ambiguous values on migration. */
+  pruneUnowned?: boolean;
+  /** Known stale generated provider leaves that must still be retired during legacy migration. */
+  retirePaths?: string[][];
+};
+
 function applyManagedJsonState(
   harnessId: string,
   current: Record<string, unknown>,
   desired: Record<string, unknown>,
   state: HcwManagedJsonState,
+  ownership: ManagedJsonOwnership = { scope: "full" },
 ): Record<string, unknown> {
   const next = JSON.parse(JSON.stringify(current)) as Record<string, unknown>;
-  const desiredPaths = new Set(collectManagedJsonPaths(desired).map((path) => JSON.stringify(path)));
+  const projected = ownership.scope === "full" ? desired : ownership.projection ?? {};
+  const projectedPaths = collectManagedJsonPaths(projected);
+  const desiredPaths = new Set(projectedPaths.map((path) => JSON.stringify(path)));
+  const retirePaths = new Set((ownership.retirePaths ?? []).map((path) => JSON.stringify(path)));
   for (const path of state.paths) {
     if (desiredPaths.has(JSON.stringify(path))) continue;
+    if (ownership.pruneUnowned === false && !retirePaths.has(JSON.stringify(path))) continue;
     if (harnessId === "droid" && path.length === 1 && path[0] === "customModels") continue;
     if (harnessId === "pi-settings" && path.length === 1 && path[0] === "enabledModels") continue;
     deleteManagedJsonPath(next, path);
@@ -3496,17 +3571,17 @@ function applyManagedJsonState(
     if (retained.length > 0) next.enabledModels = retained;
     else delete next.enabledModels;
   }
-  for (const [key, desiredValue] of Object.entries(desired)) {
-    const currentValue = next[key];
-    if (harnessId === "pi-settings" && key === "enabledModels" && Array.isArray(currentValue) && Array.isArray(desiredValue)) {
+  for (const path of projectedPaths) {
+    const key = path[0];
+    const desiredValue = managedJsonPathValue(projected, path);
+    const currentValue = key === undefined ? undefined : next[key];
+    if (harnessId === "pi-settings" && path.length === 1 && key === "enabledModels" && Array.isArray(currentValue) && Array.isArray(desiredValue)) {
       next[key] = dedupeModelIds([...currentValue, ...desiredValue].filter((value): value is string => typeof value === "string"));
-    } else if (harnessId === "droid" && key === "customModels") {
+    } else if (harnessId === "droid" && path.length === 1 && key === "customModels") {
       const operatorModels = Array.isArray(currentValue) ? currentValue : [];
       next[key] = [...operatorModels, ...(Array.isArray(desiredValue) ? desiredValue : [])];
     } else {
-      next[key] = isNativeRecord(currentValue) && isNativeRecord(desiredValue)
-        ? mergeNativeConfigRecord(currentValue, desiredValue)
-        : desiredValue;
+      setManagedJsonPath(next, path, desiredValue);
     }
   }
   return next;
@@ -3517,12 +3592,15 @@ function writeManagedJsonState(
   harnessId: string,
   desired: string,
   warnings: string[],
+  ownership: ManagedJsonOwnership = { scope: "full" },
 ): HarnessDeployFile {
   const desiredObj = JSON.parse(desired) as Record<string, unknown>;
+  const projected = ownership.scope === "full" ? desiredObj : ownership.projection ?? {};
   const state: HcwManagedJsonState = {
     version: 1,
     harness: harnessId,
-    paths: collectManagedJsonPaths(desiredObj),
+    ownership: ownership.scope,
+    paths: collectManagedJsonPaths(projected),
     ...(harnessId === "pi-settings" && Array.isArray(desiredObj.enabledModels)
       ? { managedEnabledModels: desiredObj.enabledModels.filter((value): value is string => typeof value === "string") }
       : {}),
@@ -3538,10 +3616,11 @@ function writeManagedStateIfApplied(
   desired: string,
   action: FileAction,
   warnings: string[],
+  ownership: ManagedJsonOwnership = { scope: "full" },
 ): HarnessDeployFile[] {
   return action === "note (customized, left intact)"
     ? []
-    : [writeManagedJsonState(configPath, harnessId, desired, warnings)];
+    : [writeManagedJsonState(configPath, harnessId, desired, warnings, ownership)];
 }
 
 function manageNativeJsonSettings(
@@ -3724,13 +3803,16 @@ function manageQwenSettingsJson(
   desired: string,
   entry: HarnessConfigEntry,
   warnings: string[],
+  ownership: ManagedJsonOwnership = { scope: "full" },
 ): FileAction {
-  if (!existsSync(path)) {
+  const exists = existsSync(path);
+  const managedState = exists ? readManagedJsonState(path, "qwen") : null;
+  if (!exists) {
     atomicWrite(path, desired, 0o600, warnings);
     return "created";
   }
   const current = tryOr(() => readFileSync(path, "utf-8"), null);
-  if (current === desired) {
+  if (current === desired && (managedState === null || managedState.ownership === "full")) {
     try {
       if ((statSync(path).mode & 0o777) !== 0o600) chmodSync(path, 0o600);
     } catch (error) {
@@ -3751,9 +3833,24 @@ function manageQwenSettingsJson(
   const currentProviders = isNativeRecord(currentObj.modelProviders) ? currentObj.modelProviders : {};
   const currentProtocols = isNativeRecord(currentObj.providerProtocol) ? currentObj.providerProtocol : {};
   const generatedIds = qwenGeneratedProviderIds(currentObj);
-  const managedState = readManagedJsonState(path, "qwen");
+  const nativeSettings = readNativeConfig(entry, warnings).settings;
+  const foreignProjection = mergeNativeConfigRecord({
+    modelProviders: desiredProviders,
+    providerProtocol: desiredProtocols,
+  }, nativeSettings ?? {});
   if (managedState && generatedIds.length > 0) {
-    const merged = applyManagedJsonState("qwen", currentObj, desiredObj, managedState);
+    const legacyAugmented = managedState.ownership === undefined;
+    ownership.scope = managedState.ownership ?? "augmented";
+    ownership.projection = ownership.scope === "augmented" ? foreignProjection : undefined;
+    ownership.pruneUnowned = !legacyAugmented;
+    ownership.retirePaths = legacyAugmented
+      ? managedState.paths.filter((path) =>
+          (path[0] === "modelProviders" || path[0] === "providerProtocol") &&
+          path.length > 1 && generatedIds.includes(path[1]) &&
+          !Object.hasOwn(path[0] === "modelProviders" ? desiredProviders : desiredProtocols, path[1])
+        )
+      : undefined;
+    const merged = applyManagedJsonState("qwen", currentObj, desiredObj, managedState, ownership);
     const next = `${JSON.stringify(merged, null, 2)}\n`;
     if (next === current) return "unchanged";
     atomicWrite(path, next, 0o600, warnings);
@@ -3771,7 +3868,8 @@ function manageQwenSettingsJson(
     Object.assign(protocols, desiredProtocols);
     merged = { ...currentObj, ...desiredObj, modelProviders: providers, providerProtocol: protocols };
   } else {
-    const nativeSettings = readNativeConfig(entry, warnings).settings;
+    ownership.scope = "augmented";
+    ownership.projection = foreignProjection;
     merged = nativeSettings ? mergeNativeConfigRecord(currentObj, nativeSettings) : { ...currentObj };
     for (const [providerId, route] of Object.entries(desiredProviders)) {
       if (providerId in currentProviders && !deepEqualsWriter(currentProviders[providerId], route)) {
@@ -3800,11 +3898,12 @@ export function deployQwenHarnessFiles(
   }
   const path = join(paths.qwenHome, "settings.json");
   const desired = buildQwenSettingsJson(entry, modelCatalog, warnings);
-  const action = manageQwenSettingsJson(path, desired, entry, warnings);
+  const ownership: ManagedJsonOwnership = { scope: "full" };
+  const action = manageQwenSettingsJson(path, desired, entry, warnings, ownership);
   if (action !== "unchanged") logger?.info?.(`[qwen] ${action} ${path} (native settings)`);
   return {
     warnings,
-    files: [{ path, action }, ...writeManagedStateIfApplied(path, "qwen", desired, action, warnings)],
+    files: [{ path, action }, ...writeManagedStateIfApplied(path, "qwen", desired, action, warnings, ownership)],
   };
 }
 

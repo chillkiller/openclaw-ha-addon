@@ -18,6 +18,8 @@ the writer deploys. Run with:
 import base64
 import json
 import os
+import shutil
+import subprocess
 import sys
 import tempfile
 import unittest
@@ -56,6 +58,13 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
             mock.patch.object(helper, "ACPX_DIR", self.config_dir / "acpx"),
             mock.patch.object(helper, "CODEX_SOURCE_HOME", self.config_dir / ".codex"),
             mock.patch.object(helper, "OPENCODE_GLOBAL_DIR", self.config_dir / "opencode"),
+            mock.patch.object(helper, "CLAUDE_SOURCE_HOME", self.config_dir / ".claude"),
+            mock.patch.object(helper, "PI_AGENT_DIR", self.config_dir / ".pi" / "agent"),
+            # Dynamic HCW native roots must also stay inside the test tmpdir.
+            mock.patch.dict(os.environ, {
+                "HOME": str(self.config_dir),
+                "XDG_CONFIG_HOME": str(self.config_dir),
+            }, clear=True),
             # Bundled-root deploy (Kammerjäger-Trust-Fix): point at a
             # NON-EXISTENT tmp path by default so tests never touch the
             # real gateway's /usr/lib package — tests that exercise the
@@ -411,9 +420,10 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
         self._seed_writer_generated_state()
         self.assertTrue(helper.deploy_plugins())
         manifest = json.loads(manifest_path.read_text())
+        by_path = {e["path"]: e for e in manifest["files"]}
         self.assertIn(
             "user-own",
-            base64.b64decode(manifest["files"][1]["content"]).decode(),
+            base64.b64decode(by_path[user_toml]["content"]).decode(),
             "snapshot must stay the first-enable pre-writer state",
         )
 
@@ -462,6 +472,281 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
             base64.b64decode(by_path[user_toml]["content"]).decode(),
             "fresh snapshot of the restored user state",
         )
+
+    def test_expanded_surface_restores_existing_bytes_modes_and_synthetic_credentials(self) -> None:
+        """Every current/legacy target round-trips arbitrary bytes and mode.
+        Auth and env fixtures contain synthetic credentials only."""
+        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "false"
+        os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "true"
+        managed = helper.harness_writer_managed_files()
+        self.assertEqual(len(managed), 42, "inventory must track the complete HCW surface")
+        originals: dict[Path, tuple[bytes, int]] = {}
+        for index, path in enumerate(managed):
+            path.parent.mkdir(parents=True, exist_ok=True)
+            content = f"operator-{index}".encode() + b"\x00\xff\n"
+            if path.name == "auth.json":
+                content = b'{"OPENAI_API_KEY":"synthetic-original-auth"}\n\x00'
+            elif path.suffix == ".env":
+                content = b"API_KEY='synthetic-original-env'\n\x00"
+            mode = (0o600, 0o640, 0o664)[index % 3]
+            path.write_bytes(content)
+            path.chmod(mode)
+            originals[path] = (content, mode)
+
+        self.assertTrue(helper.deploy_plugins())
+        manifest_path = self.config_dir / helper.HARNESS_WRITER_BACKUP_DIR_NAME / "manifest.json"
+        by_path = {
+            entry["path"]: entry
+            for entry in json.loads(manifest_path.read_text())["files"]
+        }
+        codex_auth = self.config_dir / ".codex" / "auth.json"
+        qwen_env = self.config_dir / "acpx" / "harness-env" / "qwen.env"
+        for secret_path in (codex_auth, qwen_env):
+            entry = by_path[str(secret_path)]
+            self.assertEqual(base64.b64decode(entry["content"]), originals[secret_path][0])
+            self.assertEqual(entry["mode"], originals[secret_path][1])
+
+        for path in managed:
+            path.write_bytes(b"writer-generated\n")
+            path.chmod(0o600)
+        os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "false"
+        self.assertTrue(helper.deploy_plugins())
+        for path, (content, mode) in originals.items():
+            self.assertEqual(path.read_bytes(), content, str(path))
+            self.assertEqual(path.stat().st_mode & 0o777, mode, str(path))
+
+    def test_absent_expanded_targets_are_deleted_on_off_including_sidecars(self) -> None:
+        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "false"
+        os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "true"
+        self.assertTrue(helper.deploy_plugins())
+        managed = helper.harness_writer_managed_files()
+        for path in managed:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"writer-created\n")
+        os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "false"
+        self.assertTrue(helper.deploy_plugins())
+        for path in managed:
+            self.assertFalse(path.exists(), f"writer-created file survived OFF: {path}")
+        self.assertFalse(
+            (self.config_dir / helper.HARNESS_WRITER_BACKUP_DIR_NAME / "manifest.json").exists()
+        )
+
+    def test_full_native_lifecycle_off_then_reenable_takes_fresh_snapshot(self) -> None:
+        """Isolated integration with the REAL TS dispatcher: first enable →
+        native deployment → OFF restore → re-enable fresh snapshot → OFF."""
+        node = shutil.which("node")
+        if not node:
+            self.skipTest("Node with TypeScript stripping is required for native dispatch")
+        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "false"
+        os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "true"
+        managed = helper.harness_writer_managed_files()
+        roots = helper._harness_writer_native_roots()
+        existing = (
+            roots["codex"] / "auth.json",
+            roots["kilo"] / "kilo.json",
+            roots["qwen"] / "settings.json",
+            roots["gemini"] / "settings.json",
+            roots["kimi"] / "config.toml",
+            roots["acpx"] / "harness-env" / "claude.env",
+        )
+        original_content = (
+            b'{"OPENAI_API_KEY":"synthetic-original-auth"}\n',
+            b'{"operator":"kilo"}\n',
+            b'{"operator":"qwen"}\n',
+            b'{"operator":"gemini"}\n',
+            b'default_model = "operator-kimi"\n',
+            b"ANTHROPIC_AUTH_TOKEN='synthetic-original-env'\n",
+        )
+        originals = dict(zip(existing, original_content))
+        for path, content in originals.items():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(content)
+            path.chmod(0o640)
+
+        def native_deploy() -> dict:
+            paths = {
+                "acpxDir": str(roots["acpx"]),
+                "codexSourceHome": str(roots["codex"]),
+                "opencodeGlobalDir": str(roots["opencode"]),
+                "claudeSourceHome": str(roots["claude"]),
+                "piAgentDir": str(roots["pi"]),
+                "kiloGlobalDir": str(roots["kilo"]),
+                "qwenHome": str(roots["qwen"]),
+                "nativeHomes": {
+                    harness_id: str(roots[harness_id])
+                    for harness_id in ("gemini", "copilot", "iflow", "droid", "kiro", "kimi")
+                },
+            }
+            harnesses = {
+                harness_id: {
+                    "model": "synthetic-model",
+                    "baseUrl": "http://127.0.0.1:11434",
+                    "apiKey": "synthetic-credential",
+                }
+                for harness_id in helper.KNOWN_WRITER_HARNESS_IDS
+            }
+            writer = REPO / "plugins" / "harness-config-writer" / "src" / "harness-config-writer.ts"
+            script = (
+                f"import {{ deployHarnessConfigs }} from {json.dumps(writer.as_uri())};\n"
+                "const input = JSON.parse(process.env.HCW_TEST_INPUT);\n"
+                "const report = deployHarnessConfigs({harnesses: input.harnesses}, input.paths);\n"
+                "console.log(JSON.stringify(report));\n"
+            )
+            proc = subprocess.run(
+                [node, "--experimental-strip-types", "--input-type=module", "-"],
+                input=script,
+                text=True,
+                capture_output=True,
+                env={**os.environ, "HCW_TEST_INPUT": json.dumps({"paths": paths, "harnesses": harnesses})},
+                timeout=60,
+            )
+            self.assertEqual(proc.returncode, 0, proc.stderr)
+            report = json.loads(proc.stdout)
+            reported = {
+                Path(file["path"])
+                for result in report["results"]
+                for file in result["files"]
+            }
+            self.assertTrue(reported.issubset(set(managed)), "helper inventory missed a real HCW write")
+            return report
+
+        self.assertTrue(helper.deploy_plugins())  # first enable
+        native_deploy()
+        for path in (
+            roots["codex"] / "auth.json",
+            roots["kilo"] / "kilo.json.hcw-managed.json",
+            roots["qwen"] / "settings.json.hcw-managed.json",
+            roots["kimi"] / "config.toml",
+            roots["gemini"] / "settings.json.hcw-managed.json",
+            roots["copilot"] / "settings.json.hcw-managed.json",
+            roots["iflow"] / "settings.json.hcw-managed.json",
+            roots["droid"] / "settings.json.hcw-managed.json",
+            roots["kiro"] / "settings" / "cli.json.hcw-managed.json",
+        ):
+            self.assertTrue(path.is_file(), f"real native deployment did not write {path}")
+        os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "false"
+        self.assertTrue(helper.deploy_plugins())  # OFF restore
+        for path in managed:
+            if path in originals:
+                self.assertEqual(path.read_bytes(), originals[path])
+                self.assertEqual(path.stat().st_mode & 0o777, 0o640)
+            else:
+                self.assertFalse(path.exists(), str(path))
+
+        os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "true"
+        self.assertTrue(helper.deploy_plugins())  # fresh snapshot
+        manifest_path = self.config_dir / helper.HARNESS_WRITER_BACKUP_DIR_NAME / "manifest.json"
+        by_path = {
+            entry["path"]: entry
+            for entry in json.loads(manifest_path.read_text())["files"]
+        }
+        for path in managed:
+            entry = by_path[str(path)]
+            if path in originals:
+                self.assertIs(entry["existed"], True)
+                self.assertEqual(base64.b64decode(entry["content"]), originals[path])
+            else:
+                self.assertIs(entry["existed"], False)
+                self.assertNotIn("content", entry)
+        native_deploy()
+        os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "false"
+        self.assertTrue(helper.deploy_plugins())
+        for path, content in originals.items():
+            self.assertEqual(path.read_bytes(), content)
+        for path in set(managed) - set(originals):
+            self.assertFalse(path.exists(), str(path))
+
+    def test_legacy_backup_upgrade_never_snapshots_existing_expanded_output(self) -> None:
+        """An old backup can gain absent targets, but existing new targets
+        have unknowable provenance and must never be captured as originals."""
+        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "false"
+        os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "true"
+        roots = helper._harness_writer_native_roots()
+        legacy_path = roots["codex"] / "config.toml"
+        legacy_path.parent.mkdir(parents=True, exist_ok=True)
+        legacy_path.write_bytes(b"legacy-original\n")
+        legacy_entry = {
+            "path": str(legacy_path),
+            "existed": True,
+            "mode": 0o640,
+            "content": base64.b64encode(b"legacy-original\n").decode("ascii"),
+        }
+        helper._backup_write_manifest([legacy_entry])
+        ambiguous = roots["qwen"] / "settings.json"
+        ambiguous.parent.mkdir(parents=True, exist_ok=True)
+        ambiguous.write_bytes(b"possibly-existing-hcw-output\n")
+        absent_at_upgrade = roots["kilo"] / "kilo.json.hcw-managed.json"
+
+        self.assertTrue(helper.backup_harness_writer_targets_once())
+        manifest_path = self.config_dir / helper.HARNESS_WRITER_BACKUP_DIR_NAME / "manifest.json"
+        by_path = {
+            entry["path"]: entry
+            for entry in json.loads(manifest_path.read_text())["files"]
+        }
+        self.assertIsNone(by_path[str(ambiguous)]["existed"])
+        self.assertIs(by_path[str(ambiguous)]["upgrade_unverified"], True)
+        self.assertNotIn("content", by_path[str(ambiguous)])
+        self.assertNotIn("mode", by_path[str(ambiguous)])
+        self.assertIs(by_path[str(absent_at_upgrade)]["existed"], False)
+        self.assertEqual(base64.b64decode(by_path[str(legacy_path)]["content"]), b"legacy-original\n")
+
+        legacy_path.write_bytes(b"writer-output\n")
+        absent_at_upgrade.parent.mkdir(parents=True, exist_ok=True)
+        absent_at_upgrade.write_bytes(b"writer-created-sidecar\n")
+        self.assertFalse(helper.restore_harness_writer_targets())
+        self.assertEqual(legacy_path.read_bytes(), b"legacy-original\n")
+        self.assertEqual(legacy_path.stat().st_mode & 0o777, 0o640)
+        self.assertFalse(absent_at_upgrade.exists())
+        self.assertEqual(ambiguous.read_bytes(), b"possibly-existing-hcw-output\n")
+        retained = json.loads(manifest_path.read_text())["files"]
+        self.assertEqual([entry["path"] for entry in retained], [str(ambiguous)])
+        self.assertNotIn("content", retained[0])
+        # Re-enable keeps the unresolved entry; it cannot become a fresh
+        # snapshot of bytes that may have been written by HCW.
+        self.assertTrue(helper.backup_harness_writer_targets_once())
+        retained_again = {
+            entry["path"]: entry
+            for entry in json.loads(manifest_path.read_text())["files"]
+        }
+        self.assertIsNone(retained_again[str(ambiguous)]["existed"])
+        self.assertNotIn("content", retained_again[str(ambiguous)])
+
+    def test_legacy_backup_upgrade_with_absent_new_targets_completes_off(self) -> None:
+        legacy_path = self.config_dir / ".codex" / "config.toml"
+        helper._backup_write_manifest([{
+            "path": str(legacy_path), "existed": False,
+        }])
+        self.assertTrue(helper.backup_harness_writer_targets_once())
+        for path in helper.harness_writer_managed_files():
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(b"post-upgrade-writer-output\n")
+        self.assertTrue(helper.restore_harness_writer_targets())
+        for path in helper.harness_writer_managed_files():
+            self.assertFalse(path.exists(), str(path))
+        self.assertFalse(
+            (self.config_dir / helper.HARNESS_WRITER_BACKUP_DIR_NAME / "manifest.json").exists()
+        )
+
+    def test_restore_rejects_home_and_symlink_escape_even_with_qwen_home_set_to_home(self) -> None:
+        os.environ["QWEN_HOME"] = "~"
+        home_file = self.config_dir / "operator-notes.txt"
+        home_file.write_bytes(b"do-not-touch\n")
+        outside = Path(self.tmp.name) / "outside.txt"
+        outside.write_bytes(b"also-do-not-touch\n")
+        qwen_settings = self.config_dir / "settings.json"
+        qwen_settings.symlink_to(outside)
+        unmanaged = self.config_dir / "unmanaged.json"
+        unmanaged.write_bytes(b"unmanaged-survives\n")
+        helper._backup_write_manifest([
+            {"path": str(home_file), "existed": False},
+            {"path": str(qwen_settings), "existed": False},
+            {"path": str(unmanaged), "existed": False},
+        ])
+        self.assertTrue(helper.restore_harness_writer_targets())
+        self.assertEqual(home_file.read_bytes(), b"do-not-touch\n")
+        self.assertTrue(qwen_settings.is_symlink(), "resolved escape must not be unlinked")
+        self.assertEqual(outside.read_bytes(), b"also-do-not-touch\n")
+        self.assertEqual(unmanaged.read_bytes(), b"unmanaged-survives\n")
 
     def test_restore_is_noop_without_snapshot(self) -> None:
         os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "false"
@@ -617,6 +902,15 @@ class AddonHarnessDefaultsTest(unittest.TestCase):
         patches = (
             mock.patch.object(helper, "PLUGIN_SRC_DIR", self.src_root),
             mock.patch.object(helper, "CONFIG_DIR", self.config_dir),
+            mock.patch.object(helper, "ACPX_DIR", self.config_dir / "acpx"),
+            mock.patch.object(helper, "CODEX_SOURCE_HOME", self.config_dir / ".codex"),
+            mock.patch.object(helper, "OPENCODE_GLOBAL_DIR", self.config_dir / "opencode"),
+            mock.patch.object(helper, "CLAUDE_SOURCE_HOME", self.config_dir / ".claude"),
+            mock.patch.object(helper, "PI_AGENT_DIR", self.config_dir / ".pi" / "agent"),
+            mock.patch.dict(os.environ, {
+                "HOME": str(self.config_dir),
+                "XDG_CONFIG_HOME": str(self.config_dir),
+            }, clear=True),
             mock.patch.object(helper, "BUNDLED_EXTENSIONS_DIR",
                               Path(self.tmp.name) / "dist" / "extensions"),
         )
@@ -675,6 +969,8 @@ class AddonHarnessDefaultsTest(unittest.TestCase):
             "model": "shared-model", "baseUrl": "http://10.0.0.5:11434",
         })
         self.assertIn("model", harnesses["claude"])
+        self.assertIn("kilo", harnesses)
+        self.assertIn("kilocode", harnesses)
 
     def test_excluded_agents_line_removes_harnesses(self) -> None:
         self.set_env(base_url="http://10.0.0.5:11434", model="m1",
@@ -1073,11 +1369,16 @@ class Gamma2WriterSurfaceTest(unittest.TestCase):
         self.config_dir = Path(self.tmp.name) / "config"
         self.config_dir.mkdir()
         patches = (
+            mock.patch.object(helper, "CONFIG_DIR", self.config_dir),
             mock.patch.object(helper, "ACPX_DIR", self.config_dir / "acpx"),
             mock.patch.object(helper, "CODEX_SOURCE_HOME", self.config_dir / ".codex"),
             mock.patch.object(helper, "OPENCODE_GLOBAL_DIR", self.config_dir / "opencode"),
             mock.patch.object(helper, "CLAUDE_SOURCE_HOME", self.config_dir / ".claude"),
             mock.patch.object(helper, "PI_AGENT_DIR", self.config_dir / ".pi" / "agent"),
+            mock.patch.dict(os.environ, {
+                "HOME": str(self.config_dir),
+                "XDG_CONFIG_HOME": str(self.config_dir),
+            }, clear=True),
         )
         for patcher in patches:
             patcher.start()
@@ -1096,6 +1397,91 @@ class Gamma2WriterSurfaceTest(unittest.TestCase):
             self.config_dir / ".pi" / "agent" / "settings.json",
         ):
             self.assertIn(expected, managed)
+
+    def test_dynamic_native_inventory_and_all_json_sidecars(self) -> None:
+        custom = Path(self.tmp.name) / "custom"
+        env = {
+            "HOME": str(custom / "home"),
+            "XDG_CONFIG_HOME": str(custom / "xdg"),
+            "QWEN_HOME": "~/qwen-custom",
+            "COPILOT_HOME": str(custom / "copilot") + "/",
+            "KIMI_CODE_HOME": "relative/kimi",
+        }
+        with mock.patch.dict(os.environ, env, clear=True):
+            managed = set(helper.harness_writer_managed_files())
+            roots = helper._harness_writer_native_roots()
+            self.assertEqual(roots["opencode"], custom / "xdg" / "opencode")
+            self.assertEqual(roots["kilo"], custom / "xdg" / "kilo")
+            self.assertEqual(roots["qwen"], custom / "home" / "qwen-custom")
+            self.assertEqual(roots["copilot"], custom / "copilot")
+            self.assertEqual(
+                roots["kimi"], Path(os.path.abspath("relative/kimi"))
+            )
+            expected_primaries = {
+                roots["codex"] / "auth.json",
+                roots["codex"] / "config.toml",
+                roots["codex"] / "model-catalog.json",
+                roots["opencode"] / "opencode.jsonc",
+                roots["acpx"] / "opencode-home" / "opencode.jsonc",
+                roots["kilo"] / "kilo.json",
+                roots["qwen"] / "settings.json",
+                roots["kimi"] / "config.toml",
+                roots["gemini"] / "settings.json",
+                roots["copilot"] / "settings.json",
+                roots["iflow"] / "settings.json",
+                roots["droid"] / "settings.json",
+                roots["kiro"] / "settings" / "cli.json",
+                roots["claude"] / "settings.json",
+                roots["pi"] / "models.json",
+                roots["pi"] / "settings.json",
+            }
+            self.assertTrue(expected_primaries.issubset(managed))
+            json_primaries = expected_primaries - {
+                roots["codex"] / "auth.json",
+                roots["codex"] / "config.toml",
+                roots["codex"] / "model-catalog.json",
+                roots["kimi"] / "config.toml",
+            }
+            for primary in json_primaries:
+                self.assertIn(Path(f"{primary}.hcw-managed.json"), managed, str(primary))
+            self.assertEqual(len(managed), 42)
+
+    def test_qwen_home_resolution_matches_hcw_edge_cases(self) -> None:
+        home = "/home/testuser"
+        cases = {
+            "~": Path(home),
+            "~/qwen": Path(home) / "qwen",
+            "~\\qwen": Path(home) / "qwen",
+            "relative/qwen": Path(os.path.abspath("relative/qwen")),
+            "/tmp/qwen/../qwen-final": Path("/tmp/qwen-final"),
+            "/": Path("/"),
+        }
+        for configured, expected in cases.items():
+            with self.subTest(configured=configured):
+                self.assertEqual(
+                    helper._resolve_qwen_native_home({"HOME": home, "QWEN_HOME": configured}),
+                    expected,
+                )
+        self.assertEqual(
+            helper._resolve_qwen_native_home({"HOME": "/", "QWEN_HOME": "~"}),
+            Path("/"),
+        )
+        self.assertIsNone(helper._resolve_qwen_native_home({"QWEN_HOME": "~"}))
+        self.assertIsNone(helper._resolve_qwen_native_home({}))
+
+    def test_xdg_absent_uses_home_config_and_default_native_homes(self) -> None:
+        home = Path(self.tmp.name) / "home-only"
+        with mock.patch.dict(os.environ, {"HOME": str(home)}, clear=True):
+            roots = helper._harness_writer_native_roots()
+            self.assertEqual(roots["opencode"], home / ".config" / "opencode")
+            self.assertEqual(roots["kilo"], home / ".config" / "kilo")
+            self.assertEqual(roots["qwen"], home / ".qwen")
+            self.assertEqual(roots["copilot"], home / ".copilot")
+            self.assertEqual(roots["kimi"], home / ".kimi-code")
+            self.assertEqual(roots["gemini"], home / ".gemini")
+            self.assertEqual(roots["iflow"], home / ".iflow")
+            self.assertEqual(roots["droid"], home / ".factory")
+            self.assertEqual(roots["kiro"], home / ".kiro")
 
     def test_legacy_targets_still_managed(self) -> None:
         managed = set(helper.harness_writer_managed_files())

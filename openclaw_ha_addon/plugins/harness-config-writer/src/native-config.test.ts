@@ -1,9 +1,10 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+  buildClaudeSettingsJson,
   buildCodexConfigToml,
   buildHarnessNativeSettingsJson,
   buildKiloConfigJson,
@@ -65,6 +66,26 @@ function deploy(config: unknown, p = paths()) {
 
 function readJson(path: string): Record<string, any> {
   return JSON.parse(readFileSync(path, "utf-8")) as Record<string, any>;
+}
+
+function writeJson(path: string, value: Record<string, unknown>): void {
+  mkdirSync(dirname(path), { recursive: true });
+  writeFileSync(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+function jsonLeafPaths(value: unknown, prefix: string[] = []): string[][] {
+  if (typeof value === "object" && value !== null && !Array.isArray(value) && Object.keys(value).length > 0) {
+    return Object.entries(value as Record<string, unknown>).flatMap(([key, child]) => jsonLeafPaths(child, [...prefix, key]));
+  }
+  return [prefix];
+}
+
+function writeLegacyState(configPath: string, harness: string, desired: string): void {
+  writeJson(`${configPath}.hcw-managed.json`, {
+    version: 1,
+    harness,
+    paths: jsonLeafPaths(JSON.parse(desired)),
+  });
 }
 
 describe("nativeConfig schema and merge", () => {
@@ -451,6 +472,502 @@ describe("sequential native deployments", () => {
     const report = deploy({ harnesses: { kimi: { ...BASE, models: ["sub-model"], nativeConfig } } }, foreignPaths);
     expect(readFileSync(foreignPath, "utf-8")).toBe('default_model = "operator/model"\n');
     expect(report.results[0].warnings.some((warning) => warning.includes("operator-owned"))).toBe(true);
+  });
+});
+
+describe("foreign managed-state ownership", () => {
+  it("keeps both foreign OpenCode targets byte-idempotent while syncing providers and native overlays", () => {
+    const p = paths();
+    const targets = [
+      join(p.acpxDir, "opencode-home", "opencode.jsonc"),
+      join(p.opencodeGlobalDir, "opencode.jsonc"),
+    ];
+    const foreignProvider = { npm: "operator-provider", options: { baseURL: "http://operator.example/v1" } };
+    for (const path of targets) writeJson(path, {
+      model: "operator/op-choice",
+      small_model: "operator/small-choice",
+      theme: "operator-theme",
+      provider: { foreign: foreignProvider },
+    });
+    const initial = {
+      harnesses: {
+        opencode: {
+          ...BASE,
+          smallModel: "generated-small",
+          nativeConfig: { config: { compaction: { auto: true }, agent: { reviewer: { tools: { write: false } } } } },
+        },
+      },
+    };
+    deploy(initial, p);
+    const providerA = deriveProviderId(BASE.baseUrl!);
+    for (const path of targets) {
+      const value = readJson(path);
+      expect(value.model).toBe("operator/op-choice");
+      expect(value.small_model).toBe("operator/small-choice");
+      expect(value.provider.foreign).toEqual(foreignProvider);
+      expect(value.provider[providerA]).toBeDefined();
+      expect(value.compaction).toEqual({ auto: true });
+      const state = readJson(`${path}.hcw-managed.json`);
+      expect(state.ownership).toBe("augmented");
+      expect(state.paths).not.toContainEqual(["model"]);
+      expect(state.paths).not.toContainEqual(["small_model"]);
+    }
+    const firstBytes = targets.flatMap((path) => [path, `${path}.hcw-managed.json`]).map((path) => readFileSync(path, "utf-8"));
+    const secondReport = deploy(initial, p);
+    expect(secondReport.results[0].files.every((file) => file.action === "unchanged")).toBe(true);
+    expect(targets.flatMap((path) => [path, `${path}.hcw-managed.json`]).map((path) => readFileSync(path, "utf-8"))).toEqual(firstBytes);
+
+    for (const path of targets) {
+      const statePath = `${path}.hcw-managed.json`;
+      const legacy = readJson(statePath);
+      delete legacy.ownership;
+      writeJson(statePath, legacy);
+    }
+    const routeB = {
+      harnesses: {
+        opencode: {
+          ...BASE,
+          model: "next-model",
+          smallModel: "next-small",
+          baseUrl: "http://new-host:8000",
+          nativeConfig: { config: { compaction: { auto: false }, agent: { reviewer: { tools: { write: true } } } } },
+        },
+      },
+    };
+    deploy(routeB, p);
+    for (const path of targets) {
+      const value = readJson(path);
+      expect(value.model).toBe("operator/op-choice");
+      expect(value.small_model).toBe("operator/small-choice");
+      expect(value.provider[providerA]).toBeUndefined();
+      expect(value.provider.binding_new_host_8000).toBeDefined();
+      expect(value.provider.foreign).toEqual(foreignProvider);
+      expect(value.compaction).toEqual({ auto: false });
+      expect(value.agent.reviewer.tools.write).toBe(true);
+    }
+    deploy({ harnesses: { opencode: { ...BASE, model: "next-model", smallModel: "next-small", baseUrl: "http://new-host:8000" } } }, p);
+    for (const path of targets) {
+      const value = readJson(path);
+      expect(value.model).toBe("operator/op-choice");
+      expect(value.small_model).toBe("operator/small-choice");
+      expect(value.provider[providerA]).toBeUndefined();
+      expect(value.provider.binding_new_host_8000).toBeDefined();
+      expect(value.provider.foreign).toEqual(foreignProvider);
+      expect(value.compaction).toBeUndefined();
+      expect(value.agent).toBeUndefined();
+      expect(value.theme).toBe("operator-theme");
+    }
+  });
+
+  it.each(["kilo", "kilocode"] as const)("keeps foreign %s operator models stable across identical runs and route A to B", (harnessId) => {
+    const p = paths();
+    const path = join(p.kiloGlobalDir!, "kilo.json");
+    const foreignProvider = { npm: "operator-kilo", options: { baseURL: "http://operator.example/v1" } };
+    writeJson(path, {
+      model: "operator/kilo-choice",
+      small_model: "operator/kilo-small",
+      provider: { foreign: foreignProvider },
+      operatorKeep: true,
+    });
+    const config = {
+      harnesses: {
+        [harnessId]: { ...BASE, smallModel: "generated-small", nativeConfig: { config: { compaction: { auto: true }, subagent_model: "native-role-a" } } },
+      },
+    };
+    deploy(config, p);
+    const providerA = deriveProviderId(BASE.baseUrl!);
+    let value = readJson(path);
+    expect(value.model).toBe("operator/kilo-choice");
+    expect(value.small_model).toBe("operator/kilo-small");
+    expect(value.provider[providerA]).toBeDefined();
+    expect(value.provider.foreign).toEqual(foreignProvider);
+    expect(value.subagent_model).toBe("native-role-a");
+    const first = readFileSync(path, "utf-8");
+    const firstState = readFileSync(`${path}.hcw-managed.json`, "utf-8");
+    deploy(config, p);
+    expect(readFileSync(path, "utf-8")).toBe(first);
+    expect(readFileSync(`${path}.hcw-managed.json`, "utf-8")).toBe(firstState);
+
+    const legacy = readJson(`${path}.hcw-managed.json`);
+    delete legacy.ownership;
+    writeJson(`${path}.hcw-managed.json`, legacy);
+    deploy({ harnesses: { [harnessId]: {
+      ...BASE,
+      model: "next-model",
+      baseUrl: "http://new-host:8000",
+      nativeConfig: { config: { compaction: { auto: false }, subagent_model: "native-role-b" } },
+    } } }, p);
+    value = readJson(path);
+    expect(value.model).toBe("operator/kilo-choice");
+    expect(value.small_model).toBe("operator/kilo-small");
+    expect(value.provider[providerA]).toBeUndefined();
+    expect(value.provider.binding_new_host_8000).toBeDefined();
+    expect(value.provider.foreign).toEqual(foreignProvider);
+    expect(value.subagent_model).toBe("native-role-b");
+
+    deploy({ harnesses: { [harnessId]: { ...BASE, model: "next-model", baseUrl: "http://new-host:8000" } } }, p);
+    value = readJson(path);
+    expect(value.model).toBe("operator/kilo-choice");
+    expect(value.small_model).toBe("operator/kilo-small");
+    expect(value.provider.foreign).toEqual(foreignProvider);
+    expect(value.provider.binding_new_host_8000).toBeDefined();
+    expect(value.subagent_model).toBeUndefined();
+    expect(value.compaction).toBeUndefined();
+    expect(value.operatorKeep).toBe(true);
+  });
+
+  it("keeps foreign Qwen model settings stable while reconciling providers and explicit native leaves", () => {
+    const p = paths();
+    const path = join(p.qwenHome!, "settings.json");
+    const foreignModels = [{ id: "foreign-model", name: "Operator provider", envKey: "FOREIGN_KEY" }];
+    writeJson(path, {
+      model: {
+        name: "operator-model",
+        baseUrl: "http://operator.example/v1",
+        chatCompression: { contextPercentageThreshold: 0.4, operatorKeep: true },
+      },
+      modelProviders: { foreign: foreignModels },
+      providerProtocol: { foreign: "openai" },
+      operatorKeep: true,
+    });
+    const initial = { harnesses: { qwen: { ...BASE, nativeConfig: { settings: {
+      fastModel: "fast-a",
+      model: { chatCompression: { contextPercentageThreshold: 0.8 } },
+    } } } } };
+    deploy(initial, p);
+    const providerA = deriveProviderId(BASE.baseUrl!);
+    let value = readJson(path);
+    expect(value.model.name).toBe("operator-model");
+    expect(value.model.baseUrl).toBe("http://operator.example/v1");
+    expect(value.model.chatCompression).toEqual({ contextPercentageThreshold: 0.8, operatorKeep: true });
+    expect(value.modelProviders.foreign).toEqual(foreignModels);
+    expect(value.modelProviders[providerA]).toBeDefined();
+    const first = readFileSync(path, "utf-8");
+    const firstState = readFileSync(`${path}.hcw-managed.json`, "utf-8");
+    deploy(initial, p);
+    expect(readFileSync(path, "utf-8")).toBe(first);
+    expect(readFileSync(`${path}.hcw-managed.json`, "utf-8")).toBe(firstState);
+
+    const legacy = readJson(`${path}.hcw-managed.json`);
+    delete legacy.ownership;
+    writeJson(`${path}.hcw-managed.json`, legacy);
+    deploy({ harnesses: { qwen: {
+      ...BASE,
+      model: "next-model",
+      baseUrl: "http://new-host:8000",
+      nativeConfig: { settings: { fastModel: "fast-b", model: { chatCompression: { contextPercentageThreshold: 0.9 } } } },
+    } } }, p);
+    value = readJson(path);
+    expect(value.model.name).toBe("operator-model");
+    expect(value.model.baseUrl).toBe("http://operator.example/v1");
+    expect(value.model.chatCompression.contextPercentageThreshold).toBe(0.9);
+    expect(value.modelProviders[providerA]).toBeUndefined();
+    expect(value.modelProviders.binding_new_host_8000).toBeDefined();
+    expect(value.modelProviders.foreign).toEqual(foreignModels);
+    expect(value.providerProtocol).toEqual({ foreign: "openai", binding_new_host_8000: "openai" });
+
+    deploy({ harnesses: { qwen: { ...BASE, model: "next-model", baseUrl: "http://new-host:8000" } } }, p);
+    value = readJson(path);
+    expect(value.model.name).toBe("operator-model");
+    expect(value.model.chatCompression).toEqual({ operatorKeep: true });
+    expect(value.fastModel).toBeUndefined();
+    expect(value.modelProviders.foreign).toEqual(foreignModels);
+    expect(value.modelProviders.binding_new_host_8000).toBeDefined();
+    expect(value.operatorKeep).toBe(true);
+  });
+
+  it("keeps foreign Claude availableModels stable while native settings add, change and remove", () => {
+    const p = paths();
+    const path = join(p.claudeSourceHome, "settings.json");
+    writeJson(path, {
+      model: "operator-old",
+      availableModels: ["operator-model"],
+      permissions: { operator: true },
+      env: { ANTHROPIC_BASE_URL: "http://operator.example", OTHER: "keep" },
+    });
+    const initial = { harnesses: { claude: { ...BASE, models: ["main-model", "review-model"], nativeConfig: { settings: {
+      compaction: { enabled: true },
+      env: { CLAUDE_NATIVE_FLAG: "enabled" },
+    } } } } };
+    deploy(initial, p);
+    let value = readJson(path);
+    expect(value.model).toBe("main-model");
+    expect(value.availableModels).toEqual(["operator-model"]);
+    expect(value.env.OTHER).toBe("keep");
+    expect(value.env.CLAUDE_NATIVE_FLAG).toBe("enabled");
+    expect(readJson(`${path}.hcw-managed.json`).paths).not.toContainEqual(["availableModels"]);
+    const first = readFileSync(path, "utf-8");
+    const firstState = readFileSync(`${path}.hcw-managed.json`, "utf-8");
+    deploy(initial, p);
+    expect(readFileSync(path, "utf-8")).toBe(first);
+    expect(readFileSync(`${path}.hcw-managed.json`, "utf-8")).toBe(firstState);
+
+    const legacy = readJson(`${path}.hcw-managed.json`);
+    delete legacy.ownership;
+    writeJson(`${path}.hcw-managed.json`, legacy);
+    deploy({ harnesses: { claude: {
+      ...BASE,
+      model: "next-model",
+      smallModel: "next-small",
+      baseUrl: "http://new-host:8000",
+      models: ["next-model", "next-review"],
+      nativeConfig: { settings: { compaction: { enabled: false }, env: { CLAUDE_NATIVE_FLAG: "changed" } } },
+    } } }, p);
+    value = readJson(path);
+    expect(value.model).toBe("next-model");
+    expect(value.availableModels).toEqual(["operator-model"]);
+    expect(value.env.ANTHROPIC_BASE_URL).toBe("http://new-host:8000");
+    expect(value.env.ANTHROPIC_SMALL_FAST_MODEL).toBe("next-small");
+    expect(value.env.CLAUDE_NATIVE_FLAG).toBe("changed");
+    expect(value.compaction).toEqual({ enabled: false });
+
+    deploy({ harnesses: { claude: { ...BASE, model: "next-model", baseUrl: "http://new-host:8000" } } }, p);
+    value = readJson(path);
+    expect(value.availableModels).toEqual(["operator-model"]);
+    expect(value.compaction).toBeUndefined();
+    expect(value.env.CLAUDE_NATIVE_FLAG).toBeUndefined();
+    expect(value.env.OTHER).toBe("keep");
+    expect(value.permissions).toEqual({ operator: true });
+  });
+
+  it("retains foreign Pi providers and enabledModels across identical runs and route A to B", () => {
+    const p = paths();
+    const modelsPath = join(p.piAgentDir, "models.json");
+    const settingsPath = join(p.piAgentDir, "settings.json");
+    writeJson(modelsPath, { providers: { foreign: { name: "Operator", models: [{ id: "foreign-model" }] } } });
+    writeJson(settingsPath, { enabledModels: ["other/*"], theme: "operator" });
+    deploy({ harnesses: { pi: { ...BASE, providerKey: "route-a" } } }, p);
+    expect(readJson(settingsPath).enabledModels).toEqual(["other/*", "route-a/*"]);
+    const firstModels = readFileSync(modelsPath, "utf-8");
+    const firstSettings = readFileSync(settingsPath, "utf-8");
+    deploy({ harnesses: { pi: { ...BASE, providerKey: "route-a" } } }, p);
+    expect(readFileSync(modelsPath, "utf-8")).toBe(firstModels);
+    expect(readFileSync(settingsPath, "utf-8")).toBe(firstSettings);
+    deploy({ harnesses: { pi: { ...BASE, providerKey: "route-b" } } }, p);
+    expect(readJson(settingsPath).enabledModels).toEqual(["other/*", "route-b/*"]);
+    expect(readJson(settingsPath).theme).toBe("operator");
+    const models = readJson(modelsPath);
+    expect(models.providers["route-a"]).toBeUndefined();
+    expect(models.providers["route-b"]).toBeDefined();
+    expect(models.providers.foreign).toEqual({ name: "Operator", models: [{ id: "foreign-model" }] });
+  });
+});
+
+describe("ambiguous legacy sidecar migration", () => {
+  it("never promotes either generated-shaped OpenCode target to full ownership", () => {
+    const p = paths();
+    const targets = [
+      join(p.acpxDir, "opencode-home", "opencode.jsonc"),
+      join(p.opencodeGlobalDir, "opencode.jsonc"),
+    ];
+    const initialEntry: HarnessConfigEntry = {
+      ...BASE,
+      smallModel: "generated-small",
+      nativeConfig: { config: { compaction: { auto: true } } },
+    };
+    for (const path of targets) writeJson(path, {
+      $schema: "https://opencode.ai/config.json",
+      model: "operator/op-choice",
+      small_model: "operator/small-choice",
+    });
+    deploy({ harnesses: { opencode: initialEntry } }, p);
+    for (const path of targets) writeLegacyState(path, "opencode", buildOpencodeConfigJsonc(initialEntry));
+
+    deploy({ harnesses: { opencode: initialEntry } }, p);
+    const providerA = deriveProviderId(BASE.baseUrl!);
+    for (const path of targets) {
+      const value = readJson(path);
+      expect(value.model).toBe("operator/op-choice");
+      expect(value.small_model).toBe("operator/small-choice");
+      expect(value.provider[providerA]).toBeDefined();
+      expect(value.compaction).toEqual({ auto: true });
+      expect(readJson(`${path}.hcw-managed.json`).ownership).toBe("augmented");
+    }
+    const migratedBytes = targets.flatMap((path) => [path, `${path}.hcw-managed.json`]).map((path) => readFileSync(path, "utf-8"));
+    const idempotent = deploy({ harnesses: { opencode: initialEntry } }, p);
+    expect(idempotent.results[0].files.every((file) => file.action === "unchanged")).toBe(true);
+    expect(targets.flatMap((path) => [path, `${path}.hcw-managed.json`]).map((path) => readFileSync(path, "utf-8"))).toEqual(migratedBytes);
+
+    deploy({ harnesses: { opencode: {
+      ...initialEntry,
+      model: "next-model",
+      baseUrl: "http://new-host:8000",
+      nativeConfig: { config: { compaction: { auto: false }, agent: { reviewer: { tools: { write: false } } } } },
+    } } }, p);
+    for (const path of targets) {
+      const value = readJson(path);
+      expect(value.model).toBe("operator/op-choice");
+      expect(value.small_model).toBe("operator/small-choice");
+      expect(value.provider[providerA]).toBeUndefined();
+      expect(value.provider.binding_new_host_8000).toBeDefined();
+      expect(value.compaction).toEqual({ auto: false });
+      expect(value.agent.reviewer.tools.write).toBe(false);
+    }
+    deploy({ harnesses: { opencode: { ...BASE, model: "next-model", smallModel: "generated-small", baseUrl: "http://new-host:8000" } } }, p);
+    for (const path of targets) {
+      const value = readJson(path);
+      expect(value.model).toBe("operator/op-choice");
+      expect(value.small_model).toBe("operator/small-choice");
+      expect(value.provider[providerA]).toBeUndefined();
+      expect(value.provider.binding_new_host_8000).toBeDefined();
+      expect(value.compaction).toBeUndefined();
+      expect(value.agent).toBeUndefined();
+    }
+  });
+
+  it.each(["kilo", "kilocode"] as const)("never promotes generated-shaped foreign %s operator models to full ownership", (harnessId) => {
+    const p = paths();
+    const path = join(p.kiloGlobalDir!, "kilo.json");
+    const initialEntry: HarnessConfigEntry = {
+      ...BASE,
+      smallModel: "generated-small",
+      nativeConfig: { config: { subagent_model: "native-a" } },
+    };
+    writeJson(path, {
+      $schema: "https://app.kilo.ai/config.json",
+      model: "operator/kilo-choice",
+      small_model: "operator/kilo-small",
+    });
+    deploy({ harnesses: { [harnessId]: initialEntry } }, p);
+    writeLegacyState(path, "kilo", buildKiloConfigJson(initialEntry));
+
+    deploy({ harnesses: { [harnessId]: initialEntry } }, p);
+    const providerA = deriveProviderId(BASE.baseUrl!);
+    let value = readJson(path);
+    expect(value.model).toBe("operator/kilo-choice");
+    expect(value.small_model).toBe("operator/kilo-small");
+    expect(value.provider[providerA]).toBeDefined();
+    expect(value.subagent_model).toBe("native-a");
+    expect(readJson(`${path}.hcw-managed.json`).ownership).toBe("augmented");
+    const migrated = readFileSync(path, "utf-8");
+    const migratedState = readFileSync(`${path}.hcw-managed.json`, "utf-8");
+    deploy({ harnesses: { [harnessId]: initialEntry } }, p);
+    expect(readFileSync(path, "utf-8")).toBe(migrated);
+    expect(readFileSync(`${path}.hcw-managed.json`, "utf-8")).toBe(migratedState);
+
+    deploy({ harnesses: { [harnessId]: {
+      ...initialEntry,
+      model: "next-model",
+      baseUrl: "http://new-host:8000",
+      nativeConfig: { config: { subagent_model: "native-b", compaction: { auto: true } } },
+    } } }, p);
+    value = readJson(path);
+    expect(value.model).toBe("operator/kilo-choice");
+    expect(value.small_model).toBe("operator/kilo-small");
+    expect(value.provider[providerA]).toBeUndefined();
+    expect(value.provider.binding_new_host_8000).toBeDefined();
+    expect(value.subagent_model).toBe("native-b");
+    expect(value.compaction).toEqual({ auto: true });
+    deploy({ harnesses: { [harnessId]: { ...BASE, model: "next-model", smallModel: "generated-small", baseUrl: "http://new-host:8000" } } }, p);
+    value = readJson(path);
+    expect(value.model).toBe("operator/kilo-choice");
+    expect(value.small_model).toBe("operator/kilo-small");
+    expect(value.provider[providerA]).toBeUndefined();
+    expect(value.provider.binding_new_host_8000).toBeDefined();
+    expect(value.subagent_model).toBeUndefined();
+    expect(value.compaction).toBeUndefined();
+  });
+
+  it("preserves a foreign Qwen operator baseUrl even when its model name matches a generated model", () => {
+    const p = paths();
+    const path = join(p.qwenHome!, "settings.json");
+    const initialEntry: HarnessConfigEntry = {
+      ...BASE,
+      nativeConfig: { settings: { model: { chatCompression: { contextPercentageThreshold: 0.8 } } } },
+    };
+    writeJson(path, {
+      model: { name: "main-model", baseUrl: "http://operator.example/v1", operatorKeep: true },
+    });
+    deploy({ harnesses: { qwen: initialEntry } }, p);
+    writeLegacyState(path, "qwen", buildQwenSettingsJson(initialEntry));
+
+    deploy({ harnesses: { qwen: initialEntry } }, p);
+    const providerA = deriveProviderId(BASE.baseUrl!);
+    let value = readJson(path);
+    expect(value.model).toEqual({
+      name: "main-model",
+      baseUrl: "http://operator.example/v1",
+      operatorKeep: true,
+      chatCompression: { contextPercentageThreshold: 0.8 },
+    });
+    expect(value.modelProviders[providerA]).toBeDefined();
+    expect(readJson(`${path}.hcw-managed.json`).ownership).toBe("augmented");
+    const migrated = readFileSync(path, "utf-8");
+    const migratedState = readFileSync(`${path}.hcw-managed.json`, "utf-8");
+    deploy({ harnesses: { qwen: initialEntry } }, p);
+    expect(readFileSync(path, "utf-8")).toBe(migrated);
+    expect(readFileSync(`${path}.hcw-managed.json`, "utf-8")).toBe(migratedState);
+
+    deploy({ harnesses: { qwen: {
+      ...initialEntry,
+      model: "next-model",
+      baseUrl: "http://new-host:8000",
+      nativeConfig: { settings: { fastModel: "fast-b", model: { chatCompression: { contextPercentageThreshold: 0.9 } } } },
+    } } }, p);
+    value = readJson(path);
+    expect(value.model.name).toBe("main-model");
+    expect(value.model.baseUrl).toBe("http://operator.example/v1");
+    expect(value.model.operatorKeep).toBe(true);
+    expect(value.model.chatCompression.contextPercentageThreshold).toBe(0.9);
+    expect(value.fastModel).toBe("fast-b");
+    expect(value.modelProviders[providerA]).toBeUndefined();
+    expect(value.modelProviders.binding_new_host_8000).toBeDefined();
+    deploy({ harnesses: { qwen: { ...BASE, model: "next-model", baseUrl: "http://new-host:8000" } } }, p);
+    value = readJson(path);
+    expect(value.model).toEqual({ name: "main-model", baseUrl: "http://operator.example/v1", operatorKeep: true });
+    expect(value.fastModel).toBeUndefined();
+    expect(value.modelProviders[providerA]).toBeUndefined();
+    expect(value.modelProviders.binding_new_host_8000).toBeDefined();
+  });
+
+  it("preserves a foreign Claude availableModels catalog even when it contains the active model", () => {
+    const p = paths();
+    const path = join(p.claudeSourceHome, "settings.json");
+    const initialEntry: HarnessConfigEntry = {
+      ...BASE,
+      models: ["main-model", "review-model"],
+      nativeConfig: { settings: { compaction: { enabled: true } } },
+    };
+    writeJson(path, {
+      model: "operator-old",
+      availableModels: ["main-model", "operator-only"],
+      env: { OTHER: "keep" },
+    });
+    deploy({ harnesses: { claude: initialEntry } }, p);
+    writeLegacyState(path, "claude", buildClaudeSettingsJson(initialEntry, []));
+
+    deploy({ harnesses: { claude: initialEntry } }, p);
+    let value = readJson(path);
+    expect(value.model).toBe("main-model");
+    expect(value.availableModels).toEqual(["main-model", "operator-only"]);
+    expect(value.compaction).toEqual({ enabled: true });
+    expect(value.env.OTHER).toBe("keep");
+    expect(readJson(`${path}.hcw-managed.json`).ownership).toBe("augmented");
+    const migrated = readFileSync(path, "utf-8");
+    const migratedState = readFileSync(`${path}.hcw-managed.json`, "utf-8");
+    deploy({ harnesses: { claude: initialEntry } }, p);
+    expect(readFileSync(path, "utf-8")).toBe(migrated);
+    expect(readFileSync(`${path}.hcw-managed.json`, "utf-8")).toBe(migratedState);
+
+    deploy({ harnesses: { claude: {
+      ...initialEntry,
+      model: "next-model",
+      baseUrl: "http://new-host:8000",
+      nativeConfig: { settings: { compaction: { enabled: false }, env: { CLAUDE_NATIVE_FLAG: "changed" } } },
+    } } }, p);
+    value = readJson(path);
+    expect(value.model).toBe("next-model");
+    expect(value.availableModels).toEqual(["main-model", "operator-only"]);
+    expect(value.compaction).toEqual({ enabled: false });
+    expect(value.env.CLAUDE_NATIVE_FLAG).toBe("changed");
+    expect(value.env.OTHER).toBe("keep");
+    deploy({ harnesses: { claude: { ...BASE, model: "next-model", baseUrl: "http://new-host:8000" } } }, p);
+    value = readJson(path);
+    expect(value.model).toBe("next-model");
+    expect(value.availableModels).toEqual(["main-model", "operator-only"]);
+    expect(value.compaction).toBeUndefined();
+    expect(value.env.CLAUDE_NATIVE_FLAG).toBeUndefined();
+    expect(value.env.OTHER).toBe("keep");
   });
 });
 
