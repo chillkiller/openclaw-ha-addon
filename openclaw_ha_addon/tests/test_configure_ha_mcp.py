@@ -113,8 +113,8 @@ if name in {"mcporter", "npm"}:
 if name == "openclaw" and args[:2] == ["mcp", "status"]:
     requires_auth = os.environ.get("STUB_OPENCLAW_AUTH_REQUIRED") == "1"
     payload = {"servers": [
-        {"name": "ha", "authStatus": {"requiresAuthorization": False, "state": "authorized"}},
-        {"name": "ha_official", "authStatus": {"requiresAuthorization": requires_auth, "state": "authorization-required" if requires_auth else "authorized"}},
+        {"name": "ha", "ok": True, "authStatus": {"requiresAuthorization": False, "state": "authorized"}},
+        {"name": "ha_official", "ok": True, "authStatus": {"requiresAuthorization": requires_auth, "state": "authorization-required" if requires_auth else "authorized"}},
     ]}
     if os.environ.get("STUB_OPENCLAW_INCLUDE_SECRET") == "1":
         payload["privateDiagnostic"] = [os.environ.get("HA_MCP_TOKEN", ""), os.environ.get("STUB_PRIVATE_URL", "")]
@@ -251,11 +251,9 @@ raise SystemExit(0)
         self.assertTrue((self.config / ".mcp_openclaw_ha_owned").is_file())
         self.assertEqual([call["args"] for call in self.calls("openclaw")], [
             ["mcp", "status", "--verbose", "--json"],
-            ["mcp", "doctor", "ha", "--probe", "--json"],
         ])
-        self.assertIn("Home Assistant connection way 3 (community MCP, URL + bearer): connected, 3 tools", result.stdout)
+        self.assertIn("Home Assistant connection way 3 (community MCP, URL + bearer): connected", result.stdout)
         self.assert_timeout_call("30s", "/usr/bin/node", "--input-type=module")
-        self.assert_timeout_call("45s", "mcp", "doctor", "ha")
 
     def test_way_3_openclaw_uses_only_environment_bearer_reference(self) -> None:
         env = self.env.copy()
@@ -419,9 +417,8 @@ raise SystemExit(0)
         self.assertEqual(self.calls("curl"), [])
         self.assertEqual([call["args"] for call in self.calls("openclaw")], [
             ["mcp", "status", "--verbose", "--json"],
-            ["mcp", "doctor", "ha_official", "--probe", "--json"],
         ])
-        self.assertIn("Home Assistant connection way 2 (official MCP, OAuth): connected, 3 tools", result.stdout)
+        self.assertIn("Home Assistant connection way 2 (official MCP, OAuth): connected", result.stdout)
 
     def test_way_2_identical_definition_does_not_write_again(self) -> None:
         env = self.env.copy()
@@ -533,7 +530,7 @@ raise SystemExit(0)
         self.assertEqual([call["args"] for call in self.calls("openclaw")], [["mcp", "status", "--verbose", "--json"]])
         self.assertEqual(self.calls("curl"), [])
 
-    def test_way_2_doctor_authorization_required_prints_exact_login(self) -> None:
+    def test_startup_never_runs_the_offline_doctor_probe(self) -> None:
         env = self.env.copy()
         env["HA_MCP_URL"] = ""
         env["HA_OAUTH_MCP_URL"] = self.oauth_url
@@ -543,12 +540,13 @@ raise SystemExit(0)
 
         self.assert_booted(result)
         self.assert_no_forbidden_tools()
-        self.assertIn("Home Assistant connection way 2 (official MCP, OAuth): authorization-required", result.stdout)
-        self.assertIn("Run exactly: openclaw mcp login ha_official", result.stdout)
-        self.assertEqual(len(self.calls("openclaw")), 2)
+        # `mcp doctor --probe` needs exclusive offline state ownership and can
+        # never succeed while the Gateway is running, so startup must not use it.
+        self.assertEqual([call["args"] for call in self.calls("openclaw")], [["mcp", "status", "--verbose", "--json"]])
+        self.assertNotIn("doctor", result.stdout)
         self.assertEqual(self.calls("curl"), [])
 
-    def test_status_and_failed_probe_never_echo_secret_diagnostics(self) -> None:
+    def test_status_never_echoes_secret_diagnostics(self) -> None:
         env = self.env.copy()
         env["HA_MCP_TOKEN"] = self.mcp_token
         env["STUB_OPENCLAW_INCLUDE_SECRET"] = "1"
@@ -559,7 +557,7 @@ raise SystemExit(0)
 
         self.assert_booted(result)
         self.assert_no_forbidden_tools()
-        self.assertIn("Home Assistant connection way 3 (community MCP, URL + bearer): probe failed", result.stdout)
+        self.assertIn("Home Assistant connection way 3 (community MCP, URL + bearer): connected", result.stdout)
         self.assertNotIn("privateDiagnostic", result.stdout + result.stderr)
         self.assertNotIn(self.mcp_token, result.stdout + result.stderr)
         self.assertNotIn(self.mcp_url, result.stdout + result.stderr)
@@ -613,8 +611,8 @@ raise SystemExit(0)
         ]
         self.assertEqual(connection_lines, [
             "INFO: Home Assistant connection way 1 (API, long-lived token): token stored for API/Assist/scripts",
-            "INFO: Home Assistant connection way 2 (official MCP, OAuth): connected, 3 tools",
-            "INFO: Home Assistant connection way 3 (community MCP, URL + bearer): connected, 3 tools",
+            "INFO: Home Assistant connection way 2 (official MCP, OAuth): connected",
+            "INFO: Home Assistant connection way 3 (community MCP, URL + bearer): connected",
         ])
         self.assertEqual(
             [line for line in result.stdout.splitlines() if "MCP" in line],

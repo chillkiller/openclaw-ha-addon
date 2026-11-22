@@ -948,7 +948,7 @@ class HaMcpUrlTests(unittest.TestCase):
         openclaw.write_text(
             "#!/usr/bin/env bash\n"
             "if [ \"${1:-} ${2:-}\" = 'mcp status' ]; then\n"
-            "  printf '%s\n' '{\"servers\":[{\"name\":\"ha\",\"authStatus\":{\"state\":\"authorized\"}},{\"name\":\"ha_official\",\"authStatus\":{\"state\":\"authorized\"}}]}'\n"
+            "  printf '%s\n' '{\"servers\":[{\"name\":\"ha\",\"ok\":true,\"authStatus\":{\"state\":\"authorized\"}},{\"name\":\"ha_official\",\"ok\":true,\"authStatus\":{\"state\":\"authorized\"}}]}'\n"
             "elif [ \"${1:-} ${2:-}\" = 'mcp doctor' ]; then\n"
             "  printf '{\"ok\":true,\"servers\":[{\"name\":\"%s\",\"probe\":{\"tools\":2}}]}\n' \"$3\"\n"
             "else\n"
@@ -1072,7 +1072,7 @@ class HaMcpUrlTests(unittest.TestCase):
         self.assertEqual(definition["auth"], "oauth")
         self.assertEqual(definition["oauth"]["clientMetadataUrl"], "https://clawhub.ai/oauth/clients/openclaw.json")
         self.assertNotIn("headers", definition)
-        self.assertIn("connected, 2 tools", result.stdout)
+        self.assertIn("way 2 (official MCP, OAuth): connected", result.stdout)
         self.assertNotIn(env["HA_OAUTH_MCP_URL"], result.stdout + result.stderr)
 
     def test_both_mcp_ways_never_invoke_mcporter_or_npm(self) -> None:
@@ -1113,8 +1113,8 @@ class HaMcpUrlTests(unittest.TestCase):
         self.assert_no_forbidden_tools()
         self.assertEqual(result.stdout.splitlines(), [
             "INFO: Home Assistant connection way 1 (API, long-lived token): token stored for API/Assist/scripts",
-            "INFO: Home Assistant connection way 2 (official MCP, OAuth): connected, 2 tools",
-            "INFO: Home Assistant connection way 3 (community MCP, URL + bearer): connected, 2 tools",
+            "INFO: Home Assistant connection way 2 (official MCP, OAuth): connected",
+            "INFO: Home Assistant connection way 3 (community MCP, URL + bearer): connected",
         ])
         output = result.stdout + result.stderr
         self.assertNotIn("user-token", output)

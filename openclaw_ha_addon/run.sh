@@ -1787,84 +1787,62 @@ verify_openclaw_mcp_server() {
   local command_status=0
   local classification=""
 
+  # `openclaw mcp doctor --probe` is an offline-only command: it needs
+  # exclusive offline state ownership, so it cannot run while the Gateway is
+  # up and would report a failure for a healthy server. The online status is
+  # the only reliable source during startup.
   output=$(PATH="$image_path" "$timeout_bin" 30s "$openclaw_bin" mcp status --verbose --json 2>&1) || command_status=$?
   classification=$(printf '%s' "$output" | /usr/bin/node -e '
 let input = "";
 process.stdin.on("data", (chunk) => { input += chunk; });
 process.stdin.on("end", () => {
   const name = process.argv[1];
-  try {
-    const report = JSON.parse(input);
-    const server = Array.isArray(report.servers)
-      ? report.servers.find((entry) => entry?.name === name)
-      : report.servers?.[name];
-    const auth = server?.authStatus;
-    if (auth?.requiresAuthorization === true || auth?.state === "authorization-required") process.stdout.write("authorization-required\n");
-  } catch {}
-});
-' "$server_name" 2>/dev/null) || classification=""
-  if [ "$classification" = "authorization-required" ]; then
-    echo "INFO: $status_prefix: authorization-required; Run exactly: openclaw mcp login $server_name"
-    return 0
-  fi
-  if [ "$command_status" != "0" ]; then
-    echo "WARN: $status_prefix: probe failed (status unavailable)"
-    return 0
-  fi
-
-  output=""
-  command_status=0
-  output=$(PATH="$image_path" "$timeout_bin" 45s "$openclaw_bin" mcp doctor "$server_name" --probe --json 2>&1) || command_status=$?
-  classification=$(printf '%s' "$output" | /usr/bin/node -e '
-let input = "";
-process.stdin.on("data", (chunk) => { input += chunk; });
-process.stdin.on("end", () => {
-  const [name, exitCode] = process.argv.slice(1);
   function selected(report) {
-    return Array.isArray(report?.servers)
-      ? report.servers.find((entry) => entry?.name === name)
-      : report?.servers?.[name] ?? report;
+    if (!report || typeof report !== "object") return undefined;
+    if (Array.isArray(report.servers)) return report.servers.find((entry) => entry?.name === name);
+    return report.servers?.[name];
   }
   function needsAuth(value) {
     if (!value || typeof value !== "object") return false;
-    if (value.requiresAuthorization === true || value.state === "authorization-required") return true;
+    if (value.requiresAuthorization === true) return true;
+    if (typeof value.state === "string" && /^(authorization-required|pending-authorization)$/i.test(value.state)) return true;
     return Object.values(value).some((entry) => needsAuth(entry));
-  }
-  function toolCount(value) {
-    if (!value || typeof value !== "object") return undefined;
-    if (Number.isInteger(value.tools) && value.tools >= 0) return value.tools;
-    if (Array.isArray(value.tools)) return value.tools.length;
-    if (Number.isInteger(value.toolCount) && value.toolCount >= 0) return value.toolCount;
-    for (const entry of Object.values(value)) {
-      const count = toolCount(entry);
-      if (count !== undefined) return count;
-    }
-    return undefined;
   }
   let report;
   try { report = JSON.parse(input); } catch {}
   const server = selected(report);
-  if (needsAuth(server) || /authorization-required|requires (?:additional )?OAuth authorization|run openclaw mcp login/i.test(input)) {
-    process.stdout.write("authorization-required\n");
+  if (server !== undefined) {
+    if (needsAuth(server)) {
+      process.stdout.write("authorization-required\n");
+      return;
+    }
+    if (server.ok === true) {
+      process.stdout.write("connected\n");
+      return;
+    }
+    process.stdout.write("not-connected\n");
     return;
   }
-  const count = toolCount(server) ?? (() => {
-    const match = input.match(/(?:connected[^\n]*?)?\b(\d+)\s+tools?\b/i);
-    return match ? Number(match[1]) : undefined;
-  })();
-  if (exitCode === "0" && count !== undefined) process.stdout.write(`connected, ${count} tools\n`);
+  if (/authorization-required|pending-authorization|run openclaw mcp login/i.test(input)) {
+    process.stdout.write("authorization-required\n");
+  }
 });
-' "$server_name" "$command_status" 2>/dev/null) || classification=""
+' "$server_name" 2>/dev/null) || classification=""
+
+  if [ -z "$classification" ] && [ "$command_status" != "0" ]; then
+    echo "WARN: $status_prefix: status unavailable"
+    return 0
+  fi
 
   case "$classification" in
     authorization-required)
       echo "INFO: $status_prefix: authorization-required; Run exactly: openclaw mcp login $server_name"
       ;;
-    connected,*)
-      echo "INFO: $status_prefix: $classification"
+    connected)
+      echo "INFO: $status_prefix: connected"
       ;;
     *)
-      echo "WARN: $status_prefix: probe failed"
+      echo "WARN: $status_prefix: not connected (run openclaw mcp status --verbose)"
       ;;
   esac
 }
