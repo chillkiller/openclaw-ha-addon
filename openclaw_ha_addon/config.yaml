@@ -1,8 +1,8 @@
-# OpenClaw Home Assistant App v0.7.13.41 Configuration
+# OpenClaw Home Assistant App v0.7.13.42 Configuration
 # Full OpenClaw runtime with Ingress Web UI, web terminal, Assist pipeline
 # and MCP integration. Option reference lives in DOCS.md ("Configuration").
 name: OpenClaw Assistant
-version: "0.7.13.41"
+version: "0.7.13.42"
 slug: openclaw_ha_addon
 description: Agentic AI assistant for Home Assistant — full OpenClaw runtime with Ingress Web UI, web terminal, Assist pipeline and MCP integration
 url: https://github.com/chillkiller/openclaw-ha-addon
@@ -248,9 +248,10 @@ options:
     # failed gateway starts (openclaw.json snapshotted first). 0 disables.
     gateway_doctor_repair_max: 3
     # Timeout in seconds for one automatic repair run (300..7200).
-    # A shorter timeout cut the repair off mid-flight, so it never finished;
-    # 1800 s lets the full inspection set complete.
-    gateway_doctor_repair_timeout: 1800
+    # Thirteen multi-GB agent databases each need an integrity check before
+    # schema migration. The default funds that full set; every repair logs its
+    # measured duration so an explicit override can be sized from evidence.
+    gateway_doctor_repair_timeout: 7200
     # How many `doctor --fix` snapshots to keep. Every repair run snapshots the
     # complete agent database set (1-6 GB per run); without a limit the config
     # volume grows without bound and every snapshot copy pulls gigabytes

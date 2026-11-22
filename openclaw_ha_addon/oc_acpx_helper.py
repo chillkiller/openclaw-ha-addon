@@ -1609,6 +1609,42 @@ def deploy_plugins() -> bool:
     return ok
 
 
+def remove_legacy_codex_wrapper_artifacts() -> bool:
+    """Remove only the three files left by the retired Codex wrapper layout.
+
+    A symlink at a named path is unlinked itself, never followed. In
+    particular, ACPX's own ``codex-home`` is not part of the removal set.
+    """
+    targets = (
+        (ACPX_DIR / "codex-home-hcw", True),
+        (ACPX_DIR / "codex-acp-hcw-wrapper.mjs", False),
+        (ACPX_DIR / "adapter-paths.json", False),
+    )
+    ok = True
+    for target, directory_expected in targets:
+        try:
+            if target.is_symlink():
+                target.unlink()
+            elif not target.exists():
+                continue
+            elif directory_expected and target.is_dir():
+                # shutil.rmtree removes directory entries without following
+                # symlinks that point outside the named legacy directory.
+                shutil.rmtree(target)
+            elif not directory_expected and target.is_file():
+                target.unlink()
+            else:
+                log(f"WARN: legacy Codex wrapper artifact has an unexpected type; leaving it untouched: {target}")
+                ok = False
+                continue
+        except OSError as exc:
+            log(f"ERROR: could not remove legacy Codex wrapper artifact {target}: {exc}")
+            ok = False
+            continue
+        log(f"INFO: removed legacy Codex wrapper artifact {target}")
+    return ok
+
+
 def migrate_retired_binding_installation() -> bool:
     """Run only the unconditional retired-plugin upgrade maintenance.
 
@@ -1622,7 +1658,8 @@ def migrate_retired_binding_installation() -> bool:
     migrate_legacy_harnesses_config(enable_fresh_entry=False)
     ok = remove_retired_binding_installation()
     ok = remove_native_codex_plugin_registration() and ok
-    return prune_native_codex_managed_project() and ok
+    ok = prune_native_codex_managed_project() and ok
+    return remove_legacy_codex_wrapper_artifacts() and ok
 
 
 def install_acpx_npm_project() -> bool:

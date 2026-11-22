@@ -14,6 +14,8 @@ Based on patterns from coollabsio/configure.js + techartdev oc_config_helper.py.
 import json
 import os
 import re
+import shutil
+import sqlite3
 import sys
 from pathlib import Path
 
@@ -75,6 +77,144 @@ def write_config(cfg):
         if temp_path is not None:
             temp_path.unlink(missing_ok=True)
         return False
+
+
+def migrate_retired_heartbeat_config():
+    """Remove the one configuration key retired by OpenClaw 2026.11.6.
+
+    The pre-change snapshot deliberately uses the same UTC timestamped
+    ``openclaw.json.pre-doctor-*`` naming as the automatic repair path. A
+    successful second run has no key to remove and therefore writes no backup.
+    """
+    cfg = read_config()
+    if cfg is None:
+        return True
+    agents = cfg.get("agents") if isinstance(cfg, dict) else None
+    defaults = agents.get("defaults") if isinstance(agents, dict) else None
+    if not isinstance(defaults, dict) or "heartbeat" not in defaults:
+        return True
+
+    import datetime
+
+    stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d-%H%M%S")
+    backup = CONFIG_PATH.with_name(f"{CONFIG_PATH.name}.pre-doctor-{stamp}")
+    if backup.exists():
+        # Do not overwrite an independent repair snapshot created in the same
+        # second. The fractional suffix is only a collision guard.
+        stamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d-%H%M%S-%f")
+        backup = CONFIG_PATH.with_name(f"{CONFIG_PATH.name}.pre-doctor-{stamp}")
+    try:
+        shutil.copy2(CONFIG_PATH, backup)
+    except OSError as exc:
+        print(f"ERROR: Could not snapshot openclaw.json before retiring agents.defaults.heartbeat: {exc}", file=sys.stderr)
+        return False
+
+    del defaults["heartbeat"]
+    if not write_config(cfg):
+        print("ERROR: Could not remove retired key agents.defaults.heartbeat; the original config remains active", file=sys.stderr)
+        return False
+    print(
+        "INFO: Retired configuration key agents.defaults.heartbeat removed; "
+        f"the runtime removed the heartbeat feature. Pre-change snapshot: {backup}"
+    )
+    return True
+
+
+def _pid_is_alive(pid):
+    """Return False only for a definitely absent process, True when alive/unknown."""
+    if isinstance(pid, bool) or not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except OSError:
+        # An unusual process-query failure is not proof that the owner died.
+        return True
+    return True
+
+
+def cleanup_stale_state_leases(state_db_path=None):
+    """Delete only lease rows whose recorded owner process is definitely dead.
+
+    OpenClaw stores state-lease process facts in payload_json.owner.pid and
+    agent-database lease pids in agent_database_leases.owner_pid. Both tables
+    live in the shared state database; agent content databases are never
+    opened or modified by this cleanup.
+    """
+    if state_db_path is None:
+        config_dir = Path(os.environ.get("OPENCLAW_CONFIG_DIR", str(CONFIG_PATH.parent)))
+        state_db_path = config_dir / "state" / "openclaw.sqlite"
+    state_db_path = Path(state_db_path)
+    if not state_db_path.is_file():
+        return True
+
+    removed = []
+    try:
+        with sqlite3.connect(str(state_db_path), timeout=5) as conn:
+            conn.execute("PRAGMA busy_timeout=5000")
+            tables = {
+                row[0]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('state_leases', 'agent_database_leases')"
+                )
+            }
+            with conn:
+                if "state_leases" in tables:
+                    columns = {row[1] for row in conn.execute("PRAGMA table_info(state_leases)")}
+                    required = {"scope", "lease_key", "owner", "payload_json"}
+                    if required.issubset(columns):
+                        rows = conn.execute(
+                            "SELECT scope, lease_key, owner, payload_json FROM state_leases"
+                        ).fetchall()
+                        for scope, lease_key, owner, payload_json in rows:
+                            try:
+                                payload = json.loads(payload_json) if payload_json else None
+                            except (json.JSONDecodeError, TypeError):
+                                continue
+                            process_owner = payload.get("owner") if isinstance(payload, dict) else None
+                            pid = process_owner.get("pid") if isinstance(process_owner, dict) else None
+                            if _pid_is_alive(pid):
+                                continue
+                            if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+                                # Missing/malformed owner metadata is unknown,
+                                # not proof of death; leave that row untouched.
+                                continue
+                            cursor = conn.execute(
+                                "DELETE FROM state_leases WHERE scope=? AND lease_key=? AND owner=? AND payload_json=?",
+                                (scope, lease_key, owner, payload_json),
+                            )
+                            if cursor.rowcount == 1:
+                                removed.append(("state_leases", f"{scope}/{lease_key}", pid))
+
+                if "agent_database_leases" in tables:
+                    columns = {row[1] for row in conn.execute("PRAGMA table_info(agent_database_leases)")}
+                    if {"lease_id", "owner_pid"}.issubset(columns):
+                        rows = conn.execute(
+                            "SELECT lease_id, owner_pid FROM agent_database_leases"
+                        ).fetchall()
+                        for lease_id, pid in rows:
+                            if _pid_is_alive(pid):
+                                continue
+                            if not isinstance(pid, int) or isinstance(pid, bool) or pid <= 0:
+                                continue
+                            cursor = conn.execute(
+                                "DELETE FROM agent_database_leases WHERE lease_id=? AND owner_pid=?",
+                                (lease_id, pid),
+                            )
+                            if cursor.rowcount == 1:
+                                removed.append(("agent_database_leases", str(lease_id), pid))
+    except (OSError, sqlite3.Error) as exc:
+        print(f"ERROR: Could not check/remove stale state lease rows: {exc}", file=sys.stderr)
+        return False
+
+    for table, identity, pid in removed:
+        print(f"INFO: Removed stale {table} row {identity}; owner pid {pid} is dead")
+    if not removed:
+        print("INFO: No stale state or agent-database lease rows with a dead owner pid found")
+    return True
 
 
 def deep_merge(target, source):
@@ -527,6 +667,8 @@ def main():
         print("  set-mdns-settings <mode> [port] [hostname] [interface]")
         print("  apply-cron-settings <skip_missed_jobs:true|false>")
         print("  apply-blocked-hostnames <csv>")
+        print("  migrate-retired-heartbeat")
+        print("  cleanup-stale-leases")
         print("  cleanup-stale-config")
         print("  get <key>")
         print("  set <key> <value>")
@@ -622,6 +764,18 @@ def main():
             print("Usage: oc_config_helper.py apply-blocked-hostnames <csv>")
             sys.exit(1)
         sys.exit(0 if apply_blocked_hostnames(sys.argv[2]) else 1)
+
+    elif cmd == "migrate-retired-heartbeat":
+        if len(sys.argv) != 2:
+            print("Usage: oc_config_helper.py migrate-retired-heartbeat")
+            sys.exit(1)
+        sys.exit(0 if migrate_retired_heartbeat_config() else 1)
+
+    elif cmd == "cleanup-stale-leases":
+        if len(sys.argv) != 2:
+            print("Usage: oc_config_helper.py cleanup-stale-leases")
+            sys.exit(1)
+        sys.exit(0 if cleanup_stale_state_leases() else 1)
 
     elif cmd == "mdns-nginx-snippet":
         if len(sys.argv) not in (4, 5):

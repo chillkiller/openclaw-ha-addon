@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For a release-facing summary, see the root [CHANGELOG.md](../CHANGELOG.md).
 
+## [0.7.13.42] - 2026-11-22
+
+The upgrade path now migrates the retired heartbeat key automatically and performs doctor repairs without racing the gateway supervisor.
+
+### Fixed
+
+- **Retired heartbeat migration:** before the gateway starts, the app detects `agents.defaults.heartbeat`, writes a timestamped configuration snapshot, removes exactly that key with an atomic write, and logs the retirement. Other keys and the configuration file itself are preserved. A second start is a no-op and creates no additional snapshot, so a successful migration needs no manual doctor run. A snapshot or write failure is deliberately fail-closed: startup exits before the gateway and automatic repair, the original configuration remains preserved, and the error tells the operator to remove only `agents.defaults.heartbeat` and restart, or schedule that one-key removal for a maintenance window.
+- **Offline repair supervision:** automatic doctor repair now uses an atomic no-clobber create to acquire the same maintenance latch as a manual gateway hold before starting. Only a latch created by the automatic path is released, after both successful and failed repairs and during add-on shutdown. A pre-existing operator hold skips repair, remains byte-for-byte unchanged, and keeps the gateway down with a distinct status. After an owned repair, state and agent-database lease rows are checked individually and removed only when their recorded owner process is dead.
+- **Legacy wrapper cleanup:** upgrade maintenance removes only the obsolete wrapper-specific Codex home, its wrapper script and its adapter-path file when present. Named symlinks are unlinked without following them; the ACP-owned Codex home and unrelated files are preserved.
+
+### Changed
+
+- **Repair timing and option-read safety:** the built-in `gateway_doctor_repair_timeout` default is now 7200 seconds per invocation, while the existing operator override is retained. GNU timeout applies a 30-second kill grace after SIGTERM, making each invocation a hard bound; safe and full repair attempts log measured durations including any grace so operators can size the override for their database set. A failed `jq` read logs a warning and falls back to 7200 seconds rather than aborting startup under `set -euo pipefail`.
+
+---
+
 ## [0.7.13.41] — 2026-11-22
 
 OpenClaw and ACPX move to 2026.11.6, the separate native Codex plugin is retired, and an offline-testable release gate checks npm pin freshness.

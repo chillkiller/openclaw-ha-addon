@@ -244,13 +244,17 @@ ABORT_ON_UPGRADE_BACKUP_FAILURE=$(jq -r 'if has("abort_on_upgrade_backup_failure
 UPGRADE_BACKUP_KEEP=$(jq -r 'if has("upgrade_backup_keep") and (.upgrade_backup_keep != null) then (.upgrade_backup_keep|tonumber) else 3 end' "$OPTIONS_FILE")
 GW_DOCTOR_REPAIR_MAX=$(jq -r 'if has("gateway_doctor_repair_max") and (.gateway_doctor_repair_max != null) then (.gateway_doctor_repair_max|tonumber) else 3 end' "$OPTIONS_FILE")
 # Timeout for one automatic repair run (seconds). The repair has to finish: with
-# several agent databases the full inspection set takes far longer than 300 s,
-# and a shorter timeout killed the run mid-flight every time (measured on the
-# live add-on: both automatic runs stopped at exactly 301 s and 302 s and
-# always reported failure). Clamped to 300..7200 s.
-GW_DOCTOR_REPAIR_TIMEOUT=$(jq -r 'if has("gateway_doctor_repair_timeout") and (.gateway_doctor_repair_timeout != null) then (.gateway_doctor_repair_timeout|tonumber) else 1800 end' "$OPTIONS_FILE")
+# several agent databases the full inspection set takes far longer than 300 s.
+# Thirteen multi-GB agent databases each require an integrity check before the
+# schema migration, so the default funds two hours per repair invocation. The
+# measured duration is logged after every invocation to guide an explicit
+# operator override. Clamped to 300..7200 s.
+if ! GW_DOCTOR_REPAIR_TIMEOUT=$(jq -r 'if has("gateway_doctor_repair_timeout") and (.gateway_doctor_repair_timeout != null) then (.gateway_doctor_repair_timeout|tonumber) else 7200 end' "$OPTIONS_FILE"); then
+  GW_DOCTOR_REPAIR_TIMEOUT=7200
+  echo "WARN: Could not read gateway_doctor_repair_timeout from $OPTIONS_FILE; using the built-in default of 7200s." >&2
+fi
 case "$GW_DOCTOR_REPAIR_TIMEOUT" in
-  ''|*[!0-9]*) GW_DOCTOR_REPAIR_TIMEOUT=1800 ;;
+  ''|*[!0-9]*) GW_DOCTOR_REPAIR_TIMEOUT=7200 ;;
 esac
 if [ "$GW_DOCTOR_REPAIR_TIMEOUT" -lt 300 ]; then GW_DOCTOR_REPAIR_TIMEOUT=300; fi
 if [ "$GW_DOCTOR_REPAIR_TIMEOUT" -gt 7200 ]; then GW_DOCTOR_REPAIR_TIMEOUT=7200; fi
@@ -872,6 +876,7 @@ GW_PID=""
 GW_RELAY_PID=""
 NGINX_PID=""
 TTYD_PID=""
+GW_AUTO_DOCTOR_LATCH="false"
 # Grace period after a (re)start: the port binds ~1 s later. Without it the
 # watchdog fired inside that window and killed the freshly started ttyd.
 TTYD_GRACE_UNTIL=0
@@ -907,8 +912,23 @@ stop_pid_bounded() {
   wait "${pid}" 2>/dev/null || true
 }
 
+release_automatic_doctor_latch() {
+  [ "${GW_AUTO_DOCTOR_LATCH:-false}" = "true" ] || return 0
+  local flag="${GATEWAY_MAINTENANCE_FLAG:-${OPENCLAW_CONFIG_DIR}/.gateway-maintenance}"
+  if rm -f -- "$flag"; then
+    GW_AUTO_DOCTOR_LATCH="false"
+    echo "INFO: Automatic doctor repair released maintenance latch ($flag); gateway supervision may resume."
+    return 0
+  fi
+  echo "ERROR: Automatic doctor repair could not release maintenance latch ($flag); gateway remains held down for safety."
+  return 1
+}
+
 shutdown() {
   SHUTTING_DOWN="true"
+  # Only a latch acquired by the automatic repair is released here. An
+  # operator-owned maintenance hold is deliberately preserved across shutdown.
+  release_automatic_doctor_latch || true
   # Docker's stop budget is ~10 s; reserve 8 s for all children, 2 s for cleanup.
   SHUTDOWN_DEADLINE=$(( $(date +%s) + 8 ))
   echo "Shutdown requested; stopping services..."
@@ -1047,6 +1067,15 @@ fi
 
 if [ -f "$OPENCLAW_CONFIG_PATH" ]; then
   if [ -f "$HELPER_PATH" ]; then
+    # OpenClaw 2026.11.6 refuses to start while this retired key exists. Migrate
+    # it before any other helper or gateway start reads the configuration.
+    rc=0
+    python3 "$HELPER_PATH" migrate-retired-heartbeat || rc=$?
+    if [ "$rc" -ne 0 ]; then
+      echo "ERROR: Failed to retire agents.defaults.heartbeat; startup is deliberately fail-closed and the original configuration was preserved."
+      echo "ERROR: Remove only agents.defaults.heartbeat from $OPENCLAW_CONFIG_PATH and restart the app, or schedule that one-key removal for a maintenance window. Automatic doctor repair is not attempted for this migration failure."
+      exit "${rc}"
+    fi
     # Audit H2: `rc=$?` after `if !` captures the exit status of the negation
     # (always 0), so real helper failures logged "exit code 0" and exited 0 —
     # a silent crash-loop before nginx/ttyd start. Capture the helper's own rc.
@@ -2573,6 +2602,79 @@ GW_DOCTOR_REPAIR_RUNS=0
 GW_ADOPT_CONFIRM_TIMEOUT=300
 GW_DENIED_PIDS=""
 
+run_bounded_doctor_repair() {
+  local label="$1"
+  shift
+  local started=$SECONDS rc=0 elapsed
+  timeout --kill-after=30s "$GW_DOCTOR_REPAIR_TIMEOUT" openclaw doctor "$@" || rc=$?
+  elapsed=$((SECONDS - started))
+  echo "INFO: Doctor repair (${label}) measured duration: ${elapsed}s including any kill grace (exit code ${rc}; timeout ${GW_DOCTOR_REPAIR_TIMEOUT}s; kill grace 30s)."
+  return "$rc"
+}
+
+run_automatic_doctor_repair() {
+  # Use the exact same hold as `oc-gateway stop`: the supervisor cannot start a
+  # runtime while this function owns the state database for offline repair.
+  # noclobber makes creation atomic: an existing operator hold is never
+  # truncated, adopted, or released by the automatic path. Keep noclobber
+  # local to a subshell so the rest of the supervisor can still write files.
+  if ( set -o noclobber; : > "$GATEWAY_MAINTENANCE_FLAG" ) 2>/dev/null; then
+    GW_AUTO_DOCTOR_LATCH="true"
+  elif [ -e "$GATEWAY_MAINTENANCE_FLAG" ] || [ -L "$GATEWAY_MAINTENANCE_FLAG" ]; then
+    echo "NOTICE: Operator maintenance hold is present ($GATEWAY_MAINTENANCE_FLAG); automatic doctor repair NOT run and the gateway remains held down. Use 'oc-gateway resume' only after maintenance is complete."
+    return 75
+  else
+    echo "ERROR: Could not create maintenance latch ($GATEWAY_MAINTENANCE_FLAG); automatic doctor repair NOT run."
+    return 1
+  fi
+
+  echo "NOTICE: Gateway failed ${GW_CONSECUTIVE_FAILS} times in a row; running 'openclaw doctor --fix' (attempt ${GW_DOCTOR_REPAIR_RUNS}/${GW_DOCTOR_REPAIR_MAX})..."
+  echo "INFO: Automatic doctor repair holds maintenance latch ($GATEWAY_MAINTENANCE_FLAG); gateway stays down."
+
+  # Snapshot the live config first so the automatic repair stays reversible.
+  DOCTOR_STAMP="$(date -u +%Y%m%d-%H%M%S)"
+  cp -a "${OPENCLAW_CONFIG_DIR}/openclaw.json" "${OPENCLAW_CONFIG_DIR}/openclaw.json.pre-doctor-${DOCTOR_STAMP}" 2>/dev/null \
+    || echo "WARN: Could not snapshot openclaw.json before doctor --fix; proceeding without snapshot."
+  ls -1t "${OPENCLAW_CONFIG_DIR}"/openclaw.json.pre-doctor-* 2>/dev/null \
+    | tail -n +6 \
+    | while IFS= read -r old; do rm -f "$old" 2>/dev/null || true; done || true
+
+  if run_bounded_doctor_repair "safe migration" --fix --non-interactive --yes; then
+    echo "INFO: 'openclaw doctor --fix' completed."
+  else
+    echo "WARN: 'openclaw doctor --fix' exited non-zero — repair may be incomplete."
+    # Fallback: the non-interactive form only performs safe migrations, so a
+    # blocked agent-database lease can survive it. Retry once as a full repair,
+    # bounded and timed independently by the same operator-controlled budget.
+    echo "NOTICE: Retrying the repair as a full repair (openclaw doctor --fix --yes --force)…"
+    if run_bounded_doctor_repair "full repair" --fix --yes --force; then
+      echo "INFO: 'openclaw doctor --fix' (full repair) completed."
+    else
+      echo "WARN: 'openclaw doctor --fix' (full repair) exited non-zero — repair may be incomplete."
+    fi
+  fi
+
+  # A killed repair can leave a lease whose process no longer exists. Clean up
+  # only rows with a provably dead owner; live or unknown owners are preserved.
+  python3 "$HELPER_PATH" cleanup-stale-leases \
+    || echo "WARN: stale lease cleanup failed; live or unreadable lease rows were left untouched."
+
+  # Every repair writes a full agent-database capture. Keep only the newest N
+  # snapshots so retries cannot grow the configuration volume without bound.
+  DOCTOR_CAPTURE_DIR="$(dirname "$OPENCLAW_CONFIG_DIR")/.openclaw.update-captures"
+  if [ -d "$DOCTOR_CAPTURE_DIR" ]; then
+    OLD_CAPTURES=$(ls -1dt "$DOCTOR_CAPTURE_DIR"/doctor-* 2>/dev/null | tail -n "+$((GW_DOCTOR_CAPTURE_KEEP + 1))")
+    if [ -n "$OLD_CAPTURES" ]; then
+      echo "$OLD_CAPTURES" | while IFS= read -r old; do rm -rf "$old" 2>/dev/null || true; done
+      echo "INFO: Retained only the newest ${GW_DOCTOR_CAPTURE_KEEP} doctor snapshots."
+    fi
+  fi
+
+  # This runs after both successful and failed repairs. The shutdown trap also
+  # calls it if the add-on is stopped while a repair is in flight.
+  release_automatic_doctor_latch
+}
+
 while true; do
   GW_ADOPT_CLOCK_START=$SECONDS
   if [ "$GW_IS_CHILD" = "true" ]; then
@@ -2716,42 +2818,18 @@ while true; do
   # local modes (remote mode must not repair a foreign gateway).
   if [ "$GATEWAY_MODE" != "remote" ] && [ "$GW_CONSECUTIVE_FAILS" -ge 2 ] && [ "$GW_DOCTOR_REPAIR_RUNS" -lt "$GW_DOCTOR_REPAIR_MAX" ]; then
     GW_DOCTOR_REPAIR_RUNS=$((GW_DOCTOR_REPAIR_RUNS + 1))
-    echo "NOTICE: Gateway failed ${GW_CONSECUTIVE_FAILS} times in a row; running 'openclaw doctor --fix' (attempt ${GW_DOCTOR_REPAIR_RUNS}/${GW_DOCTOR_REPAIR_MAX})..."
-    # Snapshot the live config first so the automatic repair stays reversible.
-    DOCTOR_STAMP="$(date -u +%Y%m%d-%H%M%S)"
-    cp -a "${OPENCLAW_CONFIG_DIR}/openclaw.json" "${OPENCLAW_CONFIG_DIR}/openclaw.json.pre-doctor-${DOCTOR_STAMP}" 2>/dev/null \
-      || echo "WARN: Could not snapshot openclaw.json before doctor --fix; proceeding without snapshot."
-    ls -1t "${OPENCLAW_CONFIG_DIR}"/openclaw.json.pre-doctor-* 2>/dev/null \
-      | tail -n +6 \
-      | while IFS= read -r old; do rm -f "$old" 2>/dev/null || true; done || true
-    if timeout "$GW_DOCTOR_REPAIR_TIMEOUT" openclaw doctor --fix --non-interactive --yes; then
-      echo "INFO: 'openclaw doctor --fix' completed."
-    else
-      echo "WARN: 'openclaw doctor --fix' exited non-zero — repair may be incomplete."
-      # Fallback: the non-interactive form only performs safe migrations, so a
-      # blocked agent-database lease survives it — the state that kept the
-      # gateway from coming up. Retry once as a full repair, which is the form
-      # that releases the lease. Bounded by the same timeout.
-      echo "NOTICE: Retrying the repair as a full repair (openclaw doctor --fix --yes --force)…"
-      if timeout "$GW_DOCTOR_REPAIR_TIMEOUT" openclaw doctor --fix --yes --force; then
-        echo "INFO: 'openclaw doctor --fix' (full repair) completed."
-      else
-        echo "WARN: 'openclaw doctor --fix' (full repair) exited non-zero — repair may be incomplete."
-      fi
+    GW_AUTO_DOCTOR_RC=0
+    run_automatic_doctor_repair || GW_AUTO_DOCTOR_RC=$?
+    if [ "$GW_AUTO_DOCTOR_RC" -eq 75 ]; then
+      echo "NOTICE: Automatic doctor repair deferred to the existing operator maintenance hold."
+    elif [ "$GW_AUTO_DOCTOR_RC" -ne 0 ]; then
+      echo "ERROR: Automatic doctor repair could not finish safely (exit code ${GW_AUTO_DOCTOR_RC}); the maintenance hold is preserved if it could not be released."
     fi
-    # --- Doctor-Snapshots aufraeumen ----------------------------------------
-    # Jeder Reparaturlauf legt einen Snapshot des kompletten Agent-DB-Satzes an
-    # (1-6 GB je Lauf). Ohne Begrenzung waechst /config unbegrenzt, und jeder
-    # Snapshot-Kopiervorgang zieht Gigabyte durch den Page-Cache (RAM). Es
-    # bleiben die neuesten N Snapshots erhalten, damit die manuelle Recovery den
-    # letzten Reparatur-Zustand weiterhin findet.
-    DOCTOR_CAPTURE_DIR="$(dirname "$OPENCLAW_CONFIG_DIR")/.openclaw.update-captures"
-    if [ -d "$DOCTOR_CAPTURE_DIR" ]; then
-      OLD_CAPTURES=$(ls -1dt "$DOCTOR_CAPTURE_DIR"/doctor-* 2>/dev/null | tail -n "+$((GW_DOCTOR_CAPTURE_KEEP + 1))")
-      if [ -n "$OLD_CAPTURES" ]; then
-        echo "$OLD_CAPTURES" | while IFS= read -r old; do rm -rf "$old" 2>/dev/null || true; done
-        echo "INFO: Doctor-Snapshots auf die neuesten ${GW_DOCTOR_CAPTURE_KEEP} bereinigt."
-      fi
+    # If latch creation or release failed, never fall through to a runtime start
+    # while the shared maintenance flag still requests a held-down gateway.
+    if [ -f "$GATEWAY_MAINTENANCE_FLAG" ]; then
+      echo "NOTICE: Maintenance latch remains present after the repair gate; gateway stays held down."
+      continue
     fi
   elif [ "$GW_CONSECUTIVE_FAILS" -ge 2 ]; then
     echo "WARN: doctor repair budget exhausted (runs=${GW_DOCTOR_REPAIR_RUNS}/${GW_DOCTOR_REPAIR_MAX}) or remote mode; continuing with backoff only."

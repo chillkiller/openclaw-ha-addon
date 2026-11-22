@@ -1053,6 +1053,36 @@ Home Assistant checks for app updates automatically. When an update is available
 - Bundled skills stay package-local; managed skills in `/config/.openclaw/skills`
   are operator-owned and keep precedence over bundled skills
 
+**A normal upgrade from an earlier release needs no manual doctor run.** Before the
+gateway starts, the app checks for the retired `agents.defaults.heartbeat`
+configuration key. If present, it writes a timestamped configuration snapshot,
+removes only that key, and logs the migration. OpenClaw removed this heartbeat
+feature; use an editable automation for a custom heartbeat workflow. A later
+restart finds nothing to migrate and does not create another snapshot.
+
+**Migration failure is deliberately fail-closed.** If the snapshot or atomic
+write fails, the app stops startup before the gateway and does not enter the
+automatic repair loop. The original configuration is preserved. The error log
+names `agents.defaults.heartbeat`; remove only that key from `openclaw.json`
+and restart the app, or schedule the same one-key removal for a maintenance
+window. This avoids starting with a configuration key the runtime refuses.
+
+If repeated gateway start failures trigger an automatic repair, the app now
+atomically creates the same maintenance latch as `oc-gateway stop`, but only
+when no latch exists. A pre-existing operator hold is left unchanged, repair
+is skipped, and the gateway remains down. Only an automatically created latch
+is released after repair or add-on shutdown.
+The gateway therefore cannot restart and read its state while doctor owns the
+database for offline maintenance. After the repair, the app removes only state
+or agent-database lease rows whose recorded owner process is dead, preserves
+live owners, and releases its own hold after both successful and failed repairs.
+Each repair invocation logs its measured duration, including any kill grace.
+The default timeout is 7200 seconds per invocation, sized for a full set of
+large agent databases. A doctor process that ignores SIGTERM is killed after a
+further 30 seconds, so the budget is a hard bound. If the option cannot be
+read, the app logs a warning and uses the default instead of aborting startup;
+`gateway_doctor_repair_timeout` remains available as an operator override.
+
 **Important — do not run OpenClaw's own update inside the container**
 
 The OpenClaw runtime inside this add-on is pinned by the image. Never run
@@ -1393,6 +1423,12 @@ web terminal stay reachable, and the automatic doctor-repair gate is held back s
 you can run doctor manually. The latch deliberately survives an add-on restart
 (an explicit operator hold is not undone by a supervisor bounce) — always pair a
 `stop` with a `resume`.
+
+The automatic repair uses this same latch only when it can create it atomically.
+If your operator hold already exists, automatic repair is skipped and the latch
+and its contents are preserved. Otherwise, the app holds the gateway down
+throughout doctor's offline database maintenance and logs when it releases the
+latch it created.
 
 **Full add-on restart without the HA UI** (e.g. from the terminal):
 `oc-gateway restart`.

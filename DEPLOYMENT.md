@@ -4,6 +4,7 @@
 
 | App Version | OpenClaw Version | Release Date |
 |--------------|------------------|---------------|
+| 0.7.13.42 | 2026.11.6 | 2026-11-22 |
 | 0.7.13.41 | 2026.11.6 | 2026-11-22 |
 | 0.7.13.40 | 2026.11.3 | 2026-11-22 |
 | 0.7.13.39 | 2026.11.3 | 2026-11-22 |
@@ -54,6 +55,8 @@
 | 0.7.5.1 | 2026.4.15 | 2026-04-20 |
 
 ### Version notes
+
+> **Note (0.7.13.42):** a normal upgrade needs no manual doctor run. The app snapshots the configuration and removes only the retired `agents.defaults.heartbeat` key before the gateway starts. If that snapshot or atomic write fails, startup is deliberately fail-closed: the original configuration is preserved and neither the gateway nor automatic repair starts. Remove only `agents.defaults.heartbeat` from `openclaw.json` and restart the app, or schedule that one-key removal for a maintenance window. Automatic repair creates the maintenance latch only when absent and releases only its own latch; an existing operator hold remains unchanged and skips repair. Repairs remove only lease rows with dead owner processes, log durations including any 30-second kill grace, and enforce the configured timeout as a hard bound.
 
 > **Note (0.7.13.39):** image rebuild required. The Supervisor manager role applies after the first start; existing harness configuration is migrated once and operator edits are preserved.
 

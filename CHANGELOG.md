@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Each entry summarizes user-visible changes. Full engineering notes:
 [openclaw_ha_addon/CHANGELOG.md](openclaw_ha_addon/CHANGELOG.md).
 
+## [0.7.13.42] - 2026-11-22
+
+Existing installations upgrade cleanly to OpenClaw 2026.11.6 with automatic retired-configuration migration and safer gateway repair.
+
+### Fixed
+
+- **Existing heartbeat configuration no longer prevents a normal upgrade from starting.** The app snapshots `openclaw.json` and removes only the retired `agents.defaults.heartbeat` key before startup. A successful migration needs no manual doctor run, all other configuration stays intact, and subsequent starts do not create duplicate snapshots. If the snapshot or atomic write fails, startup deliberately stops before the gateway or automatic repair, with the original configuration preserved. Remove only `agents.defaults.heartbeat` and restart the app, or schedule that one-key removal for a maintenance window. Custom heartbeat workflows can be recreated as editable automations.
+- **Automatic repair no longer races gateway restarts or removes an operator hold.** It atomically creates the maintenance latch only when absent, keeps the gateway down throughout offline database maintenance, and releases only the latch it created. If an operator hold already exists, automatic repair is skipped and that hold and its contents are preserved. Lease rows left by a dead repair or gateway process are removed individually; live owners are preserved.
+
+### Changed
+
+- **The automatic repair timeout now defaults to 7200 seconds per invocation and has a hard bound.** This funds integrity checks and schema migrations for a full set of large agent databases. A process that ignores SIGTERM is killed after an additional 30-second grace period, and the logged measured duration includes that grace. If the option cannot be read, startup logs a warning and uses 7200 seconds instead of aborting; `gateway_doctor_repair_timeout` remains available as an operator override.
+
+### Removed
+
+- **Three obsolete Codex wrapper artifacts are cleaned up automatically.** Only the old wrapper-specific home, wrapper script and adapter-path file are removed when present. The ACP-owned Codex home and all unrelated files remain untouched.
+
+---
+
 ## [0.7.13.41] — 2026-11-22
 
 The bundled OpenClaw runtime and ACP harness are updated to 2026.11.6, release checks now prevent stale runtime pins, and the separate native Codex plugin is retired.

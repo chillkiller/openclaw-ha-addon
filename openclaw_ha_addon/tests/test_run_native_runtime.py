@@ -7,6 +7,7 @@ import fnmatch
 import json
 import os
 from pathlib import Path
+import re
 import shlex
 import shutil
 import signal
@@ -114,8 +115,42 @@ class SectionedDoctorOptionsTests(unittest.TestCase):
         self.assertNotEqual(broken, RUN_TEXT)
         self.assertEqual(
             self.consume(broken),
-            {"REPAIR_MAX": 5, "REPAIR_TIMEOUT": 1800, "CAPTURE_KEEP": 2},
+            {"REPAIR_MAX": 5, "REPAIR_TIMEOUT": 7200, "CAPTURE_KEEP": 2},
         )
+
+
+class DoctorRepairOptionSafetyTests(unittest.TestCase):
+    def test_failed_timeout_read_uses_default_without_aborting_under_strict_shell(self) -> None:
+        block = shell_block(
+            "if ! GW_DOCTOR_REPAIR_TIMEOUT=",
+            "\n# How many `doctor --fix` snapshots",
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            fake_bin = root / "bin"
+            fake_bin.mkdir()
+            jq = fake_bin / "jq"
+            jq.write_text("#!/usr/bin/env bash\nexit 42\n", encoding="utf-8")
+            jq.chmod(0o755)
+            options = root / "options.json"
+            options.write_text("{}\n", encoding="utf-8")
+            result = subprocess.run(
+                ["bash", "-c", (
+                    "set -euo pipefail\n"
+                    f"OPTIONS_FILE={shlex.quote(str(options))}\n"
+                    f"{block}\n"
+                    "printf 'REPAIR_TIMEOUT=%s\\n' \"$GW_DOCTOR_REPAIR_TIMEOUT\"\n"
+                )],
+                text=True,
+                capture_output=True,
+                timeout=15,
+                check=False,
+                env={**os.environ, "PATH": f"{fake_bin}:{os.environ['PATH']}"},
+            )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("REPAIR_TIMEOUT=7200", result.stdout)
+        self.assertIn("WARN: Could not read gateway_doctor_repair_timeout", result.stderr)
+        self.assertIn("built-in default of 7200s", result.stderr)
 
 
 class RetiredBindingRunGateTests(unittest.TestCase):
@@ -256,6 +291,166 @@ raise SystemExit(helper.main())
         self.assertTrue(self.external_legacy.exists())
         self.assertTrue(self.bundled_legacy.exists())
         self.assertNotIn("harnesses", cfg["plugins"]["entries"]["harness-config-writer"]["config"])
+
+
+class AutomaticDoctorRepairTests(unittest.TestCase):
+    FUNCTIONS = [
+        "run_bounded_doctor_repair",
+        "release_automatic_doctor_latch",
+        "run_automatic_doctor_repair",
+    ]
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.config = self.root / "config" / ".openclaw"
+        self.config.mkdir(parents=True)
+        (self.config / "openclaw.json").write_text('{"keep": true}\n', encoding="utf-8")
+        self.latch = self.config / ".gateway-maintenance"
+        self.calls = self.root / "doctor-calls"
+        self.bin = self.root / "bin"
+        self.bin.mkdir()
+        openclaw = self.bin / "openclaw"
+        openclaw.write_text(
+            "#!/usr/bin/env bash\n"
+            "if [ -f \"$GATEWAY_MAINTENANCE_FLAG\" ]; then held=held; else held=missing; fi\n"
+            "printf '%s|latch=%s\\n' \"$*\" \"$held\" >> \"$DOCTOR_CALLS\"\n"
+            "if [ \"${FAKE_DOCTOR_IGNORE_TERM:-false}\" = true ] && "
+            "[ \"$*\" = 'doctor --fix --non-interactive --yes' ]; then\n"
+            "  trap '' TERM\n"
+            "  while :; do sleep 1; done\n"
+            "fi\n"
+            "exit \"${FAKE_DOCTOR_RC:-0}\"\n",
+            encoding="utf-8",
+        )
+        openclaw.chmod(0o755)
+        self.env = os.environ.copy()
+        self.env.update(
+            PATH=f"{self.bin}:{self.env['PATH']}",
+            OPENCLAW_CONFIG_DIR=str(self.config),
+            GATEWAY_MAINTENANCE_FLAG=str(self.latch),
+            HELPER_PATH=str(ADDON_DIR / "oc_config_helper.py"),
+            FAKE_OPENCLAW=str(openclaw),
+            DOCTOR_CALLS=str(self.calls),
+            GW_DOCTOR_REPAIR_TIMEOUT="7200",
+            GW_DOCTOR_REPAIR_RUNS="1",
+            GW_DOCTOR_REPAIR_MAX="3",
+            GW_DOCTOR_CAPTURE_KEEP="2",
+            GW_CONSECUTIVE_FAILS="2",
+            GW_AUTO_DOCTOR_LATCH="false",
+        )
+
+    def repair(self, *, returncode: int = 0) -> subprocess.CompletedProcess[str]:
+        env = self.env.copy()
+        env["FAKE_DOCTOR_RC"] = str(returncode)
+        # Intercept the timeout boundary inside Bash. Neither the system
+        # `timeout` nor an installed `openclaw` binary can escape this fixture.
+        body = (
+            'timeout() { [ "$1" = "--kill-after=30s" ] || return 99; shift; '
+            'local budget="$1"; shift; '
+            '[ "$budget" = "$GW_DOCTOR_REPAIR_TIMEOUT" ] || return 98; '
+            '[ "$1" = openclaw ] || return 97; shift; '
+            '"$FAKE_OPENCLAW" "$@"; }\n'
+            'run_automatic_doctor_repair'
+        )
+        return run_bash(self.FUNCTIONS, body, env=env)
+
+    def test_successful_repair_holds_and_releases_shared_latch_and_logs_duration(self) -> None:
+        result = self.repair()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = self.calls.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(calls, ["doctor --fix --non-interactive --yes|latch=held"])
+        self.assertFalse(self.latch.exists())
+        self.assertIn("Automatic doctor repair holds maintenance latch", result.stdout)
+        self.assertIn("Automatic doctor repair released maintenance latch", result.stdout)
+        self.assertIn("Doctor repair (safe migration) measured duration:", result.stdout)
+        self.assertIn("exit code 0; timeout 7200s", result.stdout)
+        self.assertIn("kill grace 30s", result.stdout)
+        self.assertEqual(len(list(self.config.glob("openclaw.json.pre-doctor-*"))), 1)
+
+    def test_failed_safe_and_full_repairs_still_release_latch_and_log_each_duration(self) -> None:
+        result = self.repair(returncode=1)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        calls = self.calls.read_text(encoding="utf-8").splitlines()
+        self.assertEqual(calls, [
+            "doctor --fix --non-interactive --yes|latch=held",
+            "doctor --fix --yes --force|latch=held",
+        ])
+        self.assertFalse(self.latch.exists())
+        self.assertEqual(result.stdout.count("measured duration:"), 2)
+        self.assertEqual(result.stdout.count("exit code 1; timeout 7200s"), 2)
+        self.assertIn("Automatic doctor repair released maintenance latch", result.stdout)
+
+    def test_existing_operator_latch_is_unchanged_and_repair_is_skipped(self) -> None:
+        operator_content = b"operator-owned\nmaintenance-in-progress\n"
+        self.latch.write_bytes(operator_content)
+        result = run_bash(
+            self.FUNCTIONS,
+            "run_automatic_doctor_repair",
+            env=self.env,
+        )
+        self.assertEqual(result.returncode, 75, result.stdout + result.stderr)
+        self.assertTrue(self.latch.exists())
+        self.assertEqual(self.latch.read_bytes(), operator_content)
+        self.assertFalse(self.calls.exists(), "doctor must not run under an operator hold")
+        self.assertFalse(list(self.config.glob("openclaw.json.pre-doctor-*")))
+        self.assertIn("Operator maintenance hold is present", result.stdout)
+        self.assertIn("automatic doctor repair NOT run", result.stdout)
+        self.assertNotIn("released maintenance latch", result.stdout)
+
+    def test_sigterm_ignoring_repair_is_killed_within_grace_and_latch_is_released(self) -> None:
+        env = {
+            **self.env,
+            "GW_DOCTOR_REPAIR_TIMEOUT": "1",
+            "FAKE_DOCTOR_IGNORE_TERM": "true",
+            "REAL_TIMEOUT": shutil.which("timeout") or "/usr/bin/timeout",
+        }
+        # Preserve the production timeout arguments, but substitute the fake
+        # doctor's absolute path before using the real GNU timeout binary.
+        # This keeps the hermetic fixture isolated even on a developer host
+        # that also has an OpenClaw CLI installed.
+        body = (
+            'timeout() { local kill_after="$1" budget="$2"; shift 2; '
+            '[ "$kill_after" = "--kill-after=30s" ] || return 99; '
+            '[ "$1" = openclaw ] || return 97; shift; '
+            '"$REAL_TIMEOUT" "$kill_after" "$budget" "$FAKE_OPENCLAW" "$@"; }\n'
+            'run_automatic_doctor_repair'
+        )
+        started = time.monotonic()
+        result = run_bash(
+            self.FUNCTIONS,
+            body,
+            env=env,
+            timeout=45,
+        )
+        elapsed = time.monotonic() - started
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertLess(elapsed, 40, "one second plus the 30 second kill grace must be a hard bound")
+        self.assertFalse(self.latch.exists())
+        self.assertTrue(self.calls.exists(), result.stdout + result.stderr)
+        self.assertEqual(self.calls.read_text(encoding="utf-8").splitlines(), [
+            "doctor --fix --non-interactive --yes|latch=held",
+            "doctor --fix --yes --force|latch=held",
+        ])
+        duration = re.search(r"Doctor repair \(safe migration\) measured duration: (\d+)s", result.stdout)
+        self.assertIsNotNone(duration, result.stdout)
+        self.assertGreaterEqual(int(duration.group(1)), 30)
+        self.assertLessEqual(int(duration.group(1)), 35)
+        self.assertIn("kill grace 30s", result.stdout)
+        self.assertIn("Automatic doctor repair released maintenance latch", result.stdout)
+
+    def test_shutdown_releases_only_an_automatically_owned_latch(self) -> None:
+        shutdown_source = shell_function("shutdown")
+        self.assertIn("release_automatic_doctor_latch || true", shutdown_source)
+        result = run_bash(
+            ["release_automatic_doctor_latch"],
+            "release_automatic_doctor_latch",
+            env={**self.env, "GW_AUTO_DOCTOR_LATCH": "false"},
+        )
+        self.latch.touch()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(self.latch.exists(), "an operator-owned latch must survive shutdown cleanup")
 
 
 class UpgradeBackupTests(unittest.TestCase):
