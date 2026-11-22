@@ -49,6 +49,7 @@ class ConfigureHaMcpTests(unittest.TestCase):
         self.mcp_url = "https://community.example.test/private-test-connect-path"
         self.community_name = "ha-mcp-community-example-test"
         self.oauth_url = "http://ha.example.test/api/mcp"
+        self.gateway_origin = "https://192.0.2.20:18789"
         self.openclaw_config = self.config / "openclaw.json"
         self.openclaw_config.write_text("{}\n", encoding="utf-8")
         self.api_token_file = self.root / "secrets" / "homeassistant.token"
@@ -72,6 +73,7 @@ class ConfigureHaMcpTests(unittest.TestCase):
             "MCP_ENABLED": "true",
             "HA_OFFICIAL_MCP_URL": "",
             "HA_OFFICIAL_MCP_ENABLED": "false",
+            "GATEWAY_PUBLIC_ORIGIN": self.gateway_origin,
             "OPENCLAW_CONFIG_PATH": str(self.openclaw_config),
             "MCP_TEST_LOG": str(self.log),
             "STUB_CURL_STATUS": "200",
@@ -471,8 +473,8 @@ raise SystemExit(0)
             "transport": "streamable-http",
             "auth": "oauth",
             "oauth": {
-                "clientMetadataUrl": "https://clawhub.ai/oauth/clients/openclaw.json",
-                "redirectUrl": "http://localhost:8989/oauth/callback",
+                "clientMetadataUrl": f"{self.gateway_origin}/oauth/client-metadata.json",
+                "redirectUrl": f"{self.gateway_origin}/oauth/mcp/callback",
             },
             "connectionTimeoutMs": 10000,
             "requestTimeoutMs": 30000,
@@ -580,7 +582,7 @@ raise SystemExit(0)
         self.assertEqual(self.calls("openclaw"), [])
         self.assertEqual(len(self.calls("curl")), 1)
 
-    def test_way_2_authorization_required_prints_exact_login_and_no_fallback(self) -> None:
+    def test_way_2_authorization_required_prints_control_ui_sign_in_and_no_fallback(self) -> None:
         env = self.env.copy()
         env["MCP_URLS"] = ""
         env["HA_OFFICIAL_MCP_URL"] = self.oauth_url
@@ -594,16 +596,43 @@ raise SystemExit(0)
         self.assert_booted(result)
         self.assert_no_forbidden_tools()
         self.assertIn("Home Assistant connection way 2 (official MCP, OAuth): authorization-required", result.stdout)
-        self.assertIn("Run exactly: openclaw mcp login ha-official", result.stdout)
+        self.assertIn(f"open the Control UI at {self.gateway_origin}/settings/mcp", result.stdout)
+        self.assertIn('choose "Sign in" for ha-official', result.stdout)
+        self.assertNotIn("openclaw mcp login", result.stdout)
         connection_lines = [
             line for line in result.stdout.splitlines() if "Home Assistant connection" in line
         ]
         self.assertEqual(connection_lines, [
             "INFO: Home Assistant connection way 2 (official MCP, OAuth): "
-            "authorization-required; Run exactly: openclaw mcp login ha-official"
+            f"authorization-required; open the Control UI at {self.gateway_origin}/settings/mcp "
+            'and choose "Sign in" for ha-official'
         ])
         self.assertNotIn("connected", result.stdout)
         self.assertEqual([call["args"] for call in self.calls("openclaw")], [["mcp", "status", "--verbose", "--json"]])
+        self.assertEqual(self.calls("curl"), [])
+
+    def test_way_2_authorization_required_without_origin_keeps_sign_in_hint(self) -> None:
+        env = self.env.copy()
+        env["MCP_URLS"] = ""
+        env["HA_OFFICIAL_MCP_URL"] = self.oauth_url
+        env["HA_OFFICIAL_MCP_ENABLED"] = "true"
+        env["GATEWAY_PUBLIC_ORIGIN"] = ""
+        env["STUB_OPENCLAW_AUTH_REQUIRED"] = "1"
+
+        result = self.configure(env=env)
+
+        self.assert_booted(result)
+        self.assert_no_forbidden_tools()
+        connection_lines = [
+            line for line in result.stdout.splitlines() if "Home Assistant connection" in line
+        ]
+        self.assertEqual(connection_lines, [
+            "INFO: Home Assistant connection way 2 (official MCP, OAuth): "
+            'authorization-required; open the Control UI and choose "Sign in" for ha-official'
+        ])
+        self.assertNotIn("/settings/mcp", result.stdout)
+        self.assertNotIn("https://", result.stdout)
+        self.assertNotIn("openclaw mcp login", result.stdout)
         self.assertEqual(self.calls("curl"), [])
 
     def test_startup_never_runs_the_offline_doctor_probe(self) -> None:
@@ -804,6 +833,22 @@ raise SystemExit(0)
         self.assertEqual(definition["url"], "http://homeassistant.local:8123/api/mcp")
         self.assertEqual(definition["auth"], "oauth")
         self.assertEqual(self.calls("curl"), [])
+
+    def test_way_2_empty_url_uses_the_lan_host_of_home_assistant(self) -> None:
+        env = self.env.copy()
+        env["MCP_URLS"] = ""
+        env["HA_OFFICIAL_MCP_URL"] = ""
+        env["HA_OFFICIAL_MCP_ENABLED"] = "true"
+        env["LAN_IP"] = "192.0.2.42"
+
+        result = self.configure(env=env)
+
+        self.assert_booted(result)
+        definition = json.loads(self.openclaw_config.read_text(encoding="utf-8"))["mcp"]["servers"]["ha-official"]
+        # The authorization server metadata carries Home Assistant's internal
+        # URL as issuer, so the connect URL has to use the same host.
+        self.assertEqual(definition["url"], "http://192.0.2.42:8123/api/mcp")
+        self.assertEqual(definition["auth"], "oauth")
 
     def test_way_3_list_trims_whitespace_and_skips_empty_entries(self) -> None:
         first_url = "https://trim-one.example.test/first-secret"

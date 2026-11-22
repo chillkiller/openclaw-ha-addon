@@ -144,6 +144,16 @@ def main():
             proxy_set_header Connection $connection_upgrade;
         }}
 
+        # OAuth client ID metadata document for the official Home Assistant MCP
+        # server. Home Assistant validates the OAuth client the IndieAuth way:
+        # the redirect URI has to share scheme and netloc with the client ID.
+        # The document is regenerated on every boot because it carries the origin.
+        location = /oauth/client-metadata.json {{
+            alias /config/oauth/client-metadata.json;
+            default_type application/json;
+            add_header Cache-Control "no-store";
+        }}
+
         # Download the local CA certificate (install on phone for trusted access)
         location = /cert/ca.crt {{
             alias {certs_dir}/ca.crt;

@@ -921,6 +921,113 @@ printf 'PID=%s\nEXE=%s\nVERSION=%s\nEXPECTED=%s\n' "$pid" "$exe" "$version" "$ex
         self.assertFalse(decoy_marker.exists(), "persisted Homebrew Node shadowed the image runtime")
 
 
+class OAuthClientIdentityTests(unittest.TestCase):
+    BLOCK_START = 'GATEWAY_PUBLIC_ORIGIN=""'
+    BLOCK_END = "\n\n# --- Server cert"
+
+    def setUp(self) -> None:
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.cert_dir = self.root / "certs"
+        self.cert_dir.mkdir()
+        self.metadata_file = self.root / "oauth" / "client-metadata.json"
+
+    def run_identity_block(
+        self,
+        *,
+        network_mode: str = "lan_https",
+        lan_ip: str = "192.0.2.20",
+        gateway_port: str = "18789",
+        public_url: str = "",
+        ca_exists: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
+        if ca_exists:
+            (self.cert_dir / "ca.crt").write_text("test CA fixture\n", encoding="utf-8")
+        block = shell_block(self.BLOCK_START, self.BLOCK_END)
+        original_assignment = 'CLIENT_METADATA_FILE="/config/oauth/client-metadata.json"'
+        self.assertIn(original_assignment, block)
+        block = block.replace(
+            original_assignment,
+            f"CLIENT_METADATA_FILE={shlex.quote(str(self.metadata_file))}",
+            1,
+        )
+        script = (
+            "set -euo pipefail\n"
+            f"CERT_DIR={shlex.quote(str(self.cert_dir))}\n"
+            f"NETWORK_MODE={shlex.quote(network_mode)}\n"
+            f"LAN_IP={shlex.quote(lan_ip)}\n"
+            f"GATEWAY_PORT={shlex.quote(gateway_port)}\n"
+            f"GW_PUBLIC_URL={shlex.quote(public_url)}\n"
+            f"{block}\n"
+            "printf 'ORIGIN=%s\\n' \"$GATEWAY_PUBLIC_ORIGIN\"\n"
+            "if [ -n \"${NODE_EXTRA_CA_CERTS+x}\" ]; then\n"
+            "  printf 'CA=%s\\n' \"$NODE_EXTRA_CA_CERTS\"\n"
+            "else\n"
+            "  printf 'CA=<unset>\\n'\n"
+            "fi\n"
+        )
+        env = os.environ.copy()
+        env.pop("NODE_EXTRA_CA_CERTS", None)
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        return subprocess.run(
+            ["bash", "-c", script],
+            text=True,
+            capture_output=True,
+            env=env,
+            timeout=15,
+            check=False,
+        )
+
+    def fields(self, result: subprocess.CompletedProcess[str]) -> dict[str, str]:
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        return dict(line.split("=", 1) for line in result.stdout.splitlines())
+
+    def test_metadata_document_round_trips_client_id_and_callback_origin(self) -> None:
+        origin = "https://assistant.example.test:18789"
+        result = self.run_identity_block(public_url=f"{origin}/ignored/path?ignored=yes")
+
+        self.assertEqual(self.fields(result)["ORIGIN"], origin)
+        document_url = f"{origin}/oauth/client-metadata.json"
+        document = json.loads(self.metadata_file.read_text(encoding="utf-8"))
+        self.assertEqual(document, {
+            "client_id": document_url,
+            "client_name": "OpenClaw Assistant",
+            "redirect_uris": [f"{origin}/oauth/mcp/callback"],
+            "grant_types": ["authorization_code", "refresh_token"],
+            "response_types": ["code"],
+            "token_endpoint_auth_method": "none",
+            "application_type": "native",
+        })
+        self.assertEqual(document["client_id"], document_url)
+        self.assertEqual(document["redirect_uris"], [f"{origin}/oauth/mcp/callback"])
+        self.assertEqual(document["token_endpoint_auth_method"], "none")
+
+    def test_node_extra_ca_certs_is_exported_when_local_ca_exists(self) -> None:
+        result = self.run_identity_block(ca_exists=True)
+
+        self.assertEqual(self.fields(result)["CA"], str(self.cert_dir / "ca.crt"))
+
+    def test_node_extra_ca_certs_stays_unset_when_local_ca_is_missing(self) -> None:
+        result = self.run_identity_block(ca_exists=False)
+
+        self.assertEqual(self.fields(result)["CA"], "<unset>")
+
+    def test_public_url_origin_wins_over_lan_fallback_and_discards_path(self) -> None:
+        public = self.run_identity_block(
+            public_url="http://public.example.test:9443/a/path?query=ignored#fragment",
+            lan_ip="192.0.2.44",
+            gateway_port="23456",
+        )
+        fallback = self.run_identity_block(
+            lan_ip="192.0.2.44",
+            gateway_port="23456",
+        )
+
+        self.assertEqual(self.fields(public)["ORIGIN"], "http://public.example.test:9443")
+        self.assertEqual(self.fields(fallback)["ORIGIN"], "https://192.0.2.44:23456")
+
+
 class HaMcpUrlTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
@@ -1000,6 +1107,7 @@ class HaMcpUrlTests(unittest.TestCase):
             MCP_ENABLED="true",
             HA_OFFICIAL_MCP_URL="",
             HA_OFFICIAL_MCP_ENABLED="false",
+            GATEWAY_PUBLIC_ORIGIN="https://192.0.2.20:18789",
         )
 
     def tearDown(self) -> None:
@@ -1099,7 +1207,13 @@ class HaMcpUrlTests(unittest.TestCase):
         definition = json.loads(self.openclaw_config.read_text(encoding="utf-8"))["mcp"]["servers"]["ha-official"]
         self.assertEqual(definition["url"], env["HA_OFFICIAL_MCP_URL"])
         self.assertEqual(definition["auth"], "oauth")
-        self.assertEqual(definition["oauth"]["clientMetadataUrl"], "https://clawhub.ai/oauth/clients/openclaw.json")
+        self.assertEqual(
+            definition["oauth"],
+            {
+                "clientMetadataUrl": f"{env['GATEWAY_PUBLIC_ORIGIN']}/oauth/client-metadata.json",
+                "redirectUrl": f"{env['GATEWAY_PUBLIC_ORIGIN']}/oauth/mcp/callback",
+            },
+        )
         self.assertNotIn("headers", definition)
         self.assertIn("way 2 (official MCP, OAuth): connected", result.stdout)
         self.assertNotIn(env["HA_OFFICIAL_MCP_URL"], result.stdout + result.stderr)

@@ -1202,6 +1202,69 @@ SANPY
 )"
 fi
 
+# --- OAuth client identity for the official Home Assistant MCP server ---
+# The official endpoint validates the OAuth client the IndieAuth way: the
+# redirect URI has to share scheme and netloc with the client ID, or the client
+# ID URL has to advertise the redirect. OpenClaw's published client points at
+# loopback addresses the browser cannot reach from the LAN, so the app serves
+# its own client ID metadata document on the gateway's own HTTPS origin. The
+# document is regenerated on every boot because it carries the origin.
+GATEWAY_PUBLIC_ORIGIN=""
+if [ "$NETWORK_MODE" = "lan_https" ] && [ -n "$LAN_IP" ]; then
+  GATEWAY_PUBLIC_ORIGIN="https://${LAN_IP}:${GATEWAY_PORT}"
+  if [ -n "$GW_PUBLIC_URL" ]; then
+    _origin_from_url="$(python3 - "$GW_PUBLIC_URL" << 'ORIGINPY'
+import sys
+from urllib.parse import urlparse
+
+parts = urlparse((sys.argv[1] or "").strip())
+if parts.scheme in ("http", "https") and parts.netloc:
+    print(f"{parts.scheme}://{parts.netloc}", end="")
+ORIGINPY
+)"
+    if [ -n "$_origin_from_url" ]; then
+      GATEWAY_PUBLIC_ORIGIN="$_origin_from_url"
+    fi
+    unset _origin_from_url
+  fi
+fi
+export GATEWAY_PUBLIC_ORIGIN
+
+CLIENT_METADATA_FILE="/config/oauth/client-metadata.json"
+if [ -n "$GATEWAY_PUBLIC_ORIGIN" ]; then
+  mkdir -p "$(dirname "$CLIENT_METADATA_FILE")" 2>/dev/null || true
+  python3 - "$CLIENT_METADATA_FILE" "$GATEWAY_PUBLIC_ORIGIN" << 'METADATAPY' 2>/dev/null || true
+import json
+import os
+import sys
+
+path, origin = sys.argv[1], sys.argv[2]
+document = {
+    "client_id": f"{origin}/oauth/client-metadata.json",
+    "client_name": "OpenClaw Assistant",
+    "redirect_uris": [f"{origin}/oauth/mcp/callback"],
+    "grant_types": ["authorization_code", "refresh_token"],
+    "response_types": ["code"],
+    "token_endpoint_auth_method": "none",
+    "application_type": "native",
+}
+tmp = f"{path}.tmp"
+with open(tmp, "w", encoding="utf-8") as handle:
+    json.dump(document, handle, indent=2)
+    handle.write("\n")
+os.replace(tmp, path)
+METADATAPY
+  chmod 644 "$CLIENT_METADATA_FILE" 2>/dev/null || true
+fi
+
+# The gateway fetches the client ID metadata document over its own HTTPS
+# origin, which uses the locally generated certificate. Trusting the local CA
+# keeps that fetch working; the CA is generated once and persists in
+# /config/certs, so the anchor stays valid across restarts and updates.
+if [ -f "$CERT_DIR/ca.crt" ]; then
+  export NODE_EXTRA_CA_CERTS="$CERT_DIR/ca.crt"
+fi
+
 # --- Server cert (regenerated when missing, IP/SAN change, or pre-extension) ---
 if [ "$ENABLE_HTTPS_PROXY" = "true" ]; then
   if [ ! -f "$CERT_DIR/gateway.crt" ] || [ ! -f "$CERT_DIR/gateway.key" ] \
@@ -1835,7 +1898,11 @@ process.stdin.on("end", () => {
 
   case "$classification" in
     authorization-required)
-      echo "INFO: $status_prefix: authorization-required; Run exactly: openclaw mcp login $server_name"
+      if [ -n "${GATEWAY_PUBLIC_ORIGIN:-}" ]; then
+        echo "INFO: $status_prefix: authorization-required; open the Control UI at ${GATEWAY_PUBLIC_ORIGIN}/settings/mcp and choose \"Sign in\" for $server_name"
+      else
+        echo "INFO: $status_prefix: authorization-required; open the Control UI and choose \"Sign in\" for $server_name"
+      fi
       ;;
     connected)
       echo "INFO: $status_prefix: connected"
@@ -1901,17 +1968,25 @@ configure_ha_mcp() {
     openclaw_bin=$(command -v openclaw 2>/dev/null || true)
     local official_url="$HA_OFFICIAL_MCP_URL"
     if [ -z "$official_url" ]; then
+      # The official endpoint validates the authorization server metadata
+      # against the URL that was used to reach it (RFC 8414): the issuer in the
+      # metadata is Home Assistant's internal URL, so the connect URL has to
+      # use the very same host. The add-on runs on the Home Assistant host, so
+      # the LAN address is that host.
       official_url="http://homeassistant.local:8123/api/mcp"
+      if [ -n "${LAN_IP:-}" ]; then
+        official_url="http://${LAN_IP}:8123/api/mcp"
+      fi
     fi
     local official_definition=""
-    if ! official_definition=$(MCP_URL="$official_url" /usr/bin/node -e '
+    if ! official_definition=$(MCP_URL="$official_url" CLIENT_METADATA_URL="${GATEWAY_PUBLIC_ORIGIN}/oauth/client-metadata.json" CLIENT_REDIRECT_URL="${GATEWAY_PUBLIC_ORIGIN}/oauth/mcp/callback" /usr/bin/node -e '
 const definition = {
   url: process.env.MCP_URL,
   transport: "streamable-http",
   auth: "oauth",
   oauth: {
-    clientMetadataUrl: "https://clawhub.ai/oauth/clients/openclaw.json",
-    redirectUrl: "http://localhost:8989/oauth/callback"
+    clientMetadataUrl: process.env.CLIENT_METADATA_URL,
+    redirectUrl: process.env.CLIENT_REDIRECT_URL
   },
   connectionTimeoutMs: 10000,
   requestTimeoutMs: 30000
