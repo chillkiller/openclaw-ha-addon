@@ -10,19 +10,30 @@ Each entry summarizes user-visible changes. Full engineering notes:
 
 ## [0.7.13.42] - 2026-11-22
 
-Existing installations upgrade cleanly to OpenClaw 2026.11.6 with automatic retired-configuration migration and safer gateway repair.
+Existing installations upgrade cleanly to OpenClaw 2026.11.6 with automatic retired-configuration migration, safer gateway repair, and independent official-OAuth and community/static Home Assistant MCP paths.
+
+### Added
+
+- **Three clearly separated Home Assistant connection ways share one configuration group.** Way 1 stores an optional long-lived token for the HA API/Assist/scripts, way 2 configures official MCP with OAuth 2.0/PKCE, and way 3 configures community MCP by exact URL with an optional bearer. Each configured way has one consistently labelled, secret-free startup status; every empty way is a silent no-op and no way supplies credentials to another.
+- **The official Home Assistant MCP server is supported through OpenClaw OAuth.** Set `ha_oauth_mcp_url` to `/api/mcp` or `/api/mcp/<api_id>` and enable `auto_configure_mcp`; the app writes OpenClaw's `ha_official` definition with Streamable HTTP and the native client metadata document. Complete the interactive consent with `openclaw mcp login ha_official`; credentials stay in OpenClaw's SQLite state.
+- **The community Home Assistant MCP Server can be configured by its exact connect URL.** Set `ha_mcp_url` and enable `auto_configure_mcp`; the private path in the URL is normally the complete credential. The optional `ha_mcp_token` adds an Authorization bearer header only for deployments that require one. Both paths can run simultaneously.
 
 ### Fixed
 
 - **Existing heartbeat configuration no longer prevents a normal upgrade from starting.** The app snapshots `openclaw.json` and removes only the retired `agents.defaults.heartbeat` key before startup. A successful migration needs no manual doctor run, all other configuration stays intact, and subsequent starts do not create duplicate snapshots. If the snapshot or atomic write fails, startup deliberately stops before the gateway or automatic repair, with the original configuration preserved. Remove only `agents.defaults.heartbeat` and restart the app, or schedule that one-key removal for a maintenance window. Custom heartbeat workflows can be recreated as editable automations.
 - **Automatic repair no longer races gateway restarts or removes an operator hold.** It atomically creates the maintenance latch only when absent, keeps the gateway down throughout offline database maintenance, and releases only the latch it created. If an operator hold already exists, automatic repair is skipped and that hold and its contents are preserved. Lease rows left by a dead repair or gateway process are removed individually; live owners are preserved.
+- **Failed MCP probes cannot damage existing configuration.** A community-path connection failure or non-200 response registers nothing and leaves every existing MCP entry untouched. OpenClaw registration is atomic and idempotent, changes only marked `ha`/`ha_official` values, and preserves foreign entries byte-for-byte.
 
 ### Changed
 
+- **Home Assistant documentation now uses one way-1/way-2/way-3 vocabulary.** A prominent comparison explains each option, credential, startup action, operator step and verification command while retaining the no-silent-fallback and official-endpoint HTTP 401 guidance.
 - **The automatic repair timeout now defaults to 7200 seconds per invocation and has a hard bound.** This funds integrity checks and schema migrations for a full set of large agent databases. A process that ignores SIGTERM is killed after an additional 30-second grace period, and the logged measured duration includes that grace. If the option cannot be read, startup logs a warning and uses 7200 seconds instead of aborting; `gateway_doctor_repair_timeout` remains available as an operator override.
+- **MCP automation now uses OpenClaw's native `mcp.servers` registry instead of the mcporter registry.** No native route is derived implicitly and neither Home Assistant nor Supervisor tokens become MCP credentials. The explicit official URL uses interactive OAuth 2.0/PKCE; the community URL retains its secret-path model. A missing official authorization never falls back to the community server, LLMAT, or another credential.
+- **Each empty MCP URL is an independent no-op.** With both URLs empty, no probe, registration, or MCP log message occurs. Secret connect URLs, bearer values, and raw OpenClaw status/probe output are not printed in startup messages; only result classes and the exact OAuth login command are shown.
 
 ### Removed
 
+- **The Home Assistant mcporter registry entry and startup repair route are removed.** The app no longer writes the home-scoped `HA` entry, checks its ownership, or installs/repairs mcporter during startup. The pinned `mcporter` binary remains in the image for OpenClaw's ad-hoc `mcporter` skill.
 - **Three obsolete Codex wrapper artifacts are cleaned up automatically.** Only the old wrapper-specific home, wrapper script and adapter-path file are removed when present. The ACP-owned Codex home and all unrelated files remain untouched.
 
 ---

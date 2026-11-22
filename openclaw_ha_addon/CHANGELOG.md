@@ -9,17 +9,35 @@ For a release-facing summary, see the root [CHANGELOG.md](../CHANGELOG.md).
 
 ## [0.7.13.42] - 2026-11-22
 
-The upgrade path now migrates the retired heartbeat key automatically and performs doctor repairs without racing the gateway supervisor.
+The upgrade path now migrates the retired heartbeat key automatically and performs doctor repairs without racing the gateway supervisor. MCP startup supports the official Home Assistant OAuth endpoint and the community secret-URL server independently, and writes the registry OpenClaw actually reads.
+
+### Added
+
+- **Three coherent Home Assistant connection ways (`config.yaml`, `run.sh`, `DOCS.md`):** the existing options are grouped and documented as way 1 (HA API long-lived token), way 2 (official MCP with OAuth 2.0/PKCE) and way 3 (community MCP with exact URL plus optional bearer). Only configured ways emit a single ordered, secret-free status line; way 1 deliberately performs no authentication probe, empty ways are silent no-ops, and credentials never cross between ways.
+- **Explicit MCP options (`config.yaml`, `run.sh`):** `ha_integration.ha_oauth_mcp_url` selects the official `/api/mcp` or `/api/mcp/<api_id>` endpoint, `ha_integration.ha_mcp_url` carries the exact community connect URL, and `ha_integration.ha_mcp_token` carries its optional independent bearer. All default to empty and are included in the schema, sectioned-options flattening, option readers, and reserved gateway-environment keys. The Home Assistant API token remains separate.
+- **OpenClaw native registry (`run.sh`):** way 2 writes `mcp.servers.ha_official` with Streamable HTTP, OAuth, the verified OpenClaw client metadata URL and loopback callback, and bounded timeouts. Way 3 writes `mcp.servers.ha`. The community bearer is persisted only as `Bearer ${HA_MCP_TOKEN}`; the option is exported for runtime substitution without logging it.
+- **OAuth operator flow and verification (`run.sh`, `DOCS.md`):** status and doctor probes emit only `authorization-required`, `connected, N tools`, or `probe failed`. The exact `openclaw mcp login ha_official` command is printed when required. Documentation covers interactive PKCE consent, the manual code fallback, `state/openclaw.sqlite`, admin/individual-API differences, issuer discipline, and the inability to automate consent.
+- **Hermetic dual-mode coverage (`tests/`):** fixtures cover independent no-op gates, both OpenClaw definitions, semantic idempotence without writes, byte-preserved foreign entries, ownership refusal, environment-only bearer references, exact login guidance, no-fallback behavior, and secret-free status/probe logs. OpenClaw, curl, npm and timeout use local stubs and temporary files only; fail-closed mcporter/npm sentinels prove that neither MCP path invokes client or package repair automation.
 
 ### Fixed
 
 - **Retired heartbeat migration:** before the gateway starts, the app detects `agents.defaults.heartbeat`, writes a timestamped configuration snapshot, removes exactly that key with an atomic write, and logs the retirement. Other keys and the configuration file itself are preserved. A second start is a no-op and creates no additional snapshot, so a successful migration needs no manual doctor run. A snapshot or write failure is deliberately fail-closed: startup exits before the gateway and automatic repair, the original configuration remains preserved, and the error tells the operator to remove only `agents.defaults.heartbeat` and restart, or schedule that one-key removal for a maintenance window.
 - **Offline repair supervision:** automatic doctor repair now uses an atomic no-clobber create to acquire the same maintenance latch as a manual gateway hold before starting. Only a latch created by the automatic path is released, after both successful and failed repairs and during add-on shutdown. A pre-existing operator hold skips repair, remains byte-for-byte unchanged, and keeps the gateway down with a distinct status. After an owned repair, state and agent-database lease rows are checked individually and removed only when their recorded owner process is dead.
 - **Legacy wrapper cleanup:** upgrade maintenance removes only the obsolete wrapper-specific Codex home, its wrapper script and its adapter-path file when present. Named symlinks are unlinked without following them; the ACP-owned Codex home and unrelated files are preserved.
+- **Registry preservation (`run.sh`):** failed community probes leave every OpenClaw entry untouched. OpenClaw updates use an atomic span-based JSON merge rather than whole-file serialization, preserve foreign entry bytes and file mode, skip semantically identical writes, and refuse changed same-named values without a regular ownership marker.
 
 ### Changed
 
+- **Unified Home Assistant terminology and operator guide (`DOCS.md`):** all former path labels now use way 1/way 2/way 3, and one prominent comparison table links each option to its credential, capability and verification command. The guide retains the explicit no-silent-fallback rule and the warning that a long-lived token returns HTTP 401 at the official MCP endpoint.
 - **Repair timing and option-read safety:** the built-in `gateway_doctor_repair_timeout` default is now 7200 seconds per invocation, while the existing operator override is retained. GNU timeout applies a 30-second kill grace after SIGTERM, making each invocation a hard bound; safe and full repair attempts log measured durations including any grace so operators can size the override for their database set. A failed `jq` read logs a warning and falls back to 7200 seconds rather than aborting startup under `set -euo pipefail`.
+- **URL-based registration (`run.sh`):** `auto_configure_mcp=true` plus at least one URL is required before any MCP operation. Way 2 performs OAuth status/probe checks without a predictably unauthorized Long-Lived-Token request; way 3 alone retains the bounded initialize probe and empty-header omission. Neither path silently substitutes the other, `homeassistant_token`, `SUPERVISOR_TOKEN`, or LLMAT.
+- **Native-only MCP automation (`run.sh`):** both paths use OpenClaw's native `mcp.servers` configuration instead of the mcporter registry. Startup performs no client installation, version check, registry ownership check, or secondary registration.
+- **Credential handling (`run.sh`, `DOCS.md`):** URLs and optional community tokens never appear in startup messages; OpenClaw CLI output is captured and classified rather than relayed. The OpenClaw config contains no literal bearer token. Documentation distinguishes official OAuth 2.0/PKCE from community secret-URL authentication and warns about issuer mismatches and repeated HA auth attempts.
+- **Release metadata:** the app configuration, its header, the Docker image label, and the deployment matrix all identify release version 0.7.13.42.
+
+### Removed
+
+- **HA mcporter registry automation (`run.sh`):** the home-scoped `HA` entry, its ownership marker, and the startup installation/repair route are gone. The Dockerfile still installs pinned `mcporter` 0.17.1 so OpenClaw's bundled ad-hoc skill remains available; `oc_pin_freshness.py` therefore keeps the image-tool pin unchanged.
 
 ---
 

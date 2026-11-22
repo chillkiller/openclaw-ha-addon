@@ -91,16 +91,24 @@ options:
   enable_docs: true
 
   ha_integration:
-    # Optional: Home Assistant long-lived token (for local HA API scripts/tools)
+    # Way 1 - Home Assistant API (long-lived token)
+    # Enables HA API, Assist-related API and script access; it is never an MCP credential.
     homeassistant_token: ""
+    # Way 2 - official Home Assistant MCP (OAuth 2.0/PKCE)
+    # Enables the official MCP server after interactive OAuth login; it never uses the way-1 token.
+    ha_oauth_mcp_url: ""
+    # Way 3 - community Home Assistant MCP (URL + optional bearer)
+    # Enables the community MCP server at its exact connect URL; it is not the official OAuth endpoint.
+    ha_mcp_url: ""
+    # Optional way-3 bearer for servers that require one; it is not used for way 1 or way 2.
+    ha_mcp_token: ""
     # Optional: outbound HTTP/HTTPS proxy for OpenClaw network access.
     # Example: "http://192.0.2.2:3128"
     http_proxy: ""
     # Enable OpenAI-compatible Chat Completions API endpoint (for HA Assist pipeline)
     enable_openai_api: false
-    # Auto-configure MCP (Model Context Protocol) for Home Assistant — the
-    # HA tools reach the ACP harnesses through this acpx-driven route.
-    # When enabled + homeassistant_token set, registers HA as MCP server.
+    # Auto-configure the MCP URLs above. Empty URLs are independent no-ops.
+    # Never uses homeassistant_token or an automatic fallback between servers.
     auto_configure_mcp: false
 
   # ACPX is the BUNDLED OpenClaw plugin that provides the harness
@@ -292,6 +300,9 @@ schema:
   enable_docs: bool?
   ha_integration:
     homeassistant_token: str?
+    ha_oauth_mcp_url: str?
+    ha_mcp_url: str?
+    ha_mcp_token: str?
     http_proxy: str?
     enable_openai_api: bool?
     auto_configure_mcp: bool?

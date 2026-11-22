@@ -12,6 +12,7 @@ import shlex
 import shutil
 import signal
 import socket
+import stat
 import subprocess
 import tempfile
 import time
@@ -117,6 +118,24 @@ class SectionedDoctorOptionsTests(unittest.TestCase):
             self.consume(broken),
             {"REPAIR_MAX": 5, "REPAIR_TIMEOUT": 7200, "CAPTURE_KEEP": 2},
         )
+
+
+class SectionedHaMcpOptionsTests(unittest.TestCase):
+    def test_url_and_optional_token_reach_the_runtime_readers(self) -> None:
+        flatten = shell_block(
+            SectionedDoctorOptionsTests.FLATTEN_START,
+            SectionedDoctorOptionsTests.FLATTEN_END,
+        )
+        self.assertIn("ha_mcp_url: .ha_integration.ha_mcp_url,", flatten)
+        self.assertIn("ha_mcp_token: .ha_integration.ha_mcp_token,", flatten)
+        self.assertIn("ha_oauth_mcp_url: .ha_integration.ha_oauth_mcp_url,", flatten)
+        self.assertIn("HA_MCP_URL=$(jq -r '.ha_mcp_url // empty' \"$OPTIONS_FILE\")", RUN_TEXT)
+        self.assertIn("HA_MCP_TOKEN=$(jq -r '.ha_mcp_token // empty' \"$OPTIONS_FILE\")", RUN_TEXT)
+        self.assertIn("HA_OAUTH_MCP_URL=$(jq -r '.ha_oauth_mcp_url // empty' \"$OPTIONS_FILE\")", RUN_TEXT)
+        self.assertIn("export HA_MCP_TOKEN", RUN_TEXT)
+        reserved = shell_function("is_reserved_gateway_env_var")
+        self.assertIn("HA_OAUTH_MCP_URL", reserved)
+        self.assertIn("HA_MCP_TOKEN", reserved)
 
 
 class DoctorRepairOptionSafetyTests(unittest.TestCase):
@@ -884,117 +903,236 @@ printf 'PID=%s\nEXE=%s\nVERSION=%s\nEXPECTED=%s\n' "$pid" "$exe" "$version" "$ex
         self.assertFalse(decoy_marker.exists(), "persisted Homebrew Node shadowed the image runtime")
 
 
-class HaMcpCredentialTests(unittest.TestCase):
+class HaMcpUrlTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         self.config = self.root / "config"
         self.config.mkdir()
+        self.openclaw_config = self.config / "openclaw.json"
+        self.openclaw_config.write_text("{}\n", encoding="utf-8")
+        self.api_token_file = self.root / "secrets" / "homeassistant.token"
+        self.api_token_file.parent.mkdir()
         self.bin = self.root / "bin"
         self.bin.mkdir()
-        self.npm_prefix = self.root / "npm-prefix"
-        persistent_bin = self.npm_prefix / "bin"
-        persistent_bin.mkdir(parents=True)
-        self.log = self.root / "mcporter-log"
+        self.forbidden_log = self.root / "forbidden-tool-log"
         self.probe_log = self.root / "probe-log"
-        self.npm_log = self.root / "npm-log"
-        mcporter = persistent_bin / "mcporter"
-        mcporter.write_text(
+
+        # Any attempted mcporter invocation or package repair fails the run.
+        for name in ("mcporter", "npm"):
+            executable = self.bin / name
+            executable.write_text(
+                "#!/usr/bin/env bash\n"
+                "printf '%s\n' \"$0 $*\" >> \"$MCP_FORBIDDEN_LOG\"\n"
+                "exit 99\n",
+                encoding="utf-8",
+            )
+            executable.chmod(0o755)
+        timeout = self.bin / "timeout"
+        timeout.write_text(
             "#!/usr/bin/env bash\n"
-            "if [ \"${1:-}\" = --version ]; then printf '0.17.1\\n'; exit 0; fi\n"
-            "{ printf 'CALL'; printf '\\t%s' \"$@\"; printf '\\n'; } >> \"$MCPORTER_LOG\"\n",
+            "shift\n"
+            "exec \"$@\"\n",
             encoding="utf-8",
         )
-        mcporter.chmod(0o755)
+        timeout.chmod(0o755)
         curl = self.bin / "curl"
         curl.write_text(
             "#!/usr/bin/env bash\n"
-            "{ printf 'PROBE'; printf '\\t%s' \"$@\"; printf '\\n'; } >> \"$MCP_PROBE_LOG\"\n"
+            "{ printf 'PROBE'; printf '\t%s' \"$@\"; printf '\n'; } >> \"$MCP_PROBE_LOG\"\n"
             "printf '%s' \"${MCP_PROBE_STATUS:-200}\"\n",
             encoding="utf-8",
         )
         curl.chmod(0o755)
-        npm = self.bin / "npm"
-        npm.write_text(
+        openclaw = self.bin / "openclaw"
+        openclaw.write_text(
             "#!/usr/bin/env bash\n"
-            "if [ \"${1:-}\" = prefix ] && [ \"${2:-}\" = -g ]; then printf '%s\\n' \"$MCP_NPM_PREFIX\"; exit 0; fi\n"
-            "{ printf 'NPM'; printf '\\t%s' \"$@\"; printf '\\n'; } >> \"$MCP_NPM_LOG\"\n",
+            "if [ \"${1:-} ${2:-}\" = 'mcp status' ]; then\n"
+            "  printf '%s\n' '{\"servers\":[{\"name\":\"ha\",\"authStatus\":{\"state\":\"authorized\"}},{\"name\":\"ha_official\",\"authStatus\":{\"state\":\"authorized\"}}]}'\n"
+            "elif [ \"${1:-} ${2:-}\" = 'mcp doctor' ]; then\n"
+            "  printf '{\"ok\":true,\"servers\":[{\"name\":\"%s\",\"probe\":{\"tools\":2}}]}\n' \"$3\"\n"
+            "else\n"
+            "  exit 2\n"
+            "fi\n",
             encoding="utf-8",
         )
-        npm.chmod(0o755)
+        openclaw.chmod(0o755)
         self.env = os.environ.copy()
         self.env.update(
             PATH=f"{self.bin}:{self.env['PATH']}",
-            MCPORTER_LOG=str(self.log),
+            MCP_FORBIDDEN_LOG=str(self.forbidden_log),
             MCP_PROBE_LOG=str(self.probe_log),
-            MCP_NPM_LOG=str(self.npm_log),
-            MCP_NPM_PREFIX=str(self.npm_prefix),
             HOME=str(self.root),
             XDG_CONFIG_HOME=str(self.root / "xdg"),
             OPENCLAW_CONFIG_DIR=str(self.config),
+            OPENCLAW_CONFIG_PATH=str(self.openclaw_config),
             AUTO_CONFIGURE_MCP="true",
             HA_TOKEN="user-token",
             SUPERVISOR_TOKEN="supervisor-token",
+            HA_MCP_URL="https://ha-mcp.example.test/private-test-connect-path",
+            HA_MCP_TOKEN="",
+            HA_OAUTH_MCP_URL="",
         )
 
     def tearDown(self) -> None:
         self.temp.cleanup()
 
-    def configure(self, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-        return run_bash(["configure_ha_mcp"], "configure_ha_mcp", env=env)
+    def configure(
+        self,
+        env: dict[str, str],
+        *,
+        include_api_token: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
+        functions = [
+            "upsert_openclaw_mcp_server",
+            "verify_openclaw_mcp_server",
+            "configure_openclaw_mcp_entry",
+            "configure_ha_mcp",
+        ]
+        body = "set -euo pipefail\nconfigure_ha_mcp"
+        if include_api_token:
+            functions.insert(0, "configure_homeassistant_api_token")
+            body = (
+                "set -euo pipefail\n"
+                f"configure_homeassistant_api_token {shlex.quote(str(self.api_token_file))}\n"
+                "configure_ha_mcp"
+            )
+        return run_bash(functions, body, env=env)
 
-    def test_supervisor_proxy_uses_ha_token_not_supervisor_token(self) -> None:
+    def assert_no_forbidden_tools(self) -> None:
+        self.assertFalse(self.forbidden_log.exists())
+
+    def test_secret_url_does_not_use_ha_or_supervisor_tokens(self) -> None:
         result = self.configure(self.env)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(self.log.exists(), result.stdout + result.stderr)
-        calls = self.log.read_text(encoding="utf-8")
-        self.assertIn("http://supervisor/core/api/mcp", calls)
-        self.assertIn("Authorization=Bearer user-token", calls)
-        self.assertNotIn("Authorization=Bearer supervisor-token", calls)
-        self.assertIn("Authorization: Bearer user-token", self.probe_log.read_text(encoding="utf-8"))
-        self.assertFalse(self.npm_log.exists())
+        self.assert_no_forbidden_tools()
+        definition = json.loads(self.openclaw_config.read_text(encoding="utf-8"))["mcp"]["servers"]["ha"]
+        self.assertEqual(definition["url"], self.env["HA_MCP_URL"])
+        self.assertNotIn("headers", definition)
+        probe = self.probe_log.read_text(encoding="utf-8")
+        self.assertIn(self.env["HA_MCP_URL"], probe)
+        self.assertNotIn("Authorization:", probe)
+        self.assertNotIn("user-token", probe)
+        self.assertNotIn("supervisor-token", probe)
+        self.assertNotIn(self.env["HA_MCP_URL"], result.stdout + result.stderr)
 
-    def test_supervisor_token_does_not_require_configured_ha_token(self) -> None:
+    def test_mcp_token_is_the_only_bearer_credential(self) -> None:
         env = self.env.copy()
         env["HA_TOKEN"] = ""
+        env["HA_MCP_TOKEN"] = "mcp-token"
         result = self.configure(env)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(self.log.exists(), result.stdout + result.stderr)
-        self.assertIn("Authorization=Bearer supervisor-token", self.log.read_text(encoding="utf-8"))
-        self.assertIn("Authorization: Bearer supervisor-token", self.probe_log.read_text(encoding="utf-8"))
+        self.assert_no_forbidden_tools()
+        self.assertIn("Authorization: Bearer mcp-token", self.probe_log.read_text(encoding="utf-8"))
+        self.assertNotIn("Authorization: Bearer supervisor-token", self.probe_log.read_text(encoding="utf-8"))
+        self.assertNotIn("mcp-token", result.stdout + result.stderr)
+        openclaw_raw = self.openclaw_config.read_text(encoding="utf-8")
+        self.assertIn("Bearer ${HA_MCP_TOKEN}", openclaw_raw)
+        self.assertNotIn("mcp-token", openclaw_raw)
 
-    def test_localhost_fallback_uses_ha_token(self) -> None:
+    def test_exact_url_is_used_without_supervisor_token(self) -> None:
         env = self.env.copy()
         env.pop("SUPERVISOR_TOKEN")
+        env["HA_MCP_URL"] = "http://192.0.2.10:8124/mcp/private-test-path"
         result = self.configure(env)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(self.log.exists(), result.stdout + result.stderr)
-        calls = self.log.read_text(encoding="utf-8")
-        self.assertIn("http://localhost:8123/api/mcp", calls)
-        self.assertIn("Authorization=Bearer user-token", calls)
-        self.assertNotIn("supervisor-token", calls)
-        self.assertIn("http://localhost:8123/api/mcp", self.probe_log.read_text(encoding="utf-8"))
+        self.assert_no_forbidden_tools()
+        definition = json.loads(self.openclaw_config.read_text(encoding="utf-8"))["mcp"]["servers"]["ha"]
+        self.assertEqual(definition["url"], env["HA_MCP_URL"])
+        self.assertIn(env["HA_MCP_URL"], self.probe_log.read_text(encoding="utf-8"))
+        self.assertNotIn("supervisor-token", result.stdout + result.stderr)
+        self.assertNotIn(env["HA_MCP_URL"], result.stdout + result.stderr)
 
-    def test_failed_ha_token_probe_skips_registration_without_leaking(self) -> None:
+    def test_failed_url_probe_skips_registration_without_leaking(self) -> None:
         env = self.env.copy()
         env["MCP_PROBE_STATUS"] = "401"
+        before = self.openclaw_config.read_bytes()
         result = self.configure(env)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertIn("could not authenticate", result.stdout)
+        self.assert_no_forbidden_tools()
+        self.assertIn("probe failed", result.stdout)
         self.assertIn("skipping registration", result.stdout)
-        self.assertFalse(self.log.exists())
+        self.assertEqual(self.openclaw_config.read_bytes(), before)
         self.assertNotIn("user-token", result.stdout + result.stderr)
         self.assertNotIn("supervisor-token", result.stdout + result.stderr)
+        self.assertNotIn(env["HA_MCP_URL"], result.stdout + result.stderr)
 
-    def test_no_credentials_is_a_noop_negative_control(self) -> None:
+    def test_way_2_is_independent_and_needs_no_mcporter_npm_or_curl(self) -> None:
         env = self.env.copy()
-        env["HA_TOKEN"] = ""
-        env.pop("SUPERVISOR_TOKEN")
+        env["HA_MCP_URL"] = ""
+        env["HA_OAUTH_MCP_URL"] = "http://192.0.2.10:8123/api/mcp/assist"
+
+        result = self.configure(env)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_no_forbidden_tools()
+        self.assertFalse(self.probe_log.exists())
+        definition = json.loads(self.openclaw_config.read_text(encoding="utf-8"))["mcp"]["servers"]["ha_official"]
+        self.assertEqual(definition["url"], env["HA_OAUTH_MCP_URL"])
+        self.assertEqual(definition["auth"], "oauth")
+        self.assertEqual(definition["oauth"]["clientMetadataUrl"], "https://clawhub.ai/oauth/clients/openclaw.json")
+        self.assertNotIn("headers", definition)
+        self.assertIn("connected, 2 tools", result.stdout)
+        self.assertNotIn(env["HA_OAUTH_MCP_URL"], result.stdout + result.stderr)
+
+    def test_both_mcp_ways_never_invoke_mcporter_or_npm(self) -> None:
+        env = self.env.copy()
+        env["HA_OAUTH_MCP_URL"] = "http://192.0.2.10:8123/api/mcp/assist"
         result = self.configure(env)
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertFalse(self.log.exists())
+        self.assert_no_forbidden_tools()
+        servers = json.loads(self.openclaw_config.read_text(encoding="utf-8"))["mcp"]["servers"]
+        self.assertIn("ha", servers)
+        self.assertIn("ha_official", servers)
+
+    def test_way_1_token_is_private_and_needs_no_network_probe(self) -> None:
+        env = self.env.copy()
+        env["HA_MCP_URL"] = ""
+        env["HA_OAUTH_MCP_URL"] = ""
+
+        result = self.configure(env, include_api_token=True)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.api_token_file.read_text(encoding="utf-8"), "user-token")
+        self.assertEqual(stat.S_IMODE(self.api_token_file.stat().st_mode), 0o600)
+        self.assertEqual(result.stdout.splitlines(), [
+            "INFO: Home Assistant connection way 1 (API, long-lived token): token stored for API/Assist/scripts"
+        ])
+        self.assertNotIn("user-token", result.stdout + result.stderr)
         self.assertFalse(self.probe_log.exists())
-        self.assertIn("no Supervisor or Home Assistant token", result.stdout)
+        self.assert_no_forbidden_tools()
+
+    def test_all_three_ways_have_ordered_secret_free_status(self) -> None:
+        env = self.env.copy()
+        env["HA_OAUTH_MCP_URL"] = "http://192.0.2.10:8123/api/mcp/assist"
+        env["HA_MCP_TOKEN"] = "mcp-token"
+
+        result = self.configure(env, include_api_token=True)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_no_forbidden_tools()
+        self.assertEqual(result.stdout.splitlines(), [
+            "INFO: Home Assistant connection way 1 (API, long-lived token): token stored for API/Assist/scripts",
+            "INFO: Home Assistant connection way 2 (official MCP, OAuth): connected, 2 tools",
+            "INFO: Home Assistant connection way 3 (community MCP, URL + bearer): connected, 2 tools",
+        ])
+        output = result.stdout + result.stderr
+        self.assertNotIn("user-token", output)
+        self.assertNotIn("mcp-token", output)
+        self.assertNotIn(env["HA_MCP_URL"], output)
+        self.assertNotIn(env["HA_OAUTH_MCP_URL"], output)
+
+    def test_empty_url_is_a_silent_noop_negative_control(self) -> None:
+        env = self.env.copy()
+        env["HA_MCP_URL"] = ""
+        before = self.openclaw_config.read_bytes()
+        result = self.configure(env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assert_no_forbidden_tools()
+        self.assertFalse(self.probe_log.exists())
+        self.assertEqual(self.openclaw_config.read_bytes(), before)
+        self.assertEqual(result.stdout, "")
+        self.assertEqual(result.stderr, "")
 
 
 class DockerGuardTests(unittest.TestCase):

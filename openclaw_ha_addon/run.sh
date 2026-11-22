@@ -48,6 +48,9 @@ if jq -e 'has("harness") or has("ha_integration")' "$OPTIONS_FILE" >/dev/null 2>
       acpx_enabled: .acpx_enabled,
       harness_config_writer_enabled: .harness_config_writer_enabled,
       homeassistant_token: .ha_integration.homeassistant_token,
+      ha_mcp_url: .ha_integration.ha_mcp_url,
+      ha_mcp_token: .ha_integration.ha_mcp_token,
+      ha_oauth_mcp_url: .ha_integration.ha_oauth_mcp_url,
       http_proxy: .ha_integration.http_proxy,
       enable_openai_api: .ha_integration.enable_openai_api,
       auto_configure_mcp: .ha_integration.auto_configure_mcp,
@@ -96,6 +99,12 @@ fi
 TZNAME=$(jq -r '.timezone // "Europe/Berlin"' "$OPTIONS_FILE")
 GW_PUBLIC_URL=$(jq -r '.gateway_public_url // empty' "$OPTIONS_FILE")
 HA_TOKEN=$(jq -r '.homeassistant_token // empty' "$OPTIONS_FILE")
+HA_MCP_URL=$(jq -r '.ha_mcp_url // empty' "$OPTIONS_FILE")
+HA_MCP_TOKEN=$(jq -r '.ha_mcp_token // empty' "$OPTIONS_FILE")
+HA_OAUTH_MCP_URL=$(jq -r '.ha_oauth_mcp_url // empty' "$OPTIONS_FILE")
+# OpenClaw resolves Bearer ${HA_MCP_TOKEN} in mcp.servers at connection time.
+# Export the option without logging it; gateway_env_vars cannot override it.
+export HA_MCP_TOKEN
 ADDON_HTTP_PROXY=$(jq -r '.http_proxy // empty' "$OPTIONS_FILE")
 # enable_terminal is retired: the web terminal is always on (Ingress
 # maintenance/repair surface); only terminal_port is configurable.
@@ -532,7 +541,7 @@ is_reserved_gateway_env_var() {
     # (nginx/node-relay config rendering, port guards, cert SANs). Allowing
     # them via gateway_env_vars would invalidate the explicit validation
     # run.sh and render_nginx.py perform (nginx/node config injection vector).
-    GATEWAY_PORT|GATEWAY_INTERNAL_PORT|GATEWAY_MODE|GATEWAY_BIND|GATEWAY_AUTH_MODE|GATEWAY_REMOTE_URL|GATEWAY_TLS_ENABLED|GATEWAY_TLS_AUTO|GATEWAY_LOG_LEVEL|GATEWAY_TRUSTED_PROXIES|NETWORK_MODE|ACCESS_MODE|INGRESS_PORT|TERMINAL_PORT|HTTPS_PROXY_PORT|ENABLE_HTTPS_PROXY|CERTS_DIR|LAN_IP|GW_PUBLIC_URL|GW_TOKEN|NGINX_LOG_LEVEL|SHOW_WEBUI|SHOW_TERMINAL|SHOW_DOCS|TAILSCALE_MODE|GATEWAY_ADDITIONAL_ALLOWED_ORIGINS|MDNS_MODE|CONTROLUI_DISABLE_DEVICE_AUTH|ACPX_ENABLED|ENABLE_OPENAI_API|BLOCKED_HOSTNAMES|AUTO_CONFIGURE_MCP|TRACE_LOG_TO_CONSOLE|GATEWAY_LOG_TO_CONSOLE)
+    GATEWAY_PORT|GATEWAY_INTERNAL_PORT|GATEWAY_MODE|GATEWAY_BIND|GATEWAY_AUTH_MODE|GATEWAY_REMOTE_URL|GATEWAY_TLS_ENABLED|GATEWAY_TLS_AUTO|GATEWAY_LOG_LEVEL|GATEWAY_TRUSTED_PROXIES|NETWORK_MODE|ACCESS_MODE|INGRESS_PORT|TERMINAL_PORT|HTTPS_PROXY_PORT|ENABLE_HTTPS_PROXY|CERTS_DIR|LAN_IP|GW_PUBLIC_URL|GW_TOKEN|NGINX_LOG_LEVEL|SHOW_WEBUI|SHOW_TERMINAL|SHOW_DOCS|TAILSCALE_MODE|GATEWAY_ADDITIONAL_ALLOWED_ORIGINS|MDNS_MODE|CONTROLUI_DISABLE_DEVICE_AUTH|ACPX_ENABLED|ENABLE_OPENAI_API|BLOCKED_HOSTNAMES|AUTO_CONFIGURE_MCP|HA_MCP_URL|HA_MCP_TOKEN|HA_OAUTH_MCP_URL|TRACE_LOG_TO_CONSOLE|GATEWAY_LOG_TO_CONSOLE)
       return 0
       ;;
     *)
@@ -847,15 +856,22 @@ cleanup_session_locks # 0.7.12.4: always on — stale locks must never survive r
 # Store tokens / export env vars (optional)
 # ------------------------------------------------------------------------------
 
-if [ -n "$HA_TOKEN" ]; then
+configure_homeassistant_api_token() {
+  [ -n "$HA_TOKEN" ] || return 0
+  local token_path="${1:-/config/secrets/homeassistant.token}"
+
   # Audit: the umask used to be set globally here, leaking 077 into the rest
   # of boot (backup archives, cert files, helper writes) conditionally on
   # whether an HA token was set. Keep the tight mode local to the token file.
   (
     umask 077
-    printf '%s' "$HA_TOKEN" > /config/secrets/homeassistant.token
+    printf '%s' "$HA_TOKEN" > "$token_path"
   )
-fi
+  # Deliberately do not probe the API token at startup. Repeated authentication
+  # failures can trigger Home Assistant IP bans; storage is the way-1 no-op gate.
+  echo "INFO: Home Assistant connection way 1 (API, long-lived token): token stored for API/Assist/scripts"
+}
+configure_homeassistant_api_token
 
 
 # ------------------------------------------------------------------------------
@@ -1530,209 +1546,478 @@ if [ -f "$HELPER_PATH" ] && [ -f "$OPENCLAW_CONFIG_PATH" ]; then
     echo "WARN: Could not ensure memory-core — memory search may be unavailable"
 fi
 
+# Write exactly one add-on-owned OpenClaw mcp.servers value. The JSON span
+# parser replaces/inserts only that value; foreign entries and all unrelated
+# bytes are copied verbatim. A semantic match returns without opening a write.
+upsert_openclaw_mcp_server() {
+  local server_name="$1"
+  local definition="$2"
+  local marker_path="$3"
+  local timeout_bin="$4"
+  local config_path="${OPENCLAW_CONFIG_PATH:-${OPENCLAW_CONFIG_DIR}/openclaw.json}"
+
+  MCP_SERVER_DEFINITION="$definition" PATH="/usr/bin:$PATH" \
+    "$timeout_bin" 30s /usr/bin/node --input-type=module -e '
+import fs from "node:fs";
+import path from "node:path";
+import { createHash, randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
+
+const [configPath, serverName, markerPath] = process.argv.slice(1);
+const definition = JSON.parse(process.env.MCP_SERVER_DEFINITION);
+if (!definition || typeof definition !== "object" || Array.isArray(definition)) process.exit(2);
+
+function parse(source) {
+  let cursor = 0;
+  const fail = () => { throw new Error("invalid JSON"); };
+  const whitespace = () => { while (/[\x20\t\r\n]/.test(source[cursor] ?? "")) cursor++; };
+  function stringNode() {
+    const start = cursor;
+    if (source[cursor++] !== "\"") fail();
+    while (cursor < source.length) {
+      const code = source.charCodeAt(cursor);
+      const char = source[cursor++];
+      if (char === "\"") {
+        const raw = source.slice(start, cursor);
+        return { kind: "string", start, end: cursor, value: JSON.parse(raw) };
+      }
+      if (code < 0x20) fail();
+      if (char === "\\") {
+        const escaped = source[cursor];
+        if (escaped === "u") {
+          if (!/^[0-9a-fA-F]{4}$/.test(source.slice(cursor + 1, cursor + 5))) fail();
+          cursor += 5;
+        } else {
+          if (!"\"\\/bfnrt".includes(escaped ?? "")) fail();
+          cursor++;
+        }
+      }
+    }
+    fail();
+  }
+  function valueNode() {
+    whitespace();
+    const start = cursor;
+    const char = source[cursor];
+    if (char === "\"") return stringNode();
+    if (char === "{") {
+      cursor++;
+      whitespace();
+      const properties = [];
+      if (source[cursor] === "}") {
+        cursor++;
+        return { kind: "object", start, end: cursor, properties, value: {} };
+      }
+      while (cursor < source.length) {
+        whitespace();
+        const key = stringNode();
+        whitespace();
+        if (source[cursor++] !== ":") fail();
+        const value = valueNode();
+        properties.push({ key, value });
+        whitespace();
+        if (source[cursor] === "}") {
+          cursor++;
+          return { kind: "object", start, end: cursor, properties };
+        }
+        if (source[cursor++] !== ",") fail();
+      }
+      fail();
+    }
+    if (char === "[") {
+      cursor++;
+      whitespace();
+      const values = [];
+      if (source[cursor] === "]") {
+        cursor++;
+        return { kind: "array", start, end: cursor, values };
+      }
+      while (cursor < source.length) {
+        values.push(valueNode());
+        whitespace();
+        if (source[cursor] === "]") {
+          cursor++;
+          return { kind: "array", start, end: cursor, values };
+        }
+        if (source[cursor++] !== ",") fail();
+      }
+      fail();
+    }
+    const number = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?/y;
+    number.lastIndex = cursor;
+    const match = number.exec(source);
+    if (match) {
+      cursor += match[0].length;
+      return { kind: "number", start, end: cursor };
+    }
+    for (const literal of ["true", "false", "null"]) {
+      if (source.startsWith(literal, cursor)) {
+        cursor += literal.length;
+        return { kind: "literal", start, end: cursor };
+      }
+    }
+    fail();
+  }
+  whitespace();
+  const root = valueNode();
+  whitespace();
+  if (cursor !== source.length) fail();
+  return root;
+  }
+
+function property(objectNode, name) {
+  if (objectNode.kind !== "object") throw new Error("expected object");
+  const matches = objectNode.properties.filter((entry) => entry.key.value === name);
+  if (matches.length > 1) throw new Error("ambiguous property");
+  return matches[0];
+  }
+
+function lineIndent(source, position) {
+  const start = source.lastIndexOf("\n", position - 1) + 1;
+  const prefix = source.slice(start, position);
+  return /^[\t ]*$/.test(prefix) ? prefix : "";
+  }
+
+function render(source, name, value, indent) {
+  const rendered = JSON.stringify(value, null, 2).replace(/\n/g, `\n${indent}`);
+  return `${JSON.stringify(name)}: ${rendered}`;
+  }
+
+function insertProperty(source, objectNode, name, value, parentIndent) {
+  const close = objectNode.end - 1;
+  const first = objectNode.properties[0];
+  const childIndent = first
+    ? (lineIndent(source, first.key.start) || `${parentIndent}  `)
+    : `${parentIndent}  `;
+  const addition = render(source, name, value, childIndent);
+  if (!first) {
+    return `${source.slice(0, objectNode.start + 1)}\n${childIndent}${addition}\n${parentIndent}${source.slice(close)}`;
+  }
+  const last = objectNode.properties.at(-1);
+  return `${source.slice(0, last.value.end)},\n${childIndent}${addition}\n${parentIndent}${source.slice(close)}`;
+  }
+
+function atomicWrite(filePath, data, existingStat, fallbackMode) {
+  const temporary = path.join(path.dirname(filePath), `.${path.basename(filePath)}.${process.pid}.${randomUUID()}.tmp`);
+  let descriptor;
+  try {
+    descriptor = fs.openSync(temporary, "wx", existingStat?.mode ?? fallbackMode);
+    fs.writeFileSync(descriptor, data, { encoding: "utf8" });
+    if (existingStat) {
+      fs.fchmodSync(descriptor, existingStat.mode);
+      fs.fchownSync(descriptor, existingStat.uid, existingStat.gid);
+    } else {
+      fs.fchmodSync(descriptor, fallbackMode);
+    }
+    fs.fsyncSync(descriptor);
+    fs.closeSync(descriptor);
+    descriptor = undefined;
+    fs.renameSync(temporary, filePath);
+  } finally {
+    if (descriptor !== undefined) fs.closeSync(descriptor);
+    try { fs.unlinkSync(temporary); } catch {}
+  }
+  }
+
+try {
+  const configStat = fs.lstatSync(configPath);
+  if (!configStat.isFile() || configStat.isSymbolicLink()) process.exit(2);
+  const source = fs.readFileSync(configPath, "utf8");
+  const root = parse(source);
+  if (root.kind !== "object") process.exit(2);
+  const mcpProperty = property(root, "mcp");
+  const mcpNode = mcpProperty?.value;
+  if (mcpNode && mcpNode.kind !== "object") process.exit(2);
+  const serversProperty = mcpNode ? property(mcpNode, "servers") : undefined;
+  const serversNode = serversProperty?.value;
+  if (serversNode && serversNode.kind !== "object") process.exit(2);
+  const ownProperty = serversNode ? property(serversNode, serverName) : undefined;
+
+  if (ownProperty) {
+    const current = JSON.parse(source.slice(ownProperty.value.start, ownProperty.value.end));
+    if (isDeepStrictEqual(current, definition)) {
+      process.stdout.write("unchanged\n");
+      process.exit(0);
+    }
+    let owned = false;
+    try { owned = fs.lstatSync(markerPath).isFile(); } catch {}
+    if (!owned) process.exit(10);
+    const indent = lineIndent(source, ownProperty.key.start) || "  ";
+    const replacement = JSON.stringify(definition, null, 2).replace(/\n/g, `\n${indent}`);
+    const updated = `${source.slice(0, ownProperty.value.start)}${replacement}${source.slice(ownProperty.value.end)}`;
+    atomicWrite(configPath, updated, configStat, 0o600);
+  } else {
+    let updated;
+    if (serversNode) {
+      updated = insertProperty(source, serversNode, serverName, definition, lineIndent(source, serversProperty.key.start));
+    } else if (mcpNode) {
+      updated = insertProperty(source, mcpNode, "servers", { [serverName]: definition }, lineIndent(source, mcpProperty.key.start));
+    } else {
+      updated = insertProperty(source, root, "mcp", { servers: { [serverName]: definition } }, "");
+    }
+    atomicWrite(configPath, updated, configStat, 0o600);
+  }
+
+  let markerStat;
+  try {
+    const candidate = fs.lstatSync(markerPath);
+    if (!candidate.isFile() || candidate.isSymbolicLink()) process.exit(12);
+    markerStat = candidate;
+  } catch (error) {
+    if (error.code !== "ENOENT") process.exit(12);
+  }
+  const digest = createHash("sha256").update(serverName).update("\0").update(process.env.MCP_SERVER_DEFINITION).digest("hex");
+  atomicWrite(markerPath, `${serverName} ${digest}\n`, markerStat, 0o600);
+  process.stdout.write("written\n");
+} catch {
+  process.exit(2);
+  }
+' "$config_path" "$server_name" "$marker_path" >/dev/null 2>&1
+}
+
+# Capture all CLI output and expose only the three contracted result classes.
+verify_openclaw_mcp_server() {
+  local server_name="$1"
+  local openclaw_bin="$2"
+  local timeout_bin="$3"
+  local image_path="$4"
+  local connection_way="$5"
+  local status_prefix="Home Assistant connection $connection_way"
+  local output=""
+  local command_status=0
+  local classification=""
+
+  output=$(PATH="$image_path" "$timeout_bin" 30s "$openclaw_bin" mcp status --verbose --json 2>&1) || command_status=$?
+  classification=$(printf '%s' "$output" | /usr/bin/node -e '
+let input = "";
+process.stdin.on("data", (chunk) => { input += chunk; });
+process.stdin.on("end", () => {
+  const name = process.argv[1];
+  try {
+    const report = JSON.parse(input);
+    const server = Array.isArray(report.servers)
+      ? report.servers.find((entry) => entry?.name === name)
+      : report.servers?.[name];
+    const auth = server?.authStatus;
+    if (auth?.requiresAuthorization === true || auth?.state === "authorization-required") process.stdout.write("authorization-required\n");
+  } catch {}
+});
+' "$server_name" 2>/dev/null) || classification=""
+  if [ "$classification" = "authorization-required" ]; then
+    echo "INFO: $status_prefix: authorization-required; Run exactly: openclaw mcp login $server_name"
+    return 0
+  fi
+  if [ "$command_status" != "0" ]; then
+    echo "WARN: $status_prefix: probe failed (status unavailable)"
+    return 0
+  fi
+
+  output=""
+  command_status=0
+  output=$(PATH="$image_path" "$timeout_bin" 45s "$openclaw_bin" mcp doctor "$server_name" --probe --json 2>&1) || command_status=$?
+  classification=$(printf '%s' "$output" | /usr/bin/node -e '
+let input = "";
+process.stdin.on("data", (chunk) => { input += chunk; });
+process.stdin.on("end", () => {
+  const [name, exitCode] = process.argv.slice(1);
+  function selected(report) {
+    return Array.isArray(report?.servers)
+      ? report.servers.find((entry) => entry?.name === name)
+      : report?.servers?.[name] ?? report;
+  }
+  function needsAuth(value) {
+    if (!value || typeof value !== "object") return false;
+    if (value.requiresAuthorization === true || value.state === "authorization-required") return true;
+    return Object.values(value).some((entry) => needsAuth(entry));
+  }
+  function toolCount(value) {
+    if (!value || typeof value !== "object") return undefined;
+    if (Number.isInteger(value.tools) && value.tools >= 0) return value.tools;
+    if (Array.isArray(value.tools)) return value.tools.length;
+    if (Number.isInteger(value.toolCount) && value.toolCount >= 0) return value.toolCount;
+    for (const entry of Object.values(value)) {
+      const count = toolCount(entry);
+      if (count !== undefined) return count;
+    }
+    return undefined;
+  }
+  let report;
+  try { report = JSON.parse(input); } catch {}
+  const server = selected(report);
+  if (needsAuth(server) || /authorization-required|requires (?:additional )?OAuth authorization|run openclaw mcp login/i.test(input)) {
+    process.stdout.write("authorization-required\n");
+    return;
+  }
+  const count = toolCount(server) ?? (() => {
+    const match = input.match(/(?:connected[^\n]*?)?\b(\d+)\s+tools?\b/i);
+    return match ? Number(match[1]) : undefined;
+  })();
+  if (exitCode === "0" && count !== undefined) process.stdout.write(`connected, ${count} tools\n`);
+});
+' "$server_name" "$command_status" 2>/dev/null) || classification=""
+
+  case "$classification" in
+    authorization-required)
+      echo "INFO: $status_prefix: authorization-required; Run exactly: openclaw mcp login $server_name"
+      ;;
+    connected,*)
+      echo "INFO: $status_prefix: $classification"
+      ;;
+    *)
+      echo "WARN: $status_prefix: probe failed"
+      ;;
+  esac
+}
+
+configure_openclaw_mcp_entry() {
+  local server_name="$1"
+  local definition="$2"
+  local marker_path="$3"
+  local timeout_bin="$4"
+  local openclaw_bin="$5"
+  local image_path="$6"
+  local connection_way="$7"
+  local status_prefix="Home Assistant connection $connection_way"
+  local update_status=0
+
+  upsert_openclaw_mcp_server "$server_name" "$definition" "$marker_path" "$timeout_bin" || update_status=$?
+  if [ "$update_status" = "10" ]; then
+    echo "WARN: $status_prefix: OpenClaw MCP server '$server_name' exists without the add-on ownership marker and differs from the requested definition; leaving it and every foreign entry untouched."
+    return 0
+  fi
+  if [ "$update_status" != "0" ]; then
+    echo "WARN: $status_prefix: could not update OpenClaw MCP server '$server_name'; leaving foreign entries untouched."
+    return 0
+  fi
+  if [ -z "$openclaw_bin" ]; then
+    echo "WARN: $status_prefix: probe failed (openclaw CLI unavailable)"
+    return 0
+  fi
+  verify_openclaw_mcp_server "$server_name" "$openclaw_bin" "$timeout_bin" "$image_path" "$connection_way"
+}
+
 # ------------------------------------------------------------------------------
-# Auto-configure MCP (Model Context Protocol) for Home Assistant
-# Registers HA as an MCP server so OpenClaw can control HA entities/services.
-# Uses the configured homeassistant_token, with the Supervisor token only as
-# fallback. Every route must pass an authentication probe before registration.
-# Ensures pinned mcporter with the image Node.js runtime.
-# Reuses registration when the token is unchanged; probes on every start.
-# Standard route: supervisor proxy; localhost:8123 only without Supervisor.
+# Auto-configure the two supported Home Assistant MCP connection ways.
+# Way 2 is Home Assistant's official OAuth endpoint; way 3 is the community
+# server with an exact secret connect URL and an optional independent bearer.
+# Empty URLs are independent no-ops. No path substitutes homeassistant_token,
+# SUPERVISOR_TOKEN, another MCP server, or LLMAT for a failed authentication.
 # ------------------------------------------------------------------------------
 configure_ha_mcp() {
   [ "$AUTO_CONFIGURE_MCP" = "true" ] || return 0
+  [ -n "${HA_MCP_URL}${HA_OAUTH_MCP_URL}" ] || return 0
 
-  local mcporter_pin="0.17.1"
   local image_path="/usr/bin:$PATH"
-  local installed_version=""
-  local mcporter_bin=""
-  local npm_bin=""
   local curl_bin=""
   local timeout_bin=""
-  local npm_prefix=""
-  local persistent_mcporter=""
+  local openclaw_bin=""
 
-  # Resolve executables before prepending /usr/bin. The latter is only the
-  # runtime PATH for env-node shebangs; it must not select a stale mcporter or
-  # allow a persisted Homebrew Node.js to run it. No environment variable can
-  # replace these executables with an arbitrary credential recipient.
-  if ! npm_bin=$(command -v npm 2>/dev/null); then
-    echo "WARN: npm was not found; skipping MCP auto-configuration."
-    return 0
-  fi
-  if ! curl_bin=$(command -v curl 2>/dev/null); then
-    echo "WARN: curl was not found; skipping MCP auto-configuration."
-    return 0
-  fi
   if ! timeout_bin=$(command -v timeout 2>/dev/null); then
-    echo "WARN: coreutils timeout was not found; skipping bounded MCP install, version and registry operations."
+    if [ -n "$HA_OAUTH_MCP_URL" ]; then
+      echo "WARN: Home Assistant connection way 2 (official MCP, OAuth): coreutils timeout was not found; skipping bounded registration and verification."
+    fi
+    if [ -n "$HA_MCP_URL" ]; then
+      echo "WARN: Home Assistant connection way 3 (community MCP, URL + bearer): coreutils timeout was not found; skipping bounded registration and verification."
+    fi
     return 0
   fi
-  if ! npm_prefix=$(PATH="$image_path" "$timeout_bin" 30s "$npm_bin" prefix -g 2>/dev/null) || [ -z "$npm_prefix" ]; then
-    echo "WARN: Could not determine the npm global prefix; skipping MCP auto-configuration."
-    return 0
-  fi
-  persistent_mcporter="${npm_prefix}/bin/mcporter"
 
-  resolve_mcporter_binary() {
-    # The pinned image binary is the normal choice. After a repair, prefer the
-    # just-installed persistent binary so a stale image copy cannot shadow it.
-    if [ "${1:-image}" = "persistent" ] && [ -x "$persistent_mcporter" ]; then
-      mcporter_bin="$persistent_mcporter"
-      return 0
-    fi
-    if [ -x /usr/bin/mcporter ]; then
-      mcporter_bin="/usr/bin/mcporter"
-      return 0
-    fi
-    if [ -x "$persistent_mcporter" ]; then
-      mcporter_bin="$persistent_mcporter"
-      return 0
-    fi
-    mcporter_bin=""
-    return 1
-  }
-
-  read_mcporter_version() {
-    installed_version=""
-    if installed_version=$(PATH="$image_path" "$timeout_bin" 30s "$mcporter_bin" --version 2>/dev/null); then
-      return 0
-    fi
-    # stdout from a broken or timed-out binary is not a verified version.
-    installed_version=""
-    return 1
-  }
-
-  # mcporter's env-node shebang must resolve the image Node.js, not a persisted
-  # Homebrew installation. Repair only a missing or differently pinned CLI.
-  if resolve_mcporter_binary image; then
-    read_mcporter_version || true
-  fi
-  if [ "$installed_version" != "$mcporter_pin" ]; then
-    echo "INFO: Ensuring mcporter $mcporter_pin is installed with the image Node.js runtime..."
-    if ! PATH="$image_path" "$timeout_bin" 120s "$npm_bin" install -g "mcporter@$mcporter_pin"; then
-      echo "WARN: Could not install mcporter $mcporter_pin; skipping MCP auto-configuration. Check npm/network access and restart the app."
-      return 0
-    fi
-    if ! resolve_mcporter_binary persistent; then
-      echo "WARN: mcporter $mcporter_pin could not be found after installation; skipping MCP auto-configuration."
-      return 0
-    fi
-    read_mcporter_version || true
-    if [ "$installed_version" != "$mcporter_pin" ]; then
-      echo "WARN: mcporter $mcporter_pin could not be verified after installation; skipping MCP auto-configuration. Check the image Node.js/npm installation and restart the app."
-      return 0
-    fi
-  fi
-
-  local mcp_ha_url=""
-  local mcp_ha_token=""
-
-  if [ -n "$HA_TOKEN" ]; then
-    # The configured long-lived Home Assistant token always wins. The standard
-    # Supervisor proxy route works in every app network mode; loopback is only
-    # the host-network fallback when no Supervisor token is available.
-    mcp_ha_token="$HA_TOKEN"
-    if [ -n "${SUPERVISOR_TOKEN:-}" ]; then
-      mcp_ha_url="http://supervisor/core/api/mcp"
+  # Way 2 never uses the way-3 initialize probe: without stored OAuth tokens
+  # such a request would be a predictable 401 and can trigger HA IP bans.
+  if [ -n "$HA_OAUTH_MCP_URL" ]; then
+    openclaw_bin=$(command -v openclaw 2>/dev/null || true)
+    local oauth_definition=""
+    if ! oauth_definition=$(MCP_URL="$HA_OAUTH_MCP_URL" /usr/bin/node -e '
+const definition = {
+  url: process.env.MCP_URL,
+  transport: "streamable-http",
+  auth: "oauth",
+  oauth: {
+    clientMetadataUrl: "https://clawhub.ai/oauth/clients/openclaw.json",
+    redirectUrl: "http://localhost:8989/oauth/callback"
+  },
+  connectionTimeoutMs: 10000,
+  requestTimeoutMs: 30000
+};
+process.stdout.write(JSON.stringify(definition));
+'); then
+      echo "WARN: Home Assistant connection way 2 (official MCP, OAuth): could not build the definition; leaving OpenClaw configuration untouched."
     else
-      mcp_ha_url="http://localhost:8123/api/mcp"
+      configure_openclaw_mcp_entry \
+        "ha_official" "$oauth_definition" \
+        "${OPENCLAW_CONFIG_DIR}/.mcp_openclaw_ha_official_owned" \
+        "$timeout_bin" "$openclaw_bin" "$image_path" \
+        "way 2 (official MCP, OAuth)"
     fi
-  elif [ -n "${SUPERVISOR_TOKEN:-}" ]; then
-    mcp_ha_url="http://supervisor/core/api/mcp"
-    mcp_ha_token="$SUPERVISOR_TOKEN"
-  else
-    echo "INFO: MCP auto-configure enabled but no Supervisor or Home Assistant token is available — skipping"
-    echo "INFO: Set homeassistant_token in app Configuration, then restart"
+  fi
+
+  # Way 2 is complete. Do not probe way 3 when only the official OAuth URL is
+  # configured, and never treat it as a fallback.
+  [ -n "$HA_MCP_URL" ] || return 0
+
+  # Way 3 retains its bounded HTTP initialize probe. It does not require a
+  # separate MCP CLI or any package installation during startup.
+  if ! curl_bin=$(command -v curl 2>/dev/null); then
+    echo "WARN: Home Assistant connection way 3 (community MCP, URL + bearer): curl was not found; skipping registration and verification."
     return 0
   fi
 
   local http_status=""
-  local mcp_flag="${OPENCLAW_CONFIG_DIR}/.mcp_ha_configured"
-
-  remove_owned_ha_entry() {
-    # The marker is the ownership proof. Without it, even an exact HA entry is
-    # user-managed and must survive a failed probe unchanged.
-    [ -f "$mcp_flag" ] || return 0
-
-    # Resolve the registry through the installed mcporter's own paths.js. This
-    # is exactly resolveWriteTarget(--scope home): mcporterDir('config') plus
-    # mcporter.json. Delete only the exact own-property HA under mcporter's
-    # own file lock, and use its atomic writer to retain every other key, the
-    # file mode and symlink-aware same-directory rename semantics.
-    if ! PATH="$image_path" "$timeout_bin" 30s /usr/bin/node --input-type=module -e '
-import fs from "node:fs";
-import path from "node:path";
-import { pathToFileURL } from "node:url";
-const cliPath = fs.realpathSync(process.argv[1]);
-const packageRoot = path.dirname(path.dirname(cliPath));
-const { mcporterDir } = await import(pathToFileURL(path.join(packageRoot, "dist", "paths.js")).href);
-const { withFileLock, writeTextFileAtomic } = await import(pathToFileURL(path.join(packageRoot, "dist", "fs-json.js")).href);
-const registry = path.join(mcporterDir("config"), "mcporter.json");
-await withFileLock(registry, async () => {
-  let config;
-  try { config = JSON.parse(fs.readFileSync(registry, "utf8")); }
-  catch (error) { if (error.code === "ENOENT") return; throw error; }
-  if (!config || typeof config !== "object" || Array.isArray(config)) throw new Error("invalid home registry");
-  const servers = config.mcpServers;
-  if (!servers || typeof servers !== "object" || !Object.prototype.hasOwnProperty.call(servers, "HA")) return;
-  delete servers.HA;
-  await writeTextFileAtomic(registry, `${JSON.stringify(config, null, 2)}\n`);
-  });
-' "$mcporter_bin" >/dev/null 2>&1; then
-      echo "WARN: Could not remove the add-on-owned HA entry after the failed probe; other MCP entries were left untouched."
-      return 0
-    fi
-    if ! rm -f -- "$mcp_flag"; then
-      echo "WARN: Removed the add-on-owned HA entry but could not delete its ownership marker."
-      return 0
-    fi
-    echo "INFO: Removed the stale add-on-owned HA entry after the failed authentication probe"
-  }
+  local -a mcp_probe_auth=()
+  if [ -n "$HA_MCP_TOKEN" ]; then
+    mcp_probe_auth=(--header "Authorization: Bearer $HA_MCP_TOKEN")
+  fi
 
   if ! http_status=$(PATH="$image_path" "$curl_bin" \
       --silent --show-error --output /dev/null --write-out '%{http_code}' \
-      --connect-timeout 5 --max-time 10 --request POST "$mcp_ha_url" \
-      --header "Authorization: Bearer $mcp_ha_token" \
+      --connect-timeout 5 --max-time 10 --request POST "$HA_MCP_URL" \
+      "${mcp_probe_auth[@]}" \
       --header "Content-Type: application/json" \
       --header "Accept: application/json, text/event-stream" \
       --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"0"}}}' \
       2>/dev/null); then
-    remove_owned_ha_entry
-    echo "WARN: Home Assistant MCP route could not authenticate at $mcp_ha_url because the probe could not connect; skipping registration. Check connectivity and enter a valid Home Assistant long-lived token in the app Configuration, then restart."
+    echo "WARN: Home Assistant connection way 3 (community MCP, URL + bearer): probe could not connect; skipping registration and leaving every existing MCP entry untouched. Check ha_mcp_url and network connectivity, then restart."
     return 0
   fi
   if [ "$http_status" != "200" ]; then
-    remove_owned_ha_entry
-    echo "WARN: Home Assistant MCP route could not authenticate at $mcp_ha_url (HTTP $http_status); skipping registration. Enter a valid Home Assistant long-lived token in the app Configuration, then restart."
+    echo "WARN: Home Assistant connection way 3 (community MCP, URL + bearer): probe failed (HTTP $http_status); skipping registration and leaving every existing MCP entry untouched. Check ha_mcp_url and, only if the server requires one, ha_mcp_token, then restart."
     return 0
   fi
 
-  local mcp_token_hash=""
-  if ! mcp_token_hash=$(printf '%s\n%s' "$mcp_ha_url" "$mcp_ha_token" | sha256sum | cut -d' ' -f1); then
-    echo "WARN: Could not hash the Home Assistant MCP configuration; skipping registration without changing the registry."
-    return 0
-  fi
-
-  if [ -f "$mcp_flag" ] && [ "$(cat "$mcp_flag" 2>/dev/null)" = "$mcp_token_hash" ]; then
-    echo "INFO: MCP Home Assistant server already configured (token unchanged)"
+  # Keep the bearer as an environment reference; the literal token is exported
+  # only to child processes and is never persisted in openclaw.json.
+  local openclaw_ha_definition=""
+  if [ -n "$HA_MCP_TOKEN" ]; then
+    openclaw_ha_definition=$(MCP_URL="$HA_MCP_URL" /usr/bin/node -e '
+process.stdout.write(JSON.stringify({
+  url: process.env.MCP_URL,
+  transport: "streamable-http",
+  headers: { Authorization: "Bearer ${HA_MCP_TOKEN}" },
+  connectionTimeoutMs: 10000,
+  requestTimeoutMs: 30000
+}));
+') || openclaw_ha_definition=""
   else
-    echo "INFO: Configuring MCP for Home Assistant at $mcp_ha_url ..."
-    # config add atomically overwrites only the exact HA key in the home scope.
-    # Never invoke the client's removal command: its default scope and fuzzy
-    # matching can select a different registry and a user-owned, similar name.
-    if PATH="$image_path" "$timeout_bin" 30s "$mcporter_bin" config add HA "$mcp_ha_url" \
-        --header "Authorization=Bearer $mcp_ha_token" \
-        --scope home >/dev/null 2>&1; then
-      if ! printf '%s' "$mcp_token_hash" > "$mcp_flag"; then
-        echo "WARN: MCP server 'HA' was registered, but its ownership marker could not be written; skipping the marker and continuing startup."
-        return 0
-      fi
-      echo "INFO: MCP server 'HA' registered — OpenClaw can now control Home Assistant"
-    else
-      echo "WARN: MCP auto-configuration failed. Configure manually in the terminal:"
-      echo "WARN:   mcporter config add HA \"$mcp_ha_url\" --header \"Authorization=Bearer YOUR_TOKEN\" --scope home"
+    openclaw_ha_definition=$(MCP_URL="$HA_MCP_URL" /usr/bin/node -e '
+process.stdout.write(JSON.stringify({
+  url: process.env.MCP_URL,
+  transport: "streamable-http",
+  connectionTimeoutMs: 10000,
+  requestTimeoutMs: 30000
+}));
+') || openclaw_ha_definition=""
+  fi
+  if [ -z "$openclaw_ha_definition" ]; then
+    echo "WARN: Home Assistant connection way 3 (community MCP, URL + bearer): could not build the OpenClaw definition."
+  else
+    if [ -z "$openclaw_bin" ]; then
+      openclaw_bin=$(command -v openclaw 2>/dev/null || true)
     fi
+    configure_openclaw_mcp_entry \
+      "ha" "$openclaw_ha_definition" \
+      "${OPENCLAW_CONFIG_DIR}/.mcp_openclaw_ha_owned" \
+      "$timeout_bin" "$openclaw_bin" "$image_path" \
+      "way 3 (community MCP, URL + bearer)"
   fi
 }
 configure_ha_mcp
