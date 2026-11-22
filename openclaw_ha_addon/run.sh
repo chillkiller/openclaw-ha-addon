@@ -541,7 +541,7 @@ is_reserved_gateway_env_var() {
     # (nginx/node-relay config rendering, port guards, cert SANs). Allowing
     # them via gateway_env_vars would invalidate the explicit validation
     # run.sh and render_nginx.py perform (nginx/node config injection vector).
-    GATEWAY_PORT|GATEWAY_INTERNAL_PORT|GATEWAY_MODE|GATEWAY_BIND|GATEWAY_AUTH_MODE|GATEWAY_REMOTE_URL|GATEWAY_TLS_ENABLED|GATEWAY_TLS_AUTO|GATEWAY_LOG_LEVEL|GATEWAY_TRUSTED_PROXIES|NETWORK_MODE|ACCESS_MODE|INGRESS_PORT|TERMINAL_PORT|HTTPS_PROXY_PORT|ENABLE_HTTPS_PROXY|CERTS_DIR|LAN_IP|GW_PUBLIC_URL|GW_TOKEN|NGINX_LOG_LEVEL|SHOW_WEBUI|SHOW_TERMINAL|SHOW_DOCS|TAILSCALE_MODE|GATEWAY_ADDITIONAL_ALLOWED_ORIGINS|MDNS_MODE|CONTROLUI_DISABLE_DEVICE_AUTH|ACPX_ENABLED|ENABLE_OPENAI_API|BLOCKED_HOSTNAMES|AUTO_CONFIGURE_MCP|HA_MCP_URL|HA_MCP_TOKEN|HA_OAUTH_MCP_URL|TRACE_LOG_TO_CONSOLE|GATEWAY_LOG_TO_CONSOLE)
+    GATEWAY_PORT|GATEWAY_INTERNAL_PORT|GATEWAY_MODE|GATEWAY_BIND|GATEWAY_AUTH_MODE|GATEWAY_REMOTE_URL|GATEWAY_TLS_ENABLED|GATEWAY_TLS_AUTO|GATEWAY_LOG_LEVEL|GATEWAY_TRUSTED_PROXIES|NETWORK_MODE|ACCESS_MODE|INGRESS_PORT|TERMINAL_PORT|HTTPS_PROXY_PORT|ENABLE_HTTPS_PROXY|CERTS_DIR|LAN_IP|GW_PUBLIC_URL|GW_TOKEN|NGINX_LOG_LEVEL|SHOW_WEBUI|SHOW_TERMINAL|SHOW_DOCS|TAILSCALE_MODE|GATEWAY_ADDITIONAL_ALLOWED_ORIGINS|MDNS_MODE|CONTROLUI_DISABLE_DEVICE_AUTH|ACPX_ENABLED|ENABLE_OPENAI_API|BLOCKED_HOSTNAMES|AUTO_CONFIGURE_MCP|HA_MCP_URL|HA_MCP_TOKEN|HA_OAUTH_MCP_URL|LOCAL_MCP_CONFIG|TRACE_LOG_TO_CONSOLE|GATEWAY_LOG_TO_CONSOLE)
       return 0
       ;;
     *)
@@ -1904,6 +1904,64 @@ configure_openclaw_mcp_entry() {
 # SUPERVISOR_TOKEN, another MCP server, or LLMAT for a failed authentication.
 # ------------------------------------------------------------------------------
 configure_ha_mcp() {
+  # Optional operator-managed MCP configuration file. The Home Assistant
+  # Supervisor only exposes add-on options that exist in the installed
+  # manifest, so the MCP connect URLs can also be provided in a JSON file in
+  # the app's own config directory (editable through the app terminal).
+  # Add-on options always win; the file only fills values that are empty and
+  # can enable the switch, never disable it. Nothing from the file is logged.
+  local mcp_config_file="${LOCAL_MCP_CONFIG:-/config/.openclaw/ha-mcp.json}"
+  if [ -f "$mcp_config_file" ]; then
+    local mcp_file_values=()
+    local mcp_file_value=""
+    while IFS= read -r -d '' mcp_file_value; do
+      mcp_file_values+=("$mcp_file_value")
+    done < <(python3 - "$mcp_config_file" << 'PY' 2>/dev/null || true
+import json
+import sys
+
+try:
+    with open(sys.argv[1], encoding="utf-8") as handle:
+        data = json.load(handle)
+except Exception:
+    data = {}
+if not isinstance(data, dict):
+    data = {}
+
+
+def value(key: str) -> str:
+    raw = data.get(key)
+    return "" if raw is None else str(raw).strip()
+
+
+values = (
+    value("ha_mcp_url"),
+    value("ha_mcp_token"),
+    value("ha_oauth_mcp_url"),
+    "true" if data.get("auto_configure_mcp") is True else "",
+)
+for item in values:
+    sys.stdout.write(item + "\0")
+PY
+)
+    if [ "${#mcp_file_values[@]}" -ge 4 ]; then
+      if [ -z "$HA_MCP_URL" ] && [ -n "${mcp_file_values[0]}" ]; then
+        HA_MCP_URL="${mcp_file_values[0]}"
+      fi
+      if [ -z "$HA_MCP_TOKEN" ] && [ -n "${mcp_file_values[1]}" ]; then
+        HA_MCP_TOKEN="${mcp_file_values[1]}"
+        export HA_MCP_TOKEN
+      fi
+      if [ -z "$HA_OAUTH_MCP_URL" ] && [ -n "${mcp_file_values[2]}" ]; then
+        HA_OAUTH_MCP_URL="${mcp_file_values[2]}"
+      fi
+      if [ "${mcp_file_values[3]}" = "true" ]; then
+        AUTO_CONFIGURE_MCP="true"
+      fi
+    fi
+    unset mcp_file_values
+  fi
+
   [ "$AUTO_CONFIGURE_MCP" = "true" ] || return 0
   [ -n "${HA_MCP_URL}${HA_OAUTH_MCP_URL}" ] || return 0
 

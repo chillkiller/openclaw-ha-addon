@@ -641,5 +641,99 @@ raise SystemExit(0)
             self.assertFalse(any(arg.startswith("Authorization") for arg in call["args"]))
 
 
+    def write_local_mcp_config(self, payload: str) -> Path:
+        path = self.root / "ha-mcp.json"
+        path.write_text(payload, encoding="utf-8")
+        return path
+
+    def local_mcp_env(self, **overrides: str) -> dict[str, str]:
+        env = self.env.copy()
+        # The app parses the local file with python3; the stub directory alone
+        # does not provide it, so the real PATH is appended behind the stubs.
+        env["PATH"] = f"{self.bin}:{os.environ.get('PATH', '')}"
+        env.update(overrides)
+        return env
+
+    def test_local_mcp_config_file_fills_empty_options_and_enables_the_switch(self) -> None:
+        env = self.local_mcp_env(
+            HA_MCP_URL="",
+            HA_OAUTH_MCP_URL="",
+            AUTO_CONFIGURE_MCP="false",
+            LOCAL_MCP_CONFIG=str(self.write_local_mcp_config(json.dumps({
+                "ha_mcp_url": self.mcp_url,
+                "ha_oauth_mcp_url": self.oauth_url,
+                "auto_configure_mcp": True,
+            }))),
+        )
+
+        result = self.configure(env=env)
+
+        self.assert_booted(result)
+        self.assert_no_forbidden_tools()
+        servers = json.loads(self.openclaw_config.read_text(encoding="utf-8"))["mcp"]["servers"]
+        self.assertEqual(servers["ha"]["url"], self.mcp_url)
+        self.assertEqual(servers["ha_official"]["url"], self.oauth_url)
+        self.assertEqual(servers["ha_official"]["auth"], "oauth")
+        self.assertNotIn(self.ha_token, result.stdout + result.stderr)
+        self.assertNotIn(self.supervisor_token, result.stdout + result.stderr)
+
+    def test_add_on_options_win_over_the_local_mcp_config_file(self) -> None:
+        env = self.local_mcp_env(
+            HA_MCP_URL=self.mcp_url,
+            HA_OAUTH_MCP_URL=self.oauth_url,
+            LOCAL_MCP_CONFIG=str(self.write_local_mcp_config(json.dumps({
+                "ha_mcp_url": "http://from-file.invalid/mcp",
+                "ha_oauth_mcp_url": "http://from-file.invalid/api/mcp",
+            }))),
+        )
+
+        result = self.configure(env=env)
+
+        self.assert_booted(result)
+        servers = json.loads(self.openclaw_config.read_text(encoding="utf-8"))["mcp"]["servers"]
+        self.assertEqual(servers["ha"]["url"], self.mcp_url)
+        self.assertEqual(servers["ha_official"]["url"], self.oauth_url)
+        self.assertNotIn("from-file.invalid", json.dumps(servers))
+
+    def test_local_mcp_config_file_can_enable_the_switch_only(self) -> None:
+        env = self.local_mcp_env(
+            AUTO_CONFIGURE_MCP="false",
+            HA_MCP_URL="",
+            LOCAL_MCP_CONFIG=str(self.write_local_mcp_config(json.dumps({
+                "ha_mcp_url": self.mcp_url,
+                "auto_configure_mcp": True,
+            }))),
+        )
+
+        result = self.configure(env=env)
+
+        self.assert_booted(result)
+        servers = json.loads(self.openclaw_config.read_text(encoding="utf-8"))["mcp"]["servers"]
+        self.assertEqual(servers["ha"]["url"], self.mcp_url)
+        self.assertNotIn("ha_official", servers)
+
+    def test_broken_local_mcp_config_file_is_a_silent_noop(self) -> None:
+        env = self.local_mcp_env(
+            AUTO_CONFIGURE_MCP="false",
+            HA_MCP_URL="",
+            HA_OAUTH_MCP_URL="",
+            LOCAL_MCP_CONFIG=str(self.write_local_mcp_config("{ not json")),
+        )
+
+        result = self.configure(env=env)
+
+        self.assert_booted(result)
+        self.assert_no_forbidden_tools()
+        self.assertEqual(self.calls("curl"), [])
+        self.assertEqual(self.calls("openclaw"), [])
+        if self.openclaw_config.exists():
+            servers = (
+                json.loads(self.openclaw_config.read_text(encoding="utf-8"))
+                .get("mcp", {})
+                .get("servers", {})
+            )
+            self.assertEqual(servers, {})
+
+
 if __name__ == "__main__":
     unittest.main()

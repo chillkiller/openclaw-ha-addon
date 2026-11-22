@@ -635,6 +635,25 @@ The add-on configuration supports three independent connection ways. An empty op
 
 **A Home Assistant long-lived access token is not an MCP credential for way 2 and returns HTTP 401 at the official MCP endpoint.** `homeassistant_token` remains dedicated to way 1. Neither it nor the Supervisor token is copied into either MCP definition.
 
+##### Configuring the MCP ways when the options form does not offer the fields
+
+The Home Assistant Supervisor only lists add-on options that the **installed manifest** declares, and it re-reads that manifest only when the add-on version changes. If the MCP fields are missing from the add-on configuration page, the same values can be supplied through a JSON file in the app's own config directory, editable from the **web terminal**:
+
+```json
+{
+  "ha_oauth_mcp_url": "http://homeassistant.local:8123/api/mcp",
+  "ha_mcp_url": "http://homeassistant.local:9583/mcp/<secret-path>",
+  "ha_mcp_token": "",
+  "auto_configure_mcp": true
+}
+```
+
+- Path: `/config/.openclaw/ha-mcp.json`.
+- Precedence: add-on options always win. The file only fills values that are empty, and `auto_configure_mcp` can be enabled by the file but never disabled by it.
+- Every value is optional; an absent or unreadable file changes nothing.
+- The file is read once at startup, so a change takes effect after an app restart. Nothing from it is written to the log.
+- `auto_configure_mcp` still has to be enabled somewhere (option or file) before either MCP way is configured.
+
 ##### Way 1 — Home Assistant API (long-lived token)
 
 - Create a long-lived access token in the Home Assistant profile and paste it into `homeassistant_token`; no MCP switch is needed.

@@ -99,6 +99,8 @@ options:
     ha_oauth_mcp_url: ""
     # Way 3 - community Home Assistant MCP (URL + optional bearer)
     # Enables the community MCP server at its exact connect URL; it is not the official OAuth endpoint.
+    # Alternative source for these MCP options: /config/.openclaw/ha-mcp.json in the app config
+    # directory (the Supervisor only lists options that the installed manifest declares).
     ha_mcp_url: ""
     # Optional way-3 bearer for servers that require one; it is not used for way 1 or way 2.
     ha_mcp_token: ""
