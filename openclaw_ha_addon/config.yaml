@@ -94,24 +94,27 @@ options:
     # Way 1 - Home Assistant API (long-lived token)
     # Enables HA API, Assist-related API and script access; it is never an MCP credential.
     homeassistant_token: ""
-    # Way 2 - official Home Assistant MCP (OAuth 2.0/PKCE)
-    # Enables the official MCP server after interactive OAuth login; it never uses the way-1 token.
-    ha_oauth_mcp_url: ""
-    # Way 3 - community Home Assistant MCP (URL + optional bearer)
-    # Enables the community MCP server at its exact connect URL; it is not the official OAuth endpoint.
-    # Alternative source for these MCP options: /config/.openclaw/ha-mcp.json in the app config
-    # directory (the Supervisor only lists options that the installed manifest declares).
-    ha_mcp_url: ""
-    # Optional way-3 bearer for servers that require one; it is not used for way 1 or way 2.
-    ha_mcp_token: ""
+    # Way 2 - official Home Assistant MCP server (OAuth 2.0/PKCE).
+    # The URL of the official endpoint; an empty value uses the default
+    # Home Assistant URL. It is never used as an MCP credential.
+    ha_official_mcp_url: ""
+    # Way 2 switch. The official server needs one interactive OAuth consent in
+    # the Control UI before it can be used.
+    ha_official_mcp_enabled: false
+    # Way 3 - community/custom MCP servers (Streamable HTTP).
+    # Comma-separated list of connect URLs; the secret is part of each URL and
+    # every URL becomes its own MCP server entry.
+    ha_mcp_urls: ""
+    # Way 3 switch. Without a configured URL the way does nothing.
+    ha_mcp_enabled: true
     # Optional: outbound HTTP/HTTPS proxy for OpenClaw network access.
     # Example: "http://192.0.2.2:3128"
     http_proxy: ""
     # Enable OpenAI-compatible Chat Completions API endpoint (for HA Assist pipeline)
     enable_openai_api: false
-    # Auto-configure the MCP URLs above. Empty URLs are independent no-ops.
-    # Never uses homeassistant_token or an automatic fallback between servers.
-    auto_configure_mcp: false
+    # The two MCP switches are independent. An empty URL list or a disabled
+    # switch is a silent no-op; no way substitutes a credential for another and
+    # there is no automatic fallback between the ways.
 
   # ACPX is the BUNDLED OpenClaw plugin that provides the harness
   # infrastructure (codes Claude / Codex / OpenCode; `openclaw` itself stays
@@ -302,12 +305,12 @@ schema:
   enable_docs: bool?
   ha_integration:
     homeassistant_token: str?
-    ha_oauth_mcp_url: str?
-    ha_mcp_url: str?
-    ha_mcp_token: str?
+    ha_official_mcp_url: str?
+    ha_official_mcp_enabled: bool?
+    ha_mcp_urls: str?
+    ha_mcp_enabled: bool?
     http_proxy: str?
     enable_openai_api: bool?
-    auto_configure_mcp: bool?
   acpx_enabled: bool?
   harness_config_writer_enabled: bool?
   harness:

@@ -48,12 +48,12 @@ if jq -e 'has("harness") or has("ha_integration")' "$OPTIONS_FILE" >/dev/null 2>
       acpx_enabled: .acpx_enabled,
       harness_config_writer_enabled: .harness_config_writer_enabled,
       homeassistant_token: .ha_integration.homeassistant_token,
-      ha_mcp_url: .ha_integration.ha_mcp_url,
-      ha_mcp_token: .ha_integration.ha_mcp_token,
-      ha_oauth_mcp_url: .ha_integration.ha_oauth_mcp_url,
+      ha_mcp_urls: .ha_integration.ha_mcp_urls,
+      ha_mcp_enabled: .ha_integration.ha_mcp_enabled,
+      ha_official_mcp_url: .ha_integration.ha_official_mcp_url,
+      ha_official_mcp_enabled: .ha_integration.ha_official_mcp_enabled,
       http_proxy: .ha_integration.http_proxy,
       enable_openai_api: .ha_integration.enable_openai_api,
-      auto_configure_mcp: .ha_integration.auto_configure_mcp,
       harness_base_url: .harness.harness_base_url,
       harness_api_key: .harness.harness_api_key,
       harness_model: .harness.harness_model,
@@ -99,12 +99,12 @@ fi
 TZNAME=$(jq -r '.timezone // "Europe/Berlin"' "$OPTIONS_FILE")
 GW_PUBLIC_URL=$(jq -r '.gateway_public_url // empty' "$OPTIONS_FILE")
 HA_TOKEN=$(jq -r '.homeassistant_token // empty' "$OPTIONS_FILE")
-HA_MCP_URL=$(jq -r '.ha_mcp_url // empty' "$OPTIONS_FILE")
-HA_MCP_TOKEN=$(jq -r '.ha_mcp_token // empty' "$OPTIONS_FILE")
-HA_OAUTH_MCP_URL=$(jq -r '.ha_oauth_mcp_url // empty' "$OPTIONS_FILE")
-# OpenClaw resolves Bearer ${HA_MCP_TOKEN} in mcp.servers at connection time.
-# Export the option without logging it; gateway_env_vars cannot override it.
-export HA_MCP_TOKEN
+# Way 3: comma-separated list of community/custom MCP server URLs. The secret
+# is part of each URL. Way 2: the official Home Assistant MCP server.
+HA_MCP_URLS=$(jq -r '.ha_mcp_urls // empty' "$OPTIONS_FILE")
+HA_MCP_ENABLED=$(jq -r 'if .ha_mcp_enabled == null then true else (.ha_mcp_enabled | tostring) end' "$OPTIONS_FILE")
+HA_OFFICIAL_MCP_URL=$(jq -r '.ha_official_mcp_url // empty' "$OPTIONS_FILE")
+HA_OFFICIAL_MCP_ENABLED=$(jq -r 'if .ha_official_mcp_enabled == null then false else (.ha_official_mcp_enabled | tostring) end' "$OPTIONS_FILE")
 ADDON_HTTP_PROXY=$(jq -r '.http_proxy // empty' "$OPTIONS_FILE")
 # enable_terminal is retired: the web terminal is always on (Ingress
 # maintenance/repair surface); only terminal_port is configurable.
@@ -147,7 +147,6 @@ GATEWAY_ADDITIONAL_ALLOWED_ORIGINS=$(jq -r '.gateway_additional_allowed_origins 
 CONTROLUI_DISABLE_DEVICE_AUTH=$(jq -r 'if has("controlui_disable_device_auth") then (.controlui_disable_device_auth|tostring) else "true" end' "$OPTIONS_FILE")
 FORCE_IPV4_DNS=$(jq -r 'if has("force_ipv4_dns") then (.force_ipv4_dns|tostring) else "true" end' "$OPTIONS_FILE")
 NGINX_LOG_LEVEL=$(jq -r '.nginx_log_level // "minimal"' "$OPTIONS_FILE")
-AUTO_CONFIGURE_MCP=$(jq -r '.auto_configure_mcp // false' "$OPTIONS_FILE")
 GW_ENV_VARS_TYPE=$(jq -r 'if .gateway_env_vars == null then "null" else (.gateway_env_vars | type) end' "$OPTIONS_FILE")
 GW_ENV_VARS_RAW=$(jq -r '.gateway_env_vars // empty' "$OPTIONS_FILE")
 GW_ENV_VARS_JSON=$(jq -c '.gateway_env_vars // []' "$OPTIONS_FILE")
@@ -541,7 +540,7 @@ is_reserved_gateway_env_var() {
     # (nginx/node-relay config rendering, port guards, cert SANs). Allowing
     # them via gateway_env_vars would invalidate the explicit validation
     # run.sh and render_nginx.py perform (nginx/node config injection vector).
-    GATEWAY_PORT|GATEWAY_INTERNAL_PORT|GATEWAY_MODE|GATEWAY_BIND|GATEWAY_AUTH_MODE|GATEWAY_REMOTE_URL|GATEWAY_TLS_ENABLED|GATEWAY_TLS_AUTO|GATEWAY_LOG_LEVEL|GATEWAY_TRUSTED_PROXIES|NETWORK_MODE|ACCESS_MODE|INGRESS_PORT|TERMINAL_PORT|HTTPS_PROXY_PORT|ENABLE_HTTPS_PROXY|CERTS_DIR|LAN_IP|GW_PUBLIC_URL|GW_TOKEN|NGINX_LOG_LEVEL|SHOW_WEBUI|SHOW_TERMINAL|SHOW_DOCS|TAILSCALE_MODE|GATEWAY_ADDITIONAL_ALLOWED_ORIGINS|MDNS_MODE|CONTROLUI_DISABLE_DEVICE_AUTH|ACPX_ENABLED|ENABLE_OPENAI_API|BLOCKED_HOSTNAMES|AUTO_CONFIGURE_MCP|HA_MCP_URL|HA_MCP_TOKEN|HA_OAUTH_MCP_URL|LOCAL_MCP_CONFIG|TRACE_LOG_TO_CONSOLE|GATEWAY_LOG_TO_CONSOLE)
+    GATEWAY_PORT|GATEWAY_INTERNAL_PORT|GATEWAY_MODE|GATEWAY_BIND|GATEWAY_AUTH_MODE|GATEWAY_REMOTE_URL|GATEWAY_TLS_ENABLED|GATEWAY_TLS_AUTO|GATEWAY_LOG_LEVEL|GATEWAY_TRUSTED_PROXIES|NETWORK_MODE|ACCESS_MODE|INGRESS_PORT|TERMINAL_PORT|HTTPS_PROXY_PORT|ENABLE_HTTPS_PROXY|CERTS_DIR|LAN_IP|GW_PUBLIC_URL|GW_TOKEN|NGINX_LOG_LEVEL|SHOW_WEBUI|SHOW_TERMINAL|SHOW_DOCS|TAILSCALE_MODE|GATEWAY_ADDITIONAL_ALLOWED_ORIGINS|MDNS_MODE|CONTROLUI_DISABLE_DEVICE_AUTH|ACPX_ENABLED|ENABLE_OPENAI_API|BLOCKED_HOSTNAMES|HA_MCP_URLS|HA_MCP_ENABLED|HA_OFFICIAL_MCP_URL|HA_OFFICIAL_MCP_ENABLED|TRACE_LOG_TO_CONSOLE|GATEWAY_LOG_TO_CONSOLE)
       return 0
       ;;
     *)
@@ -1882,88 +1881,30 @@ configure_openclaw_mcp_entry() {
 # SUPERVISOR_TOKEN, another MCP server, or LLMAT for a failed authentication.
 # ------------------------------------------------------------------------------
 configure_ha_mcp() {
-  # Optional operator-managed MCP configuration file. The Home Assistant
-  # Supervisor only exposes add-on options that exist in the installed
-  # manifest, so the MCP connect URLs can also be provided in a JSON file in
-  # the app's own config directory (editable through the app terminal).
-  # Add-on options always win; the file only fills values that are empty and
-  # can enable the switch, never disable it. Nothing from the file is logged.
-  local mcp_config_file="${LOCAL_MCP_CONFIG:-/config/.openclaw/ha-mcp.json}"
-  if [ -f "$mcp_config_file" ]; then
-    local mcp_file_values=()
-    local mcp_file_value=""
-    while IFS= read -r -d '' mcp_file_value; do
-      mcp_file_values+=("$mcp_file_value")
-    done < <(python3 - "$mcp_config_file" << 'PY' 2>/dev/null || true
-import json
-import sys
-
-try:
-    with open(sys.argv[1], encoding="utf-8") as handle:
-        data = json.load(handle)
-except Exception:
-    data = {}
-if not isinstance(data, dict):
-    data = {}
-
-
-def value(key: str) -> str:
-    raw = data.get(key)
-    return "" if raw is None else str(raw).strip()
-
-
-values = (
-    value("ha_mcp_url"),
-    value("ha_mcp_token"),
-    value("ha_oauth_mcp_url"),
-    "true" if data.get("auto_configure_mcp") is True else "",
-)
-for item in values:
-    sys.stdout.write(item + "\0")
-PY
-)
-    if [ "${#mcp_file_values[@]}" -ge 4 ]; then
-      if [ -z "$HA_MCP_URL" ] && [ -n "${mcp_file_values[0]}" ]; then
-        HA_MCP_URL="${mcp_file_values[0]}"
-      fi
-      if [ -z "$HA_MCP_TOKEN" ] && [ -n "${mcp_file_values[1]}" ]; then
-        HA_MCP_TOKEN="${mcp_file_values[1]}"
-        export HA_MCP_TOKEN
-      fi
-      if [ -z "$HA_OAUTH_MCP_URL" ] && [ -n "${mcp_file_values[2]}" ]; then
-        HA_OAUTH_MCP_URL="${mcp_file_values[2]}"
-      fi
-      if [ "${mcp_file_values[3]}" = "true" ]; then
-        AUTO_CONFIGURE_MCP="true"
-      fi
-    fi
-    unset mcp_file_values
-  fi
-
-  [ "$AUTO_CONFIGURE_MCP" = "true" ] || return 0
-  [ -n "${HA_MCP_URL}${HA_OAUTH_MCP_URL}" ] || return 0
-
+  # Way 2 and way 3 are independent. Way 2 needs the official Home Assistant
+  # MCP server (OAuth 2.0/PKCE, one interactive consent). Way 3 configures
+  # community/custom MCP servers whose URL carries the secret; the option holds
+  # a comma-separated list and every URL becomes its own server entry.
+  # Neither way substitutes a credential for the other, and neither falls back
+  # to the long-lived token, the Supervisor token or another server.
   local image_path="/usr/bin:$PATH"
   local curl_bin=""
   local timeout_bin=""
   local openclaw_bin=""
 
   if ! timeout_bin=$(command -v timeout 2>/dev/null); then
-    if [ -n "$HA_OAUTH_MCP_URL" ]; then
-      echo "WARN: Home Assistant connection way 2 (official MCP, OAuth): coreutils timeout was not found; skipping bounded registration and verification."
-    fi
-    if [ -n "$HA_MCP_URL" ]; then
-      echo "WARN: Home Assistant connection way 3 (community MCP, URL + bearer): coreutils timeout was not found; skipping bounded registration and verification."
-    fi
+    echo "WARN: Home Assistant connection: coreutils timeout was not found; skipping MCP configuration and verification."
     return 0
   fi
 
-  # Way 2 never uses the way-3 initialize probe: without stored OAuth tokens
-  # such a request would be a predictable 401 and can trigger HA IP bans.
-  if [ -n "$HA_OAUTH_MCP_URL" ]; then
+  if [ "$HA_OFFICIAL_MCP_ENABLED" = "true" ]; then
     openclaw_bin=$(command -v openclaw 2>/dev/null || true)
-    local oauth_definition=""
-    if ! oauth_definition=$(MCP_URL="$HA_OAUTH_MCP_URL" /usr/bin/node -e '
+    local official_url="$HA_OFFICIAL_MCP_URL"
+    if [ -z "$official_url" ]; then
+      official_url="http://homeassistant.local:8123/api/mcp"
+    fi
+    local official_definition=""
+    if ! official_definition=$(MCP_URL="$official_url" /usr/bin/node -e '
 const definition = {
   url: process.env.MCP_URL,
   transport: "streamable-http",
@@ -1980,81 +1921,80 @@ process.stdout.write(JSON.stringify(definition));
       echo "WARN: Home Assistant connection way 2 (official MCP, OAuth): could not build the definition; leaving OpenClaw configuration untouched."
     else
       configure_openclaw_mcp_entry \
-        "ha_official" "$oauth_definition" \
+        "ha-official" "$official_definition" \
         "${OPENCLAW_CONFIG_DIR}/.mcp_openclaw_ha_official_owned" \
         "$timeout_bin" "$openclaw_bin" "$image_path" \
         "way 2 (official MCP, OAuth)"
     fi
   fi
 
-  # Way 2 is complete. Do not probe way 3 when only the official OAuth URL is
-  # configured, and never treat it as a fallback.
-  [ -n "$HA_MCP_URL" ] || return 0
-
-  # Way 3 retains its bounded HTTP initialize probe. It does not require a
-  # separate MCP CLI or any package installation during startup.
-  if ! curl_bin=$(command -v curl 2>/dev/null); then
-    echo "WARN: Home Assistant connection way 3 (community MCP, URL + bearer): curl was not found; skipping registration and verification."
+  if [ "$HA_MCP_ENABLED" != "true" ] || [ -z "$HA_MCP_URLS" ]; then
     return 0
   fi
-
-  local http_status=""
-  local -a mcp_probe_auth=()
-  if [ -n "$HA_MCP_TOKEN" ]; then
-    mcp_probe_auth=(--header "Authorization: Bearer $HA_MCP_TOKEN")
+  if ! curl_bin=$(command -v curl 2>/dev/null); then
+    echo "WARN: Home Assistant connection way 3 (community MCP, URL list): curl was not found; skipping registration and verification."
+    return 0
   fi
+  openclaw_bin=$(command -v openclaw 2>/dev/null || true)
 
-  if ! http_status=$(PATH="$image_path" "$curl_bin" \
+  local -a mcp_url_entries=()
+  local -a mcp_used_names=()
+  local mcp_url=""
+  local mcp_host=""
+  local mcp_name=""
+  local mcp_candidate=""
+  local mcp_suffix=1
+  local http_status=""
+  local community_definition=""
+
+  IFS=',' read -r -a mcp_url_entries <<< "$HA_MCP_URLS"
+  for mcp_url in "${mcp_url_entries[@]}"; do
+    mcp_url="$(printf '%s' "$mcp_url" | tr -d '[:space:]')"
+    [ -n "$mcp_url" ] || continue
+
+    mcp_host="$(printf '%s' "$mcp_url" | sed -e 's|^[a-zA-Z][a-zA-Z0-9+.-]*://||' -e 's|[:/].*$||')"
+    mcp_candidate="ha-mcp-${mcp_host//./-}"
+    mcp_name="$mcp_candidate"
+    while printf '%s\n' "${mcp_used_names[@]:-}" | grep -qx "$mcp_candidate"; do
+      mcp_suffix=$((mcp_suffix + 1))
+      mcp_candidate="ha-mcp-${mcp_host//./-}-$mcp_suffix"
+      mcp_name="$mcp_candidate"
+    done
+    mcp_used_names+=("$mcp_name")
+
+    http_status=""
+    http_status=$(PATH="$image_path" "$curl_bin" \
       --silent --show-error --output /dev/null --write-out '%{http_code}' \
-      --connect-timeout 5 --max-time 10 --request POST "$HA_MCP_URL" \
-      "${mcp_probe_auth[@]}" \
+      --connect-timeout 5 --max-time 10 --request POST "$mcp_url" \
       --header "Content-Type: application/json" \
       --header "Accept: application/json, text/event-stream" \
       --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"0"}}}' \
-      2>/dev/null); then
-    echo "WARN: Home Assistant connection way 3 (community MCP, URL + bearer): probe could not connect; skipping registration and leaving every existing MCP entry untouched. Check ha_mcp_url and network connectivity, then restart."
-    return 0
-  fi
-  if [ "$http_status" != "200" ]; then
-    echo "WARN: Home Assistant connection way 3 (community MCP, URL + bearer): probe failed (HTTP $http_status); skipping registration and leaving every existing MCP entry untouched. Check ha_mcp_url and, only if the server requires one, ha_mcp_token, then restart."
-    return 0
-  fi
-
-  # Keep the bearer as an environment reference; the literal token is exported
-  # only to child processes and is never persisted in openclaw.json.
-  local openclaw_ha_definition=""
-  if [ -n "$HA_MCP_TOKEN" ]; then
-    openclaw_ha_definition=$(MCP_URL="$HA_MCP_URL" /usr/bin/node -e '
-process.stdout.write(JSON.stringify({
-  url: process.env.MCP_URL,
-  transport: "streamable-http",
-  headers: { Authorization: "Bearer ${HA_MCP_TOKEN}" },
-  connectionTimeoutMs: 10000,
-  requestTimeoutMs: 30000
-}));
-') || openclaw_ha_definition=""
-  else
-    openclaw_ha_definition=$(MCP_URL="$HA_MCP_URL" /usr/bin/node -e '
-process.stdout.write(JSON.stringify({
-  url: process.env.MCP_URL,
-  transport: "streamable-http",
-  connectionTimeoutMs: 10000,
-  requestTimeoutMs: 30000
-}));
-') || openclaw_ha_definition=""
-  fi
-  if [ -z "$openclaw_ha_definition" ]; then
-    echo "WARN: Home Assistant connection way 3 (community MCP, URL + bearer): could not build the OpenClaw definition."
-  else
-    if [ -z "$openclaw_bin" ]; then
-      openclaw_bin=$(command -v openclaw 2>/dev/null || true)
+      2>/dev/null) || http_status=""
+    if [ "$http_status" != "200" ]; then
+      echo "WARN: Home Assistant connection way 3 (community MCP, URL list): a configured URL did not answer the initialize probe (HTTP ${http_status:-no answer}); it was not registered and every existing MCP entry stays untouched."
+      continue
     fi
+
+    community_definition=""
+    community_definition=$(MCP_URL="$mcp_url" /usr/bin/node -e '
+process.stdout.write(JSON.stringify({
+  url: process.env.MCP_URL,
+  transport: "streamable-http",
+  connectionTimeoutMs: 10000,
+  requestTimeoutMs: 30000
+}));
+') || community_definition=""
+    if [ -z "$community_definition" ]; then
+      echo "WARN: Home Assistant connection way 3 (community MCP, URL list): could not build the definition for a configured URL; it was not registered."
+      continue
+    fi
+
     configure_openclaw_mcp_entry \
-      "ha" "$openclaw_ha_definition" \
-      "${OPENCLAW_CONFIG_DIR}/.mcp_openclaw_ha_owned" \
+      "$mcp_name" "$community_definition" \
+      "${OPENCLAW_CONFIG_DIR}/.mcp_openclaw_${mcp_name}_owned" \
       "$timeout_bin" "$openclaw_bin" "$image_path" \
-      "way 3 (community MCP, URL + bearer)"
-  fi
+      "way 3 (community MCP, URL list)"
+  done
 }
 configure_ha_mcp
 

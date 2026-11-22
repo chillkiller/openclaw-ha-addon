@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import os
 from pathlib import Path
 import shlex
 import stat
@@ -31,6 +30,7 @@ def shell_function(name: str, source: str = RUN_TEXT) -> str:
 
 
 class ConfigureHaMcpTests(unittest.TestCase):
+
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
@@ -46,8 +46,8 @@ class ConfigureHaMcpTests(unittest.TestCase):
         self.log = self.root / "calls.jsonl"
         self.ha_token = "test-home-assistant-credential"
         self.supervisor_token = "test-supervisor-credential"
-        self.mcp_url = "https://ha-mcp.example.test/private-test-connect-path"
-        self.mcp_token = "test-mcp-bearer-credential"
+        self.mcp_url = "https://community.example.test/private-test-connect-path"
+        self.community_name = "ha-mcp-community-example-test"
         self.oauth_url = "http://ha.example.test/api/mcp"
         self.openclaw_config = self.config / "openclaw.json"
         self.openclaw_config.write_text("{}\n", encoding="utf-8")
@@ -66,12 +66,12 @@ class ConfigureHaMcpTests(unittest.TestCase):
             "HOME": str(self.home),
             "XDG_CONFIG_HOME": str(self.xdg),
             "OPENCLAW_CONFIG_DIR": str(self.config),
-            "AUTO_CONFIGURE_MCP": "true",
             "HA_TOKEN": self.ha_token,
             "SUPERVISOR_TOKEN": self.supervisor_token,
-            "HA_MCP_URL": self.mcp_url,
-            "HA_MCP_TOKEN": "",
-            "HA_OAUTH_MCP_URL": "",
+            "HA_MCP_URLS": self.mcp_url,
+            "HA_MCP_ENABLED": "true",
+            "HA_OFFICIAL_MCP_URL": "",
+            "HA_OFFICIAL_MCP_ENABLED": "false",
             "OPENCLAW_CONFIG_PATH": str(self.openclaw_config),
             "MCP_TEST_LOG": str(self.log),
             "STUB_CURL_STATUS": "200",
@@ -97,7 +97,6 @@ record = {
     "path": os.environ.get("PATH", ""),
     "home": os.environ.get("HOME", ""),
     "xdg": os.environ.get("XDG_CONFIG_HOME", ""),
-    "has_ha_mcp_token": bool(os.environ.get("HA_MCP_TOKEN")),
 }
 with open(os.environ["MCP_TEST_LOG"], "a", encoding="utf-8") as handle:
     handle.write(json.dumps(record) + "\\n")
@@ -112,12 +111,17 @@ if name in {"mcporter", "npm"}:
 
 if name == "openclaw" and args[:2] == ["mcp", "status"]:
     requires_auth = os.environ.get("STUB_OPENCLAW_AUTH_REQUIRED") == "1"
+    with open(os.environ["OPENCLAW_CONFIG_PATH"], encoding="utf-8") as handle:
+        server_names = list(json.load(handle).get("mcp", {}).get("servers", {}))
     payload = {"servers": [
-        {"name": "ha", "ok": True, "authStatus": {"requiresAuthorization": False, "state": "authorized"}},
-        {"name": "ha_official", "ok": True, "authStatus": {"requiresAuthorization": requires_auth, "state": "authorization-required" if requires_auth else "authorized"}},
+        {"name": server_name, "ok": True, "authStatus": {
+            "requiresAuthorization": requires_auth and server_name == "ha-official",
+            "state": "authorization-required" if requires_auth and server_name == "ha-official" else "authorized",
+        }}
+        for server_name in server_names
     ]}
     if os.environ.get("STUB_OPENCLAW_INCLUDE_SECRET") == "1":
-        payload["privateDiagnostic"] = [os.environ.get("HA_MCP_TOKEN", ""), os.environ.get("STUB_PRIVATE_URL", "")]
+        payload["privateDiagnostic"] = [os.environ.get("STUB_PRIVATE_URL", "")]
     print(json.dumps(payload))
     raise SystemExit(int(os.environ.get("STUB_OPENCLAW_STATUS_EXIT", "0")))
 
@@ -129,13 +133,20 @@ if name == "openclaw" and args[:2] == ["mcp", "doctor"]:
         "issues": ([{"message": "OAuth credentials are not authorized; run openclaw mcp login " + args[2]}] if requires_auth else []),
     }]}
     if os.environ.get("STUB_OPENCLAW_INCLUDE_SECRET") == "1":
-        payload["privateDiagnostic"] = [os.environ.get("HA_MCP_TOKEN", ""), os.environ.get("STUB_PRIVATE_URL", "")]
+        payload["privateDiagnostic"] = [os.environ.get("STUB_PRIVATE_URL", "")]
     print(json.dumps(payload))
     raise SystemExit(int(os.environ.get("STUB_OPENCLAW_DOCTOR_EXIT", "1" if requires_auth else "0")))
 
 if name == "curl":
-    print(os.environ.get("STUB_CURL_STATUS", "200"), end="")
-    raise SystemExit(int(os.environ.get("STUB_CURL_EXIT", "0")))
+    url = args[args.index("--request") + 2]
+    if url == os.environ.get("STUB_CURL_FAIL_URL"):
+        status = os.environ.get("STUB_CURL_FAIL_STATUS", "503")
+        exit_code = int(os.environ.get("STUB_CURL_FAIL_EXIT", "0"))
+    else:
+        status = os.environ.get("STUB_CURL_STATUS", "200")
+        exit_code = int(os.environ.get("STUB_CURL_EXIT", "0"))
+    print(status, end="")
+    raise SystemExit(exit_code)
 
 raise SystemExit(0)
 """,
@@ -179,13 +190,10 @@ raise SystemExit(0)
             timeout=15,
             check=False,
         )
-        effective_env = env or self.env
         self.assertNotIn(self.ha_token, result.stdout + result.stderr)
         self.assertNotIn(self.supervisor_token, result.stdout + result.stderr)
         self.assertNotIn(self.mcp_url, result.stdout + result.stderr)
         self.assertNotIn(self.oauth_url, result.stdout + result.stderr)
-        if effective_env.get("HA_MCP_TOKEN"):
-            self.assertNotIn(self.mcp_token, result.stdout + result.stderr)
         return result
 
     def calls(self, tool: str | None = None) -> list[dict]:
@@ -222,7 +230,8 @@ raise SystemExit(0)
         )
         path.chmod(mode)
 
-    def test_way_3_without_token_registers_natively_without_mcporter_or_npm(self) -> None:
+
+    def test_way_3_registers_natively_without_mcporter_or_npm(self) -> None:
         self.write_registry(self.registry, {"HA": {"baseUrl": "http://user-owned"}})
         registry_before = self.registry.read_bytes()
 
@@ -230,7 +239,8 @@ raise SystemExit(0)
 
         self.assert_booted(result)
         self.assert_no_forbidden_tools()
-        definition = json.loads(self.openclaw_config.read_text(encoding="utf-8"))["mcp"]["servers"]["ha"]
+        servers = json.loads(self.openclaw_config.read_text(encoding="utf-8"))["mcp"]["servers"]
+        definition = servers[self.community_name]
         self.assertEqual(definition, {
             "url": self.mcp_url,
             "transport": "streamable-http",
@@ -248,33 +258,32 @@ raise SystemExit(0)
         self.assertEqual(probe[probe.index("--max-time") + 1], "10")
         self.assertEqual(self.registry.read_bytes(), registry_before)
         self.assertFalse((self.config / ".mcp_ha_configured").exists())
-        self.assertTrue((self.config / ".mcp_openclaw_ha_owned").is_file())
+        marker = self.config / f".mcp_openclaw_{self.community_name}_owned"
+        self.assertTrue(marker.is_file())
         self.assertEqual([call["args"] for call in self.calls("openclaw")], [
             ["mcp", "status", "--verbose", "--json"],
         ])
-        self.assertIn("Home Assistant connection way 3 (community MCP, URL + bearer): connected", result.stdout)
+        self.assertIn("Home Assistant connection way 3 (community MCP, URL list): connected", result.stdout)
         self.assert_timeout_call("30s", "/usr/bin/node", "--input-type=module")
 
-    def test_way_3_openclaw_uses_only_environment_bearer_reference(self) -> None:
+    def test_way_3_sends_and_persists_no_authorization_header(self) -> None:
         env = self.env.copy()
         env["HA_TOKEN"] = ""
-        env["HA_MCP_TOKEN"] = self.mcp_token
 
         result = self.configure(env=env)
 
         self.assert_booted(result)
         self.assert_no_forbidden_tools()
         raw = self.openclaw_config.read_bytes()
-        definition = json.loads(raw)["mcp"]["servers"]["ha"]
-        self.assertEqual(definition["headers"], {"Authorization": "Bearer ${HA_MCP_TOKEN}"})
-        self.assertNotIn(self.mcp_token.encode(), raw)
-        self.assertTrue(all(call["has_ha_mcp_token"] for call in self.calls("openclaw")))
+        definition = json.loads(raw)["mcp"]["servers"][self.community_name]
+        self.assertNotIn("headers", definition)
+        self.assertNotIn(b"Authorization", raw)
+        self.assertNotIn(b"Bearer", raw)
         probe = self.calls("curl")[0]["args"]
-        self.assertIn(f"Authorization: Bearer {self.mcp_token}", probe)
-        self.assertNotIn(f"Authorization: Bearer {self.supervisor_token}", probe)
+        self.assertFalse(any(arg.startswith("Authorization:") for arg in probe))
+        self.assertNotIn(self.supervisor_token, probe)
         self.assertIn("Content-Type: application/json", probe)
         self.assertIn("Accept: application/json, text/event-stream", probe)
-        self.assertNotIn(self.mcp_token, result.stdout + result.stderr)
 
     def test_failed_probe_preserves_all_registries_and_markers(self) -> None:
         original = '{"mcp":{"servers":{"operator":{"command":"keep"}}},"unrelated":[1,  2]}\n'
@@ -283,7 +292,7 @@ raise SystemExit(0)
         self.write_registry(self.project_registry, {"HA": {"baseUrl": "http://project"}})
         legacy_marker = self.config / ".mcp_ha_configured"
         legacy_marker.write_text("legacy-marker", encoding="utf-8")
-        native_marker = self.config / ".mcp_openclaw_ha_owned"
+        native_marker = self.config / f".mcp_openclaw_{self.community_name}_owned"
         native_marker.write_text("native-marker", encoding="utf-8")
         before = tuple(path.read_bytes() for path in (
             self.openclaw_config, self.registry, self.project_registry, legacy_marker, native_marker,
@@ -295,9 +304,9 @@ raise SystemExit(0)
 
         self.assert_booted(result)
         self.assert_no_forbidden_tools()
-        self.assertIn("probe failed", result.stdout)
+        self.assertIn("did not answer the initialize probe", result.stdout)
         self.assertIn("HTTP 401", result.stdout)
-        self.assertIn("leaving every existing MCP entry untouched", result.stdout)
+        self.assertIn("every existing MCP entry stays untouched", result.stdout)
         self.assertEqual(len(self.calls("curl")), 1)
         self.assertEqual(self.calls("openclaw"), [])
         after = tuple(path.read_bytes() for path in (
@@ -305,6 +314,7 @@ raise SystemExit(0)
         ))
         self.assertEqual(after, before)
         self.assertEqual(stat.S_IMODE(self.registry.stat().st_mode), 0o640)
+
 
     def test_probe_transport_failure_skips_registration_and_continues(self) -> None:
         before = self.openclaw_config.read_bytes()
@@ -316,8 +326,8 @@ raise SystemExit(0)
 
         self.assert_booted(result)
         self.assert_no_forbidden_tools()
-        self.assertIn("probe could not connect", result.stdout)
-        self.assertIn("skipping registration", result.stdout)
+        self.assertIn("did not answer the initialize probe (HTTP no answer)", result.stdout)
+        self.assertIn("it was not registered", result.stdout)
         self.assertEqual(len(self.calls("curl")), 1)
         self.assertEqual(self.calls("openclaw"), [])
         self.assertEqual(self.openclaw_config.read_bytes(), before)
@@ -327,9 +337,8 @@ raise SystemExit(0)
         before = self.registry.read_bytes()
         openclaw_before = self.openclaw_config.read_bytes()
         env = self.env.copy()
-        env["HA_MCP_URL"] = ""
-        env["HA_OAUTH_MCP_URL"] = ""
-        env["HA_MCP_TOKEN"] = self.mcp_token
+        env["HA_MCP_URLS"] = ""
+        env["HA_OFFICIAL_MCP_URL"] = ""
 
         result = self.configure(env=env)
 
@@ -341,14 +350,13 @@ raise SystemExit(0)
         self.assertEqual(self.openclaw_config.read_bytes(), openclaw_before)
         self.assertFalse((self.config / ".mcp_ha_configured").exists())
 
-    def test_switch_off_with_urls_is_silent_and_does_nothing(self) -> None:
+
+    def test_way_3_switch_off_with_urls_is_silent_and_does_nothing(self) -> None:
         self.write_registry(self.registry, {"HA": {"baseUrl": "http://user-owned"}})
         before = self.registry.read_bytes()
         openclaw_before = self.openclaw_config.read_bytes()
         env = self.env.copy()
-        env["AUTO_CONFIGURE_MCP"] = "false"
-        env["HA_OAUTH_MCP_URL"] = self.oauth_url
-        env["HA_MCP_TOKEN"] = self.mcp_token
+        env["HA_MCP_ENABLED"] = "false"
 
         result = self.configure(env=env)
 
@@ -358,6 +366,7 @@ raise SystemExit(0)
         self.assertEqual(self.calls(), [])
         self.assertEqual(self.registry.read_bytes(), before)
         self.assertEqual(self.openclaw_config.read_bytes(), openclaw_before)
+        self.assertNotIn("Home Assistant connection", result.stdout)
 
     def test_missing_timeout_warns_and_skips_external_mcp_calls(self) -> None:
         (self.bin / "timeout").unlink()
@@ -394,14 +403,15 @@ raise SystemExit(0)
 
     def test_way_2_writes_oauth_definition_without_mcporter_or_npm(self) -> None:
         env = self.env.copy()
-        env["HA_MCP_URL"] = ""
-        env["HA_OAUTH_MCP_URL"] = self.oauth_url
+        env["HA_MCP_URLS"] = ""
+        env["HA_OFFICIAL_MCP_URL"] = self.oauth_url
+        env["HA_OFFICIAL_MCP_ENABLED"] = "true"
 
         result = self.configure(env=env)
 
         self.assert_booted(result)
         self.assert_no_forbidden_tools()
-        definition = json.loads(self.openclaw_config.read_text(encoding="utf-8"))["mcp"]["servers"]["ha_official"]
+        definition = json.loads(self.openclaw_config.read_text(encoding="utf-8"))["mcp"]["servers"]["ha-official"]
         self.assertEqual(definition, {
             "url": self.oauth_url,
             "transport": "streamable-http",
@@ -422,8 +432,9 @@ raise SystemExit(0)
 
     def test_way_2_identical_definition_does_not_write_again(self) -> None:
         env = self.env.copy()
-        env["HA_MCP_URL"] = ""
-        env["HA_OAUTH_MCP_URL"] = self.oauth_url
+        env["HA_MCP_URLS"] = ""
+        env["HA_OFFICIAL_MCP_URL"] = self.oauth_url
+        env["HA_OFFICIAL_MCP_ENABLED"] = "true"
         first = self.configure(env=env)
         self.assert_booted(first)
         self.openclaw_config.chmod(0o640)
@@ -454,7 +465,8 @@ raise SystemExit(0)
         )
         self.openclaw_config.write_text(original, encoding="utf-8")
         env = self.env.copy()
-        env["HA_OAUTH_MCP_URL"] = self.oauth_url
+        env["HA_OFFICIAL_MCP_URL"] = self.oauth_url
+        env["HA_OFFICIAL_MCP_ENABLED"] = "true"
 
         result = self.configure(env=env)
 
@@ -468,16 +480,17 @@ raise SystemExit(0)
         self.assertEqual(updated_bytes.count(foreign_other), 1)
         self.assertEqual(updated_bytes.count(unrelated), 1)
         servers = json.loads(updated_bytes)["mcp"]["servers"]
-        self.assertIn("ha", servers)
-        self.assertIn("ha_official", servers)
+        self.assertIn(self.community_name, servers)
+        self.assertIn("ha-official", servers)
 
     def test_way_2_refuses_different_unowned_entry_without_any_probe(self) -> None:
-        original = '{"mcp":{"servers":{"ha_official":{"url":"http://operator.example/api/mcp"},"operator":{"command":"keep"}}}}\n'
+        original = '{"mcp":{"servers":{"ha-official":{"url":"http://operator.example/api/mcp"},"operator":{"command":"keep"}}}}\n'
         self.openclaw_config.write_text(original, encoding="utf-8")
         before = self.openclaw_config.read_bytes()
         env = self.env.copy()
-        env["HA_MCP_URL"] = ""
-        env["HA_OAUTH_MCP_URL"] = self.oauth_url
+        env["HA_MCP_URLS"] = ""
+        env["HA_OFFICIAL_MCP_URL"] = self.oauth_url
+        env["HA_OFFICIAL_MCP_ENABLED"] = "true"
 
         result = self.configure(env=env)
 
@@ -489,8 +502,12 @@ raise SystemExit(0)
         self.assertEqual(self.calls("openclaw"), [])
         self.assertEqual(self.calls("curl"), [])
 
+
     def test_way_3_refuses_different_unowned_entry_after_successful_probe(self) -> None:
-        original = '{"mcp":{"servers":{"ha":{"url":"http://operator.example/mcp"},"operator":{"command":"keep"}}}}\n'
+        original = json.dumps({"mcp": {"servers": {
+            self.community_name: {"url": "http://operator.example/mcp"},
+            "operator": {"command": "keep"},
+        }}}) + "\n"
         self.openclaw_config.write_text(original, encoding="utf-8")
         before = self.openclaw_config.read_bytes()
 
@@ -498,17 +515,22 @@ raise SystemExit(0)
 
         self.assert_booted(result)
         self.assert_no_forbidden_tools()
-        self.assertIn("way 3 (community MCP, URL + bearer): OpenClaw MCP server 'ha' exists without the add-on ownership marker", result.stdout)
+        self.assertIn(
+            "way 3 (community MCP, URL list): OpenClaw MCP server "
+            f"'{self.community_name}' exists without the add-on ownership marker",
+            result.stdout,
+        )
         self.assertEqual(self.openclaw_config.read_bytes(), before)
-        self.assertFalse((self.config / ".mcp_openclaw_ha_owned").exists())
+        marker = self.config / f".mcp_openclaw_{self.community_name}_owned"
+        self.assertFalse(marker.exists())
         self.assertEqual(self.calls("openclaw"), [])
         self.assertEqual(len(self.calls("curl")), 1)
 
     def test_way_2_authorization_required_prints_exact_login_and_no_fallback(self) -> None:
         env = self.env.copy()
-        env["HA_MCP_URL"] = ""
-        env["HA_MCP_TOKEN"] = self.mcp_token
-        env["HA_OAUTH_MCP_URL"] = self.oauth_url
+        env["HA_MCP_URLS"] = ""
+        env["HA_OFFICIAL_MCP_URL"] = self.oauth_url
+        env["HA_OFFICIAL_MCP_ENABLED"] = "true"
         env["STUB_OPENCLAW_AUTH_REQUIRED"] = "1"
         env["STUB_OPENCLAW_INCLUDE_SECRET"] = "1"
         env["STUB_PRIVATE_URL"] = self.oauth_url
@@ -518,13 +540,13 @@ raise SystemExit(0)
         self.assert_booted(result)
         self.assert_no_forbidden_tools()
         self.assertIn("Home Assistant connection way 2 (official MCP, OAuth): authorization-required", result.stdout)
-        self.assertIn("Run exactly: openclaw mcp login ha_official", result.stdout)
+        self.assertIn("Run exactly: openclaw mcp login ha-official", result.stdout)
         connection_lines = [
             line for line in result.stdout.splitlines() if "Home Assistant connection" in line
         ]
         self.assertEqual(connection_lines, [
             "INFO: Home Assistant connection way 2 (official MCP, OAuth): "
-            "authorization-required; Run exactly: openclaw mcp login ha_official"
+            "authorization-required; Run exactly: openclaw mcp login ha-official"
         ])
         self.assertNotIn("connected", result.stdout)
         self.assertEqual([call["args"] for call in self.calls("openclaw")], [["mcp", "status", "--verbose", "--json"]])
@@ -532,8 +554,9 @@ raise SystemExit(0)
 
     def test_startup_never_runs_the_offline_doctor_probe(self) -> None:
         env = self.env.copy()
-        env["HA_MCP_URL"] = ""
-        env["HA_OAUTH_MCP_URL"] = self.oauth_url
+        env["HA_MCP_URLS"] = ""
+        env["HA_OFFICIAL_MCP_URL"] = self.oauth_url
+        env["HA_OFFICIAL_MCP_ENABLED"] = "true"
         env["STUB_OPENCLAW_DOCTOR_AUTH_REQUIRED"] = "1"
 
         result = self.configure(env=env)
@@ -548,7 +571,6 @@ raise SystemExit(0)
 
     def test_status_never_echoes_secret_diagnostics(self) -> None:
         env = self.env.copy()
-        env["HA_MCP_TOKEN"] = self.mcp_token
         env["STUB_OPENCLAW_INCLUDE_SECRET"] = "1"
         env["STUB_PRIVATE_URL"] = self.mcp_url
         env["STUB_OPENCLAW_DOCTOR_EXIT"] = "1"
@@ -557,15 +579,14 @@ raise SystemExit(0)
 
         self.assert_booted(result)
         self.assert_no_forbidden_tools()
-        self.assertIn("Home Assistant connection way 3 (community MCP, URL + bearer): connected", result.stdout)
+        self.assertIn("Home Assistant connection way 3 (community MCP, URL list): connected", result.stdout)
         self.assertNotIn("privateDiagnostic", result.stdout + result.stderr)
-        self.assertNotIn(self.mcp_token, result.stdout + result.stderr)
         self.assertNotIn(self.mcp_url, result.stdout + result.stderr)
 
     def test_way_1_stores_private_token_and_announces_without_probing(self) -> None:
         env = self.env.copy()
-        env["HA_MCP_URL"] = ""
-        env["HA_OAUTH_MCP_URL"] = ""
+        env["HA_MCP_URLS"] = ""
+        env["HA_OFFICIAL_MCP_URL"] = ""
 
         result = self.configure(env=env, include_api_token=True)
 
@@ -582,9 +603,8 @@ raise SystemExit(0)
     def test_no_connection_way_is_silent_and_touches_no_state(self) -> None:
         env = self.env.copy()
         env["HA_TOKEN"] = ""
-        env["HA_MCP_URL"] = ""
-        env["HA_OAUTH_MCP_URL"] = ""
-        env["HA_MCP_TOKEN"] = self.mcp_token
+        env["HA_MCP_URLS"] = ""
+        env["HA_OFFICIAL_MCP_URL"] = ""
         before = self.openclaw_config.read_bytes()
 
         result = self.configure(env=env, include_api_token=True)
@@ -598,8 +618,8 @@ raise SystemExit(0)
 
     def test_all_three_ways_emit_exactly_three_ordered_secret_free_lines(self) -> None:
         env = self.env.copy()
-        env["HA_OAUTH_MCP_URL"] = self.oauth_url
-        env["HA_MCP_TOKEN"] = self.mcp_token
+        env["HA_OFFICIAL_MCP_URL"] = self.oauth_url
+        env["HA_OFFICIAL_MCP_ENABLED"] = "true"
         env["STUB_OPENCLAW_INCLUDE_SECRET"] = "1"
         env["STUB_PRIVATE_URL"] = self.mcp_url
 
@@ -612,14 +632,13 @@ raise SystemExit(0)
         self.assertEqual(connection_lines, [
             "INFO: Home Assistant connection way 1 (API, long-lived token): token stored for API/Assist/scripts",
             "INFO: Home Assistant connection way 2 (official MCP, OAuth): connected",
-            "INFO: Home Assistant connection way 3 (community MCP, URL + bearer): connected",
+            "INFO: Home Assistant connection way 3 (community MCP, URL list): connected",
         ])
         self.assertEqual(
             [line for line in result.stdout.splitlines() if "MCP" in line],
             connection_lines[1:],
         )
         self.assertNotIn(self.ha_token, result.stdout + result.stderr)
-        self.assertNotIn(self.mcp_token, result.stdout + result.stderr)
         self.assertNotIn(self.mcp_url, result.stdout + result.stderr)
         self.assertNotIn(self.oauth_url, result.stdout + result.stderr)
         self.assertEqual(self.api_token_file.read_text(encoding="utf-8"), self.ha_token)
@@ -638,99 +657,119 @@ raise SystemExit(0)
             self.assertNotIn(self.supervisor_token, call["args"])
             self.assertFalse(any(arg.startswith("Authorization") for arg in call["args"]))
 
-
-    def write_local_mcp_config(self, payload: str) -> Path:
-        path = self.root / "ha-mcp.json"
-        path.write_text(payload, encoding="utf-8")
-        return path
-
-    def local_mcp_env(self, **overrides: str) -> dict[str, str]:
+    def test_way_3_two_reachable_urls_register_separate_native_entries(self) -> None:
+        first_url = "https://alpha.example.test/first-private-path"
+        second_url = "https://beta.example.test/second-private-path"
         env = self.env.copy()
-        # The app parses the local file with python3; the stub directory alone
-        # does not provide it, so the real PATH is appended behind the stubs.
-        env["PATH"] = f"{self.bin}:{os.environ.get('PATH', '')}"
-        env.update(overrides)
-        return env
-
-    def test_local_mcp_config_file_fills_empty_options_and_enables_the_switch(self) -> None:
-        env = self.local_mcp_env(
-            HA_MCP_URL="",
-            HA_OAUTH_MCP_URL="",
-            AUTO_CONFIGURE_MCP="false",
-            LOCAL_MCP_CONFIG=str(self.write_local_mcp_config(json.dumps({
-                "ha_mcp_url": self.mcp_url,
-                "ha_oauth_mcp_url": self.oauth_url,
-                "auto_configure_mcp": True,
-            }))),
-        )
+        env["HA_MCP_URLS"] = f"{first_url},{second_url}"
 
         result = self.configure(env=env)
 
         self.assert_booted(result)
         self.assert_no_forbidden_tools()
         servers = json.loads(self.openclaw_config.read_text(encoding="utf-8"))["mcp"]["servers"]
-        self.assertEqual(servers["ha"]["url"], self.mcp_url)
-        self.assertEqual(servers["ha_official"]["url"], self.oauth_url)
-        self.assertEqual(servers["ha_official"]["auth"], "oauth")
-        self.assertNotIn(self.ha_token, result.stdout + result.stderr)
-        self.assertNotIn(self.supervisor_token, result.stdout + result.stderr)
+        self.assertEqual(servers["ha-mcp-alpha-example-test"]["url"], first_url)
+        self.assertEqual(servers["ha-mcp-beta-example-test"]["url"], second_url)
+        self.assertEqual(len(servers), 2)
+        self.assertEqual(len(self.calls("curl")), 2)
+        self.assertEqual(len(self.calls("openclaw")), 2)
+        self.assertEqual(result.stdout.count("way 3 (community MCP, URL list): connected"), 2)
+        self.assertNotIn(first_url, result.stdout + result.stderr)
+        self.assertNotIn(second_url, result.stdout + result.stderr)
 
-    def test_add_on_options_win_over_the_local_mcp_config_file(self) -> None:
-        env = self.local_mcp_env(
-            HA_MCP_URL=self.mcp_url,
-            HA_OAUTH_MCP_URL=self.oauth_url,
-            LOCAL_MCP_CONFIG=str(self.write_local_mcp_config(json.dumps({
-                "ha_mcp_url": "http://from-file.invalid/mcp",
-                "ha_oauth_mcp_url": "http://from-file.invalid/api/mcp",
-            }))),
+    def test_way_3_unreachable_url_preserves_foreign_entries_and_leaks_no_secret(self) -> None:
+        original = (
+            '{"mcp":{"servers":{"operator"  : {"command":"keep",'
+            '"args":[1,  2]}}},"unrelated":[1,  2]}\n'
         )
-
-        result = self.configure(env=env)
-
-        self.assert_booted(result)
-        servers = json.loads(self.openclaw_config.read_text(encoding="utf-8"))["mcp"]["servers"]
-        self.assertEqual(servers["ha"]["url"], self.mcp_url)
-        self.assertEqual(servers["ha_official"]["url"], self.oauth_url)
-        self.assertNotIn("from-file.invalid", json.dumps(servers))
-
-    def test_local_mcp_config_file_can_enable_the_switch_only(self) -> None:
-        env = self.local_mcp_env(
-            AUTO_CONFIGURE_MCP="false",
-            HA_MCP_URL="",
-            LOCAL_MCP_CONFIG=str(self.write_local_mcp_config(json.dumps({
-                "ha_mcp_url": self.mcp_url,
-                "auto_configure_mcp": True,
-            }))),
-        )
-
-        result = self.configure(env=env)
-
-        self.assert_booted(result)
-        servers = json.loads(self.openclaw_config.read_text(encoding="utf-8"))["mcp"]["servers"]
-        self.assertEqual(servers["ha"]["url"], self.mcp_url)
-        self.assertNotIn("ha_official", servers)
-
-    def test_broken_local_mcp_config_file_is_a_silent_noop(self) -> None:
-        env = self.local_mcp_env(
-            AUTO_CONFIGURE_MCP="false",
-            HA_MCP_URL="",
-            HA_OAUTH_MCP_URL="",
-            LOCAL_MCP_CONFIG=str(self.write_local_mcp_config("{ not json")),
-        )
+        self.openclaw_config.write_text(original, encoding="utf-8")
+        failed_url = "https://offline.example.test/private-offline-secret"
+        env = self.env.copy()
+        env["HA_MCP_URLS"] = f"{self.mcp_url},{failed_url}"
+        env["STUB_CURL_FAIL_URL"] = failed_url
+        env["STUB_CURL_FAIL_STATUS"] = "503"
 
         result = self.configure(env=env)
 
         self.assert_booted(result)
         self.assert_no_forbidden_tools()
+        updated = self.openclaw_config.read_bytes()
+        self.assertIn(b'"operator"  : {"command":"keep","args":[1,  2]}', updated)
+        self.assertIn(b'"unrelated":[1,  2]', updated)
+        servers = json.loads(updated)["mcp"]["servers"]
+        self.assertIn(self.community_name, servers)
+        self.assertNotIn("ha-mcp-offline-example-test", servers)
+        self.assertEqual(len(self.calls("curl")), 2)
+        self.assertEqual(len(self.calls("openclaw")), 1)
+        self.assertIn("HTTP 503", result.stdout)
+        self.assertIn("every existing MCP entry stays untouched", result.stdout)
+        self.assertNotIn(failed_url, result.stdout + result.stderr)
+        self.assertNotIn("private-offline-secret", result.stdout + result.stderr)
+
+    def test_way_3_same_host_urls_get_numeric_suffix(self) -> None:
+        first_url = "https://same-host.example.test/first-secret"
+        second_url = "https://same-host.example.test/second-secret"
+        env = self.env.copy()
+        env["HA_MCP_URLS"] = f"{first_url},{second_url}"
+
+        result = self.configure(env=env)
+
+        self.assert_booted(result)
+        servers = json.loads(self.openclaw_config.read_text(encoding="utf-8"))["mcp"]["servers"]
+        self.assertEqual(servers["ha-mcp-same-host-example-test"]["url"], first_url)
+        self.assertEqual(servers["ha-mcp-same-host-example-test-2"]["url"], second_url)
+        self.assertEqual(len(self.calls("curl")), 2)
+        self.assertNotIn(first_url, result.stdout + result.stderr)
+        self.assertNotIn(second_url, result.stdout + result.stderr)
+
+    def test_way_2_switch_off_with_url_is_silent_and_does_nothing(self) -> None:
+        before = self.openclaw_config.read_bytes()
+        env = self.env.copy()
+        env["HA_MCP_URLS"] = ""
+        env["HA_OFFICIAL_MCP_URL"] = self.oauth_url
+        env["HA_OFFICIAL_MCP_ENABLED"] = "false"
+
+        result = self.configure(env=env)
+
+        self.assert_booted(result)
+        self.assertEqual(result.stdout, "BOOT_CONTINUED\n")
+        self.assertEqual(result.stderr, "")
+        self.assertEqual(self.calls(), [])
+        self.assertEqual(self.openclaw_config.read_bytes(), before)
+
+    def test_way_2_empty_url_uses_official_default(self) -> None:
+        env = self.env.copy()
+        env["HA_MCP_URLS"] = ""
+        env["HA_OFFICIAL_MCP_URL"] = ""
+        env["HA_OFFICIAL_MCP_ENABLED"] = "true"
+
+        result = self.configure(env=env)
+
+        self.assert_booted(result)
+        definition = json.loads(self.openclaw_config.read_text(encoding="utf-8"))["mcp"]["servers"]["ha-official"]
+        self.assertEqual(definition["url"], "http://homeassistant.local:8123/api/mcp")
+        self.assertEqual(definition["auth"], "oauth")
         self.assertEqual(self.calls("curl"), [])
-        self.assertEqual(self.calls("openclaw"), [])
-        if self.openclaw_config.exists():
-            servers = (
-                json.loads(self.openclaw_config.read_text(encoding="utf-8"))
-                .get("mcp", {})
-                .get("servers", {})
-            )
-            self.assertEqual(servers, {})
+
+    def test_way_3_list_trims_whitespace_and_skips_empty_entries(self) -> None:
+        first_url = "https://trim-one.example.test/first-secret"
+        second_url = "https://trim-two.example.test/second-secret"
+        env = self.env.copy()
+        env["HA_MCP_URLS"] = f"  {first_url}  , ,\t{second_url} \n"
+
+        result = self.configure(env=env)
+
+        self.assert_booted(result)
+        servers = json.loads(self.openclaw_config.read_text(encoding="utf-8"))["mcp"]["servers"]
+        self.assertEqual(servers["ha-mcp-trim-one-example-test"]["url"], first_url)
+        self.assertEqual(servers["ha-mcp-trim-two-example-test"]["url"], second_url)
+        probed_urls = [
+            call["args"][call["args"].index("--request") + 2]
+            for call in self.calls("curl")
+        ]
+        self.assertEqual(probed_urls, [first_url, second_url])
+        self.assertNotIn(first_url, result.stdout + result.stderr)
+        self.assertNotIn(second_url, result.stdout + result.stderr)
 
 
 if __name__ == "__main__":
