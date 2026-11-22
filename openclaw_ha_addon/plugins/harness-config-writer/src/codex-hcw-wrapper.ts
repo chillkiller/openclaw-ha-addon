@@ -40,6 +40,7 @@ import {
   buildCodexConfigToml,
   buildCodexModelCatalogJson,
   normalizeBaseUrlForMatch,
+  overlayCodexCatalog,
   type HarnessDeployFile,
 } from "./harness-config-writer.js";
 
@@ -87,14 +88,17 @@ export function buildCodexHcwConfigToml(
   entry: HarnessConfigEntry,
   catalogPath?: string,
   postTurnCompactThresholdPercent?: number,
+  warnings: string[] = [],
+  modelCatalog?: ModelCatalog,
 ): string {
-  return buildCodexConfigToml(entry, catalogPath, postTurnCompactThresholdPercent);
+  return buildCodexConfigToml(entry, catalogPath, postTurnCompactThresholdPercent, warnings, modelCatalog);
 }
 
 export function buildCodexHcwWrapperScript(
   entry: HarnessConfigEntry,
   paths: HarnessWriterPaths,
   modelCatalog?: ModelCatalog,
+  warnings: string[] = [],
 ): string {
   const homeDir = resolveCodexHcwHomePath(paths);
   const authPath = resolveCodexHcwAuthPath(paths);
@@ -109,13 +113,16 @@ export function buildCodexHcwWrapperScript(
     modelCatalog && entry.models !== undefined && entry.models.length > 0
       ? buildCodexModelCatalogJson(entry.models, modelCatalog.metaById, [])
       : null;
+  const effectiveCatalog = overlayCodexCatalog(entry, builtCatalog, warnings);
 
   const configToml = buildCodexHcwConfigToml(
     entry,
-    builtCatalog ? catalogPath : undefined,
+    effectiveCatalog ? catalogPath : undefined,
     postTurnCompactThresholdPercent,
+    warnings,
+    modelCatalog,
   );
-  const authJson = buildCodexHcwAuthJson(entry.apiKey ?? "ollama");
+  const authJson = buildCodexHcwAuthJson("ollama");
 
   // Fallback Capture-Pfad (legacy): aus dem Writer-Source-Stand zur
   // Generierungszeit abgeleitet. Wird nur geprüft, wenn der stabile
@@ -217,7 +224,7 @@ function writeAuthJson() {
   const apiKey = (process.env.CODEX_API_KEY || process.env.OPENAI_API_KEY || "").trim();
   const content = apiKey
     ? JSON.stringify({ OPENAI_API_KEY: apiKey, tokens: null, last_refresh: null }, null, 2) + "\\n"
-    : AUTH_JSON;
+    : (readText(AUTH_PATH) ?? AUTH_JSON);
   atomicWrite(AUTH_PATH, content, 0o600);
 }
 
@@ -528,7 +535,8 @@ export function deployCodexHcwWrapper(
 
   mkdirSync(homePath, { recursive: true, mode: 0o700 });
 
-  const wrapperScript = buildCodexHcwWrapperScript(entry, paths, modelCatalog);
+  const warnings: string[] = [];
+  const wrapperScript = buildCodexHcwWrapperScript(entry, paths, modelCatalog, warnings);
   const wrapperAction = writeWrapperIfDiffers(wrapperPath, wrapperScript);
   logger?.info?.(`[codex-hcw] wrapper ${wrapperPath}: ${wrapperAction}`);
 
@@ -538,13 +546,16 @@ export function deployCodexHcwWrapper(
 
   const builtCatalog =
     modelCatalog && entry.models !== undefined && entry.models.length > 0
-      ? buildCodexModelCatalogJson(entry.models, modelCatalog.metaById, [])
+      ? buildCodexModelCatalogJson(entry.models, modelCatalog.metaById, warnings)
       : null;
+  const effectiveCatalog = overlayCodexCatalog(entry, builtCatalog, warnings);
 
   const configToml = buildCodexHcwConfigToml(
     entry,
-    builtCatalog ? catalogPath : undefined,
+    effectiveCatalog ? catalogPath : undefined,
     postTurnCompactThresholdPercent,
+    warnings,
+    modelCatalog,
   );
 
   const configAction = writeIfMissingOrDiffers(configPath, configToml);
@@ -557,12 +568,14 @@ export function deployCodexHcwWrapper(
   const authAction = writeIfMissingOrDiffers(authPath, buildCodexHcwAuthJson(entry.apiKey ?? "ollama"), 0o600);
   files.push({ path: authPath, action: authAction });
 
-  if (builtCatalog) {
-    const catalogAction = writeIfMissingOrDiffers(catalogPath, builtCatalog.content);
+  if (effectiveCatalog) {
+    const catalogAction = writeIfMissingOrDiffers(catalogPath, effectiveCatalog.content);
     files.push({ path: catalogPath, action: catalogAction });
   }
 
-  return { wrapperPath, homePath, configPath, authPath, catalogPath: builtCatalog ? catalogPath : undefined, files };
+  for (const warning of new Set(warnings)) logger?.warn?.(`[codex-hcw] ${warning}`);
+
+  return { wrapperPath, homePath, configPath, authPath, catalogPath: effectiveCatalog ? catalogPath : undefined, files };
 }
 
 

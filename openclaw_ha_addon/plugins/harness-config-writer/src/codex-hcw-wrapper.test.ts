@@ -92,6 +92,7 @@ async function runGeneratedWrapper(
     modelCatalog?: ReturnType<typeof buildModelCatalog>;
     createCatalog?: boolean;
     createStableAdapter?: boolean;
+    codexApiKey?: string;
     extraArgs?: string[];
   } = {},
 ): Promise<{
@@ -131,7 +132,12 @@ async function runGeneratedWrapper(
     const child = spawn(
       process.execPath,
       [wrapperPath, ...(options.extraArgs ?? [])],
-      { env: { ...process.env, CODEX_API_KEY: "test-key" } },
+      {
+        env: {
+          ...process.env,
+          CODEX_API_KEY: options.codexApiKey !== undefined ? options.codexApiKey : "test-key",
+        },
+      },
     );
     let stdout = "";
     let stderr = "";
@@ -211,6 +217,14 @@ describe("buildCodexHcwWrapperScript", () => {
     expect(script.length).toBeLessThan(20 * 1024);
     expect(script).not.toContain("base_instructions");
     expect(script).not.toContain("context_window");
+  });
+
+  it("does not embed the configured credential in the generated wrapper", () => {
+    const secret = "synthetic-wrapper-secret";
+    const script = buildCodexHcwWrapperScript({ ...OLLAMA, apiKey: secret }, paths());
+    expect(script).not.toContain(secret);
+    expect(script).toContain("const AUTH_JSON =");
+    expect(script).toContain("readText(AUTH_PATH) ?? AUTH_JSON");
   });
 
   it("passes received args through to the adapter unchanged", () => {
@@ -314,6 +328,22 @@ describe("generated wrapper runtime behaviour", () => {
     expect(script).toContain("missing; omitting model_catalog_json reference");
     expect(script).toContain('process.stderr.write("[hcw-codex-wrapper] " + CATALOG_PATH + " missing');
     expect(script).toContain("if (hasReference && !existsSync(CATALOG_PATH))");
+  });
+
+  it("preserves an existing deployed credential without embedding it in the wrapper", async () => {
+    const p = paths();
+    const secret = "synthetic-wrapper-secret";
+    const authPath = resolveCodexHcwAuthPath(p);
+    mkdirSync(dirname(authPath), { recursive: true, mode: 0o700 });
+    writeFileSync(authPath, buildCodexHcwAuthJson(secret), { mode: 0o600 });
+    const { exitCode, wrapperPath } = await runGeneratedWrapper(
+      { ...OLLAMA, apiKey: secret },
+      p,
+      { createStableAdapter: true, codexApiKey: "" },
+    );
+    expect(exitCode).toBe(0);
+    expect(readText(wrapperPath)).not.toContain(secret);
+    expect(JSON.parse(readText(authPath)).OPENAI_API_KEY).toBe(secret);
   });
 
   it("spawns the adapter via the stable relative adapter path", async () => {

@@ -77,12 +77,6 @@ import {
 } from "node:fs";
  import { dirname, join, resolve } from "node:path";
 
-import {
-  deployCodexHcwWrapper,
-  resolveCodexHcwWrapperPath,
-  type CodexHcwWrapperDeployResult,
-} from "./codex-hcw-wrapper.js";
-
 // Repo-Split A2 (2026-10-11): resolveOpenClawStateDir lebt hier als EIGENE
 // Kopie (origin: acp-dashboard-binding/src/agent-map.ts, Byte-identisch).
 // Absichtlich dupliziert statt Cross-Import — die beiden Plugins sind
@@ -130,6 +124,45 @@ export function resolveOpencodeGlobalDir(
   return null;
 }
 
+export function resolveKiloGlobalDir(
+  env?: Record<string, string | undefined>,
+): string | null {
+  const e = env ?? (typeof process !== "undefined" ? process.env : undefined) ?? {};
+  const xdg = typeof e.XDG_CONFIG_HOME === "string" ? e.XDG_CONFIG_HOME.trim() : "";
+  if (xdg) return `${xdg.replace(/\/+$/, "")}/kilo`;
+  const home = typeof e.HOME === "string" ? e.HOME.trim() : "";
+  if (home) return `${home.replace(/\/+$/, "")}/.config/kilo`;
+  return null;
+}
+
+export function resolveQwenHome(
+  env?: Record<string, string | undefined>,
+): string | null {
+  const e = env ?? (typeof process !== "undefined" ? process.env : undefined) ?? {};
+  const configuredHome = typeof e.HOME === "string" ? e.HOME.trim() : "";
+  const home = configuredHome ? resolve(configuredHome) : "";
+  const qwenHome = typeof e.QWEN_HOME === "string" ? e.QWEN_HOME.trim() : "";
+  if (qwenHome === "~" || qwenHome.startsWith("~/") || qwenHome.startsWith("~\\")) {
+    if (!home) return null;
+    return qwenHome === "~" ? home : join(home, qwenHome.slice(2));
+  }
+  if (qwenHome) return resolve(qwenHome);
+  if (home) return `${home}/.qwen`;
+  return null;
+}
+
+/** Normalisierter per-Harness-Eintrag (configSchema: `harnesses.<id>`). */
+export type HarnessNativeConfig = {
+  /** Primary native config file (for example Codex config.toml or Kilo kilo.jsonc). */
+  config?: Record<string, unknown>;
+  /** Secondary settings file (Pi/Claude/Qwen settings.json). */
+  settings?: Record<string, unknown>;
+  /** Model/provider map where the harness uses a separate models file. */
+  models?: Record<string, unknown>;
+  /** Model metadata catalog content, where supported. */
+  catalog?: Record<string, unknown>;
+};
+
 /** Normalisierter per-Harness-Eintrag (configSchema: `harnesses.<id>`). */
 export type HarnessConfigEntry = {
   model: string;
@@ -142,6 +175,8 @@ export type HarnessConfigEntry = {
   wireApi?: string;
   /** Opt-in override for Copilot provider type (default: openai when baseUrl set). */
   providerType?: string;
+  /** Explicit gateway provider key; otherwise HCW resolves a unique route/API match. */
+  providerKey?: string;
   /**
    * Verfügbare Modelle (Multi-Model γ): aufgelöste, normalisierte Liste.
    * Präzedenz: explizite Entry-Liste (non-empty) > Auto-Matching über
@@ -149,10 +184,79 @@ export type HarnessConfigEntry = {
    * bleibt der Default (prepend wenn fehlend, bei explicit/matched).
    */
   models?: string[];
+  /** Explicit native config overlays for tool, role, compaction and future harness fields. */
+  nativeConfig?: HarnessNativeConfig;
 };
 
 /** plugins.entries['harness-config-writer'].config.harnesses (roh geparsed). */
 export type HarnessConfigs = Record<string, HarnessConfigEntry>;
+
+function isNativeRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Deep-merge explicit native fields without mutating generated defaults or caller objects. */
+export function mergeNativeConfigRecord(
+  base: Record<string, unknown>,
+  overlay: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  if (!overlay) return { ...base };
+  const merged: Record<string, unknown> = { ...base };
+  for (const [key, value] of Object.entries(overlay)) {
+    const current = merged[key];
+    merged[key] = isNativeRecord(current) && isNativeRecord(value)
+      ? mergeNativeConfigRecord(current, value)
+      : value;
+  }
+  return merged;
+}
+
+function readNativeConfig(
+  entry: HarnessConfigEntry,
+  warnings: string[],
+): HarnessNativeConfig {
+  const raw = entry.nativeConfig;
+  if (raw === undefined) return {};
+  if (!isNativeRecord(raw)) {
+    warnings.push("nativeConfig ignored (object expected)");
+    return {};
+  }
+  const result: HarnessNativeConfig = {};
+  for (const key of ["config", "settings", "models", "catalog"] as const) {
+    const value = raw[key];
+    if (value === undefined) continue;
+    if (!isNativeRecord(value)) {
+      warnings.push(`nativeConfig.${key} ignored (object expected)`);
+      continue;
+    }
+    result[key] = value;
+  }
+  return result;
+}
+
+const NATIVE_TARGETS_BY_HARNESS: Record<string, readonly string[]> = {
+  codex: ["config", "catalog"],
+  opencode: ["config"],
+  claude: ["config", "settings"],
+  pi: ["models", "settings"],
+  kilo: ["config"],
+  kilocode: ["config"],
+  qwen: ["settings"],
+  kimi: ["config"],
+  gemini: ["settings"],
+  copilot: ["settings"],
+  iflow: ["settings"],
+  droid: ["settings"],
+  kiro: ["settings"],
+};
+
+function validateNativeTargets(harnessId: string, entry: HarnessConfigEntry): string[] {
+  if (!isNativeRecord(entry.nativeConfig)) return [];
+  const supported = NATIVE_TARGETS_BY_HARNESS[harnessId] ?? [];
+  return Object.keys(entry.nativeConfig)
+    .filter((target) => !supported.includes(target))
+    .map((target) => `${harnessId}: nativeConfig.${target} has no native target here; ignoring it`);
+}
 
 // Multi-Model Caps (γ): echte Surfaces (opencode models-Map, codex profiles,
 // claude availableModels-JSON) cappen auf MAX_MODELS; ENV-Kommentar-Listen auf
@@ -180,9 +284,15 @@ export type HarnessWriterPaths = {
   claudeSourceHome: string;
   /** Parent/state-dir/.pi/agent — pi-coding-agent config dir. */
   piAgentDir: string;
+  /** `$XDG_CONFIG_HOME/kilo` bzw. `$HOME/.config/kilo` — Kilo global config dir. */
+  kiloGlobalDir?: string;
+  /** `$QWEN_HOME` bzw. `$HOME/.qwen` — Qwen Code global settings dir. */
+  qwenHome?: string;
+  /** Native global homes for the remaining harnesses, keyed by harness id. */
+  nativeHomes?: Record<string, string>;
 };
 
-export type HarnessMechanism = "file-codex" | "file-opencode" | "file-claude" | "file-pi" | "env" | "none";
+export type HarnessMechanism = "file-codex" | "file-opencode" | "file-claude" | "file-pi" | "file-kilo" | "env" | "none";
 
 export type HarnessDeployFile = {
   path: string;
@@ -227,6 +337,25 @@ export function resolveHarnessWriterPaths(
   if (!stateDir) return null;
   const opencodeGlobalDir = resolveOpencodeGlobalDir(env);
   if (!opencodeGlobalDir) return null;
+  const kiloGlobalDir = resolveKiloGlobalDir(env);
+  const qwenHome = resolveQwenHome(env);
+  const e = env ?? (typeof process !== "undefined" ? process.env : undefined) ?? {};
+  const home = typeof e.HOME === "string" ? e.HOME.trim().replace(/\/+$/, "") : "";
+  const explicitHome = (key: string): string | undefined => {
+    const value = typeof e[key] === "string" ? e[key].trim().replace(/\/+$/, "") : "";
+    return value || undefined;
+  };
+  const nativeHomes: Record<string, string> = {};
+  if (home) {
+    nativeHomes.gemini = `${home}/.gemini`;
+    nativeHomes.iflow = `${home}/.iflow`;
+    nativeHomes.droid = `${home}/.factory`;
+    nativeHomes.kiro = `${home}/.kiro`;
+  }
+  const copilotHome = explicitHome("COPILOT_HOME") ?? (home ? `${home}/.copilot` : undefined);
+  const kimiHome = explicitHome("KIMI_CODE_HOME") ?? (home ? `${home}/.kimi-code` : undefined);
+  if (copilotHome) nativeHomes.copilot = copilotHome;
+  if (kimiHome) nativeHomes.kimi = kimiHome;
   const state = stateDir.replace(/\/+$/, "");
   const parent = dirname(state);
   return {
@@ -235,6 +364,9 @@ export function resolveHarnessWriterPaths(
     opencodeGlobalDir,
     claudeSourceHome: `${parent}/.claude`,
     piAgentDir: `${parent}/.pi/agent`,
+    ...(kiloGlobalDir ? { kiloGlobalDir } : {}),
+    ...(qwenHome ? { qwenHome } : {}),
+    ...(Object.keys(nativeHomes).length > 0 ? { nativeHomes } : {}),
   };
 }
 
@@ -377,8 +509,8 @@ export function buildCodexAugmentSection(
   existingHeaders: ReadonlySet<string>,
   skipped: string[],
   postTurnCompactThresholdPercent?: number,
+  providerId = deriveProviderId(entry.baseUrl ?? ""),
 ): string {
-  const providerId = deriveProviderId(entry.baseUrl ?? "");
   const baseUrl = withV1Suffix(entry.baseUrl ?? "");
   const thinking = nonEmpty(entry.thinking);
   const lines: string[] = [];
@@ -387,8 +519,8 @@ export function buildCodexAugmentSection(
   // [profiles.m1] und [profiles."m1"] sind dieselbe logische Table.
   const collides = (rawHeader: string, bareHeader: string): boolean =>
     existingHeaders.has(rawHeader) || existingHeaders.has(bareHeader);
-  const providerHeader = `model_providers.${providerId}`;
-  if (!collides(providerHeader, providerHeader)) {
+  const providerHeader = `model_providers.${tomlString(providerId)}`;
+  if (!collides(providerHeader, `model_providers.${providerId}`)) {
     lines.push(
       `[${providerHeader}]`,
       `name = ${tomlString(`harness-config-writer (${baseUrl})`)}`,
@@ -458,6 +590,7 @@ function manageCodexToml(
   entry: HarnessConfigEntry,
   warnings: string[],
   postTurnCompactThresholdPercent?: number,
+  modelCatalog?: ModelCatalog,
 ): FileAction {
   if (!existsSync(tomlPath)) {
     atomicWrite(tomlPath, desired);
@@ -518,7 +651,13 @@ function manageCodexToml(
    operatorContent + (operatorTail ? `\n${operatorTail}` : ""),
  );
  const skipped: string[] = [];
-  const section = buildCodexAugmentSection(entry, existingHeaders, skipped, managedCompactValue);
+  const section = buildCodexAugmentSection(
+    entry,
+    existingHeaders,
+    skipped,
+    managedCompactValue,
+    resolveHarnessProviderId("codex", entry, modelCatalog, warnings),
+  );
   for (const s of skipped) warnings.push(`codex: skipped ${s}`);
   if (section.trim() === "") {
     if (isRefresh) {
@@ -606,12 +745,132 @@ function tomlString(value: string): string {
   return JSON.stringify(value);
 }
 
+const CODEX_NATIVE_CONFIG_RESERVED = new Set([
+  "model",
+  "model_provider",
+  "model_reasoning_effort",
+  "model_catalog_json",
+  "model_post_turn_compact_threshold_percent",
+  "sandbox_mode",
+  "model_providers",
+  "profiles",
+  "projects",
+]);
+
+function renderCodexNativeScalar(value: unknown, warnings: string[], label: string): string | undefined {
+  if (typeof value === "string") return tomlString(value);
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "number" && Number.isFinite(value)) return String(value);
+  if (Array.isArray(value) && value.every((item) => !isNativeRecord(item) && !Array.isArray(item))) {
+    const items = value.map((item, index) => renderCodexNativeScalar(item, warnings, `${label}[${index}]`));
+    if (items.some((item) => item === undefined)) return undefined;
+    return `[${items.join(", ")}]`;
+  }
+  warnings.push(`codex nativeConfig.${label}: unsupported value omitted`);
+  return undefined;
+}
+
+function renderCodexNativeObject(
+  record: Record<string, unknown>,
+  prefix: string[],
+  warnings: string[],
+  lines: string[],
+): void {
+  const tables: [string, unknown][] = [];
+  for (const [key, value] of Object.entries(record)) {
+    if (value === undefined) continue;
+    const keyLabel = [...prefix, key].join(".");
+    if (isNativeRecord(value) || (Array.isArray(value) && value.length > 0 && value.every(isNativeRecord))) {
+      tables.push([key, value]);
+      continue;
+    }
+    const rendered = renderCodexNativeScalar(value, warnings, keyLabel);
+    if (rendered !== undefined) lines.push(`${tomlString(key)} = ${rendered}`);
+  }
+  for (const [key, value] of tables) {
+    const path = [...prefix, key].map(tomlString).join(".");
+    if (Array.isArray(value)) {
+      for (const item of value) {
+        lines.push("", `[[${path}]]`);
+        renderCodexNativeObject(item, [...prefix, key], warnings, lines);
+      }
+      continue;
+    }
+    if (!isNativeRecord(value)) continue;
+    lines.push("", `[${path}]`);
+    renderCodexNativeObject(value, [...prefix, key], warnings, lines);
+  }
+}
+
+function applyCodexNativeConfigToml(
+  base: string,
+  entry: HarnessConfigEntry,
+  warnings: string[],
+): string {
+  const config = readNativeConfig(entry, warnings).config;
+  if (!config) return base;
+  const allowed: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(config)) {
+    if (CODEX_NATIVE_CONFIG_RESERVED.has(key)) {
+      warnings.push(`codex nativeConfig.config.${key}: generated routing field is protected; keeping the generated value`);
+    } else {
+      allowed[key] = value;
+    }
+  }
+  if (Object.keys(allowed).length === 0) return base;
+  const overlay: string[] = [];
+  renderCodexNativeObject(allowed, [], warnings, overlay);
+  if (overlay.length === 0) return base;
+  const lines = base.split("\n");
+  const firstTable = lines.findIndex((line) => line.trimStart().startsWith("["));
+  const insertion = [...overlay, ""];
+  lines.splice(firstTable < 0 ? lines.length : firstTable, 0, ...insertion);
+  return lines.join("\n");
+}
+
+function applyCodexNativeCatalog(
+  content: string,
+  entry: HarnessConfigEntry,
+  warnings: string[],
+): string {
+  const catalog = readNativeConfig(entry, warnings).catalog;
+  if (!catalog) return content;
+  const parsed = tryOr(() => JSON.parse(content) as Record<string, unknown>, null);
+  if (!parsed) {
+    warnings.push("codex nativeConfig.catalog: generated catalog is not valid JSON; keeping it unchanged");
+    return content;
+  }
+  return `${JSON.stringify(mergeNativeConfigRecord(parsed, catalog), null, 2)}\n`;
+}
+
+export function overlayCodexCatalog(
+  entry: HarnessConfigEntry,
+  built: ReturnType<typeof buildCodexModelCatalogJson>,
+  warnings: string[] = [],
+): ReturnType<typeof buildCodexModelCatalogJson> {
+  const nativeCatalog = readNativeConfig(entry, warnings).catalog;
+  if (!nativeCatalog) return built;
+  if (built) return { ...built, content: applyCodexNativeCatalog(built.content, entry, warnings) };
+  return {
+    content: `${JSON.stringify(nativeCatalog, null, 2)}\n`,
+    included: Array.isArray(nativeCatalog.models) ? nativeCatalog.models.length : 0,
+    skipped: [],
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Multi-Model (γ) — Modellkatalog aus der vollen Gateway-Config + Entry-
 // Auflösung. Die Writer (buildCodexConfigToml / buildOpencodeConfigJsonc /
 // ENV_MECHANISM / deployHarnessEnvFile) bleiben reine Entry-Konsumenten; der
 // Dispatcher ist der EINZIGE Ort, der Enrichment + Warnings orchestriert.
 // ---------------------------------------------------------------------------
+
+export type ProviderRouteCandidate = {
+  providerKey: string;
+  api?: string;
+  modelIds: string[];
+  modelApis: Record<string, string | undefined>;
+};
 
 export type ModelCatalog = {
   /** normalisierte baseUrl → deduped model-ids (first-occurrence, kuratiert). */
@@ -629,6 +888,8 @@ export type ModelCatalog = {
    * (kein Raten).
    */
   providerKeyByBaseUrl: Map<string, string>;
+  /** All route candidates, including providers sharing one normalized baseUrl. */
+  routeCandidatesByBaseUrl?: Map<string, ProviderRouteCandidate[]>;
   /**
    * γ.1 codex-Metadaten: model-id → vom Operator in openclaw.json gepflegte
    * Werte (contextWindow — das einzige codex-surfacige Pflichtfeld). NUR
@@ -706,6 +967,9 @@ export type ModelMeta = {
   reasoning?: boolean;
   displayName?: string;
   maxTokens?: number;
+  /** Provider API and complete cost metadata for native model writers. */
+  api?: string;
+  cost?: { input: number; output: number; cacheRead: number; cacheWrite: number };
   /** Optionale Beschreibung. Default HCW-Text. */
   description?: string;
   /** Ob parallele Tool-Calls unterstützt werden. Default false. */
@@ -746,6 +1010,21 @@ export function normalizeBaseUrlForMatch(baseUrl: string): string {
   } catch {
     return trimmed.toLowerCase();
   }
+}
+
+function normalizeAnthropicBaseUrl(value: string): string {
+  return value.trim().replace(/\/+$/, "").replace(/\/v1$/i, "").replace(/\/+$/, "");
+}
+
+function normalizeProtocolBaseUrl(
+  value: string,
+  api: string | undefined,
+  keepAnthropicV1 = false,
+): string {
+  if (api === "anthropic-messages") {
+    return keepAnthropicV1 ? withV1Suffix(value) : normalizeAnthropicBaseUrl(value);
+  }
+  return withV1Suffix(value);
 }
 
 /** dedupe first-occurrence — Operator-/Katalog-Reihenfolge bleibt kuratiert. */
@@ -804,6 +1083,7 @@ function normalizeModelListInternal(
 function buildModelMeta(
   rec: Record<string, unknown>,
   policy: ProviderPolicy,
+  providerApi?: string,
 ): ModelMeta {
   const inputModalities = parseInputModalities(rec.inputModalities);
   const thinkingLevels = parseThinkingLevels(rec.thinkingLevels);
@@ -822,6 +1102,8 @@ function buildModelMeta(
     includeUsageInstructions: orBoolean(rec.includeUsageInstructions, policy.includeUsageInstructions),
     baseInstructions: orString(rec.baseInstructions, policy.baseInstructions),
     providerKind: isProviderKind(rec.providerKind) ? rec.providerKind : policy.providerKind,
+    api: normalizedApi(rec.api) ?? normalizedApi(providerApi),
+    cost: parseModelCost(rec.cost),
   };
 }
 
@@ -831,6 +1113,10 @@ function orNumber(a: unknown, b?: number): number | undefined {
 
 function orString(a: unknown, b?: string): string | undefined {
   return typeof a === "string" && a.length > 0 ? a : b;
+}
+
+function normalizedApi(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }
 
 function orBoolean(a: unknown, b?: boolean): boolean | undefined {
@@ -847,6 +1133,23 @@ function parseThinkingLevels(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined;
   const arr = value.filter((v): v is string => typeof v === "string" && v.length > 0);
   return arr.length > 0 ? arr : undefined;
+}
+
+function parseModelCost(
+  value: unknown,
+): { input: number; output: number; cacheRead: number; cacheWrite: number } | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return undefined;
+  const rec = value as Record<string, unknown>;
+  const keys = ["input", "output", "cacheRead", "cacheWrite"] as const;
+  if (keys.some((key) => typeof rec[key] !== "number" || !Number.isFinite(rec[key]) || rec[key] < 0)) {
+    return undefined;
+  }
+  return {
+    input: rec.input as number,
+    output: rec.output as number,
+    cacheRead: rec.cacheRead as number,
+    cacheWrite: rec.cacheWrite as number,
+  };
 }
 
 function isProviderKind(value: unknown): value is "ollama" | "openai" | "other" {
@@ -886,12 +1189,21 @@ function parseProviderPolicy(provider: Record<string, unknown>): ProviderPolicy 
  * first-occurrence (kollidierende Provider-Settings entscheiden die erste,
  * sortiert ermittelte Provider — bewusst, dokumentiert in the 15.10 design (model-catalog match keys)).
  */
-export function buildModelCatalog(fullConfig: unknown, warnings: string[]): ModelCatalog {
+export function buildModelCatalog(
+  fullConfig: unknown,
+  warnings: string[],
+  providerPolicies?: unknown,
+): ModelCatalog {
   const byBaseUrl = new Map<string, string[]>();
   const metaById = new Map<string, ModelMeta>();
   const rawMaxTokensById = new Map<string, number>();
   const policyByBaseUrl = new Map<string, ProviderPolicy>();
   const providerKeyByBaseUrl = new Map<string, string>();
+  const routeCandidatesByBaseUrl = new Map<string, ProviderRouteCandidate[]>();
+  const policyOverrides =
+    typeof providerPolicies === "object" && providerPolicies !== null && !Array.isArray(providerPolicies)
+      ? providerPolicies as Record<string, unknown>
+      : {};
   const providerKeysByBaseUrl = new Map<string, string[]>();
   try {
     const models = typeof fullConfig === "object" && fullConfig !== null
@@ -902,11 +1214,11 @@ export function buildModelCatalog(fullConfig: unknown, warnings: string[]): Mode
         ? (models as Record<string, unknown>).providers
         : undefined;
     if (providers === null || providers === undefined) {
-      return { byBaseUrl, metaById, rawMaxTokensById, policyByBaseUrl, providerKeyByBaseUrl };
+      return { byBaseUrl, metaById, rawMaxTokensById, policyByBaseUrl, providerKeyByBaseUrl, routeCandidatesByBaseUrl };
     }
     if (typeof providers !== "object" || Array.isArray(providers)) {
       warnings.push("models.providers: unexpected shape (object expected) — catalog skipped");
-      return { byBaseUrl, metaById, rawMaxTokensById, policyByBaseUrl, providerKeyByBaseUrl };
+      return { byBaseUrl, metaById, rawMaxTokensById, policyByBaseUrl, providerKeyByBaseUrl, routeCandidatesByBaseUrl };
     }
     let malformed = 0;
     for (const key of Object.keys(providers).sort()) {
@@ -927,7 +1239,14 @@ export function buildModelCatalog(fullConfig: unknown, warnings: string[]): Mode
         malformed += 1;
         continue;
       }
-      const providerPolicy = parseProviderPolicy(p);
+      const legacyPolicy = parseProviderPolicy(p);
+      const overridePolicy = parseProviderPolicy({ modelPolicy: policyOverrides[key] });
+      const providerPolicy = {
+        ...legacyPolicy,
+        ...Object.fromEntries(
+          Object.entries(overridePolicy).filter(([, value]) => value !== undefined),
+        ),
+      };
       policyByBaseUrl.set(normalized, providerPolicy);
       // Provider-Key-Kandidaten sammeln (erst nach dem baseUrl-Match, damit
       // der Key eindeutig zum backend passt — Variante A).
@@ -943,29 +1262,21 @@ export function buildModelCatalog(fullConfig: unknown, warnings: string[]): Mode
         const rec = m as Record<string, unknown>;
         const id = typeof rec.id === "string" ? rec.id.trim() : "";
         if (!id || metaById.has(id)) continue;
-        if (typeof rec.maxTokens === "number" && rec.maxTokens > 0 && !rawMaxTokensById.has(id)) {
-          rawMaxTokensById.set(id, rec.maxTokens);
-        }
-        // γ.1/γ.2 Metadaten: nur positive Zahlen zählen (contextWindow — das
-        // einzige Feld mit codex-Katalog-Surface; M4-Fix: maxTokens wird
-        // bewusst NICHT gesammelt, es gibt keine konsumierende Surface).
-        //
-        // Ergänzung (pi-Mechanismus): die pi-Metadaten (reasoning / name /
-        // maxTokens) brauchen KEINE codex-Surface, sondern werden direkt in
-        // ~/.pi/agent/models.json konsumiert. Sie werden deshalb hier
-        // gesammelt, aber nur für Einträge, die ÜBERHAUPT Metadaten tragen
-        // (contextWindow ODER reasoning/name/maxTokens) — ein Modell ohne
-        // jedes dieser Felder erzeugt keinen Meta-Eintrag.
-        const hasPiMeta =
-          typeof rec.reasoning === "boolean" ||
-          (typeof rec.name === "string" && rec.name.trim().length > 0) ||
-          (typeof rec.maxTokens === "number" && rec.maxTokens > 0);
-        const hasContextWindow = typeof rec.contextWindow === "number" && rec.contextWindow > 0;
-        if (!hasContextWindow && !hasPiMeta) continue;
         // buildModelMeta liefert den vollständigen Operator-Meta-Record
         // (contextWindow + codex-relevante Felder). Der bisherige Code
         // filterte ihn auf genau die belegten Felder — das bleibt so.
-        const full = buildModelMeta(rec, providerPolicy);
+        const full = buildModelMeta(rec, providerPolicy, orString(p.api, undefined));
+        const hasPiMeta =
+          typeof rec.reasoning === "boolean" ||
+          (typeof rec.name === "string" && rec.name.trim().length > 0) ||
+          (typeof rec.maxTokens === "number" && rec.maxTokens > 0) ||
+          full.api !== undefined ||
+          full.cost !== undefined;
+        const hasContextWindow = typeof rec.contextWindow === "number" && rec.contextWindow > 0;
+        if (!hasContextWindow && !hasPiMeta) continue;
+        if (typeof rec.maxTokens === "number" && rec.maxTokens > 0 && !rawMaxTokensById.has(id)) {
+          rawMaxTokensById.set(id, rec.maxTokens);
+        }
         const piMeta: ModelMeta = { contextWindow: full.contextWindow };
         if (full.maxContextWindow !== undefined) piMeta.maxContextWindow = full.maxContextWindow;
         if (full.contextWindowFactor !== undefined) piMeta.contextWindowFactor = full.contextWindowFactor;
@@ -986,6 +1297,8 @@ export function buildModelCatalog(fullConfig: unknown, warnings: string[]): Mode
         }
         if (full.baseInstructions !== undefined) piMeta.baseInstructions = full.baseInstructions;
         if (full.providerKind !== undefined) piMeta.providerKind = full.providerKind;
+        if (full.api !== undefined) piMeta.api = full.api;
+        if (full.cost !== undefined) piMeta.cost = full.cost;
         if (typeof rec.reasoning === "boolean") piMeta.reasoning = rec.reasoning;
         if (typeof rec.name === "string" && rec.name.trim().length > 0) {
           piMeta.displayName = rec.name.trim();
@@ -1013,6 +1326,16 @@ export function buildModelCatalog(fullConfig: unknown, warnings: string[]): Mode
         dedupeModelIds([...(byBaseUrl.get(normalized) ?? []), ...ids]),
         MAX_MODELS,
       );
+      const modelApis = Object.fromEntries(rawModels.flatMap((model) => {
+        if (typeof model !== "object" || model === null) return [];
+        const rec = model as Record<string, unknown>;
+        const id = typeof rec.id === "string" ? rec.id.trim() : "";
+        return id ? [[id, normalizedApi(rec.api) ?? normalizedApi(p.api)]] : [];
+      }));
+      routeCandidatesByBaseUrl.set(normalized, [
+        ...(routeCandidatesByBaseUrl.get(normalized) ?? []),
+        { providerKey: key, api: normalizedApi(p.api), modelIds: ids, modelApis },
+      ]);
       if (merged.dropped > 0) {
         warnings.push(
           `model catalog (${normalized}): capped at ${MAX_MODELS} (${merged.dropped} dropped)`,
@@ -1035,14 +1358,14 @@ export function buildModelCatalog(fullConfig: unknown, warnings: string[]): Mode
       if (unique.length > 1) {
         warnings.push(
           `model catalog (${normalized}): ${unique.length} providers share this baseUrl ` +
-            `(${unique.join(", ")}) — provider key not inherited, URL-derived fallback used`,
+            `(${unique.join(", ")}) — route/API-aware provider key selection required`,
         );
       }
     }
   } catch (error) {
     warnings.push(`model catalog build failed (fail-soft): ${briefError(error)}`);
   }
-  return { byBaseUrl, metaById, rawMaxTokensById, policyByBaseUrl, providerKeyByBaseUrl };
+  return { byBaseUrl, metaById, rawMaxTokensById, policyByBaseUrl, providerKeyByBaseUrl, routeCandidatesByBaseUrl };
 }
 
 /** Default-prepend (claude-Adapter: models[0] = Fallback-Default). */
@@ -1109,18 +1432,26 @@ export function resolveEntryModels(
 // Mechanismus B — ENV-Mapping je CLI (alle Namen docs-verifiziert 2026-10-11).
 // ---------------------------------------------------------------------------
 
-type EnvMappingResult = { vars: Record<string, string>; warnings: string[] };
+type EnvMappingResult = {
+  vars: Record<string, string>;
+  warnings: string[];
+  /** Includes conditionally absent keys so route changes remove stale values. */
+  managedKeys?: readonly string[];
+};
 
 function envMapping(
   pairs: readonly (readonly [string, string | undefined])[],
   warnings: readonly string[] = [],
+  managedKeys?: readonly string[],
 ): EnvMappingResult | null {
   const vars: Record<string, string> = {};
   for (const [key, value] of pairs) {
     if (value === undefined) continue;
     vars[key] = value;
   }
-  return Object.keys(vars).length > 0 ? { vars, warnings: [...warnings] } : null;
+  return Object.keys(vars).length > 0 || (managedKeys?.length ?? 0) > 0
+    ? { vars, warnings: [...warnings], managedKeys: managedKeys ?? Object.keys(vars) }
+    : null;
 }
 
 /**
@@ -1143,14 +1474,32 @@ function envMapping(
  * - iflow  : IFLOW_API_KEY/IFLOW_BASE_URL (openai-compatible ⇒ /v1) +
  *            IFLOW_modelName (iflow-cli docs: camelCase "recommended").
  */
+const COPILOT_MANAGED_ENV_KEYS = [
+  "COPILOT_PROVIDER_BASE_URL",
+  "COPILOT_PROVIDER_API_KEY",
+  "COPILOT_PROVIDER_TYPE",
+  "COPILOT_PROVIDER_MODEL_ID",
+  "COPILOT_PROVIDER_WIRE_MODEL",
+  "COPILOT_PROVIDER_WIRE_API",
+  "COPILOT_PROVIDER_MAX_PROMPT_TOKENS",
+  "COPILOT_MODEL",
+  "COPILOT_OFFLINE",
+] as const;
+
 const ENV_MECHANISM: Record<
   string,
   (entry: HarnessConfigEntry, catalog?: ModelCatalog) => EnvMappingResult | null
 > = {
-  claude: (e) =>
-    envMapping([
+  claude: (e, catalog) => {
+    const baseUrl = nonEmpty(e.baseUrl);
+    const warnings: string[] = [];
+    const modelConfig = mergeNativeConfigRecord(
+      e.models && e.models.length > 0 ? { availableModels: e.models } : {},
+      readNativeConfig(e, warnings).config,
+    );
+    return envMapping([
       ["ANTHROPIC_MODEL", nonEmpty(e.model)],
-      ["ANTHROPIC_BASE_URL", nonEmpty(e.baseUrl)],
+      ["ANTHROPIC_BASE_URL", baseUrl ? normalizeAnthropicBaseUrl(baseUrl) : undefined],
       ["ANTHROPIC_AUTH_TOKEN", nonEmpty(e.apiKey)],
       // Jagd-F1 (2026-10-17): Fallback auf model — asymmetrisch zum opencode-
       // r3-Fix behoben (dangling small_model-Referenz-Klasse): ohne Fallback
@@ -1164,39 +1513,49 @@ const ENV_MECHANISM: Record<
       // non-empty Liste; ANTHROPIC_MODEL ist/PRIORITÄT-1 bleibt der Default.
       [
         "CLAUDE_MODEL_CONFIG",
-        e.models && e.models.length > 0
-          ? JSON.stringify({ availableModels: e.models })
-          : undefined,
+        Object.keys(modelConfig).length > 0 ? JSON.stringify(modelConfig) : undefined,
       ],
-    ]),
+    ], warnings, ["ANTHROPIC_MODEL", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_SMALL_FAST_MODEL", "CLAUDE_MODEL_CONFIG"]);
+  },
   gemini: (e) =>
     envMapping([
       ["GEMINI_API_KEY", nonEmpty(e.apiKey)],
       ["GEMINI_MODEL", nonEmpty(e.model)],
       ["GOOGLE_GEMINI_BASE_URL", nonEmpty(e.baseUrl)],
-    ]),
+    ], [], ["GEMINI_API_KEY", "GEMINI_MODEL", "GOOGLE_GEMINI_BASE_URL"]),
   droid: (e) =>
-    envMapping(
-      [["FACTORY_API_KEY", nonEmpty(e.apiKey)]],
-      nonEmpty(e.baseUrl)
-        ? ["droid: kein docs-verifizierter Base-URL-Env; baseUrl ignoriert"]
-        : [],
-    ),
-  qwen: (e) => {
+    envMapping([["FACTORY_API_KEY", nonEmpty(e.apiKey)]], [], ["FACTORY_API_KEY"]),
+  qwen: (e, catalog) => {
     const baseUrl = nonEmpty(e.baseUrl);
+    const warnings: string[] = [];
+    const providerId = resolveHarnessProviderId("qwen", e, catalog, warnings);
+    const api = providerModelApi(catalog, baseUrl ?? "", providerId, e.model);
+    const anthropic = api === "anthropic-messages";
     return envMapping([
-      ["OPENAI_API_KEY", nonEmpty(e.apiKey)],
-      ["OPENAI_BASE_URL", baseUrl ? withV1Suffix(baseUrl) : undefined],
-      ["OPENAI_MODEL", nonEmpty(e.model)],
-    ]);
+      ["OPENAI_API_KEY", anthropic ? undefined : nonEmpty(e.apiKey)],
+      ["OPENAI_BASE_URL", !anthropic && baseUrl ? withV1Suffix(baseUrl) : undefined],
+      ["OPENAI_MODEL", anthropic ? undefined : nonEmpty(e.model)],
+      ["ANTHROPIC_API_KEY", anthropic ? nonEmpty(e.apiKey) : undefined],
+      ["ANTHROPIC_BASE_URL", anthropic && baseUrl ? withV1Suffix(baseUrl) : undefined],
+    ], warnings, ["OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"]);
   },
-  kimi: (e) => {
+  kimi: (e, catalog) => {
     const baseUrl = nonEmpty(e.baseUrl);
+    const warnings: string[] = [];
+    const providerId = resolveHarnessProviderId("kimi", e, catalog, warnings);
+    const meta = catalog?.metaById.get(e.model);
+    const api = providerModelApi(catalog, baseUrl ?? "", providerId, e.model);
+    const useEnvModel = api !== "openai-responses" && nonEmpty(e.apiKey) !== undefined;
+    const providerType = api === "anthropic-messages" ? "anthropic" : "openai";
     return envMapping([
       ["KIMI_MODEL_API_KEY", nonEmpty(e.apiKey)],
-      ["KIMI_MODEL_BASE_URL", baseUrl ? withV1Suffix(baseUrl) : undefined],
-      ["KIMI_MODEL_NAME", nonEmpty(e.model)],
-    ]);
+      ["KIMI_MODEL_BASE_URL", useEnvModel && baseUrl ? normalizeProtocolBaseUrl(baseUrl, api) : undefined],
+      ["KIMI_MODEL_NAME", useEnvModel ? nonEmpty(e.model) : undefined],
+      ["KIMI_MODEL_PROVIDER_TYPE", useEnvModel ? providerType : undefined],
+      ["KIMI_MODEL_MAX_CONTEXT_SIZE", useEnvModel && typeof meta?.contextWindow === "number" && meta.contextWindow > 0 ? String(Math.floor(meta.contextWindow)) : undefined],
+      ["KIMI_MODEL_MAX_OUTPUT_SIZE", useEnvModel && typeof catalog?.rawMaxTokensById.get(e.model) === "number" && (catalog.rawMaxTokensById.get(e.model) ?? 0) > 0 ? String(Math.floor(catalog.rawMaxTokensById.get(e.model)!)) : undefined],
+      ["KIMI_MODEL_THINKING_EFFORT", useEnvModel ? nonEmpty(e.thinking) : undefined],
+    ], warnings, ["KIMI_MODEL_API_KEY", "KIMI_MODEL_BASE_URL", "KIMI_MODEL_NAME", "KIMI_MODEL_PROVIDER_TYPE", "KIMI_MODEL_MAX_CONTEXT_SIZE", "KIMI_MODEL_MAX_OUTPUT_SIZE", "KIMI_MODEL_THINKING_EFFORT"]);
   },
   kiro: (e) =>
     envMapping(
@@ -1204,6 +1563,7 @@ const ENV_MECHANISM: Record<
       nonEmpty(e.baseUrl)
         ? ["kiro: kein Base-URL-Env (KIRO_API_KEY-only); baseUrl ignoriert"]
         : [],
+      ["KIRO_API_KEY"],
     ),
   iflow: (e) => {
     const baseUrl = nonEmpty(e.baseUrl);
@@ -1211,7 +1571,7 @@ const ENV_MECHANISM: Record<
       ["IFLOW_API_KEY", nonEmpty(e.apiKey)],
       ["IFLOW_BASE_URL", baseUrl ? withV1Suffix(baseUrl) : undefined],
       ["IFLOW_modelName", nonEmpty(e.model)],
-    ]);
+    ], [], ["IFLOW_API_KEY", "IFLOW_BASE_URL", "IFLOW_modelName"]);
   },
   // copilot BYOK/Ollama (Aufnahme 2026-10-16, GaRoN-GO): ENV-Surface doppelt
   // docs-verifiziert — Ollama-Integrations-Doku (docs.ollama.com/integrations/
@@ -1225,9 +1585,24 @@ const ENV_MECHANISM: Record<
   // gesetzt, sondern in warnings dokumentiert.
   copilot: (e, catalog) => {
     const baseUrl = nonEmpty(e.baseUrl);
-    const providerType = nonEmpty(e.providerType) ?? (baseUrl ? "openai" : undefined);
-    const wireApi = nonEmpty(e.wireApi) ?? (baseUrl ? "responses" : undefined);
     const modelId = nonEmpty(e.model);
+    const warnings: string[] = [];
+    const routeProviderId = resolveHarnessProviderId("copilot", e, catalog, warnings);
+    const modelApi = baseUrl && modelId ? providerModelApi(catalog, baseUrl, routeProviderId, modelId) : undefined;
+    const providerType =
+      nonEmpty(e.providerType) ??
+      (baseUrl ? (modelApi === "anthropic-messages" ? "anthropic" : "openai") : undefined);
+    const wireApi =
+      nonEmpty(e.wireApi) ??
+      (baseUrl
+        ? modelApi === "openai-completions"
+          ? "completions"
+          : modelApi === "openai-responses"
+            ? "responses"
+            : modelApi === "anthropic-messages"
+              ? undefined
+              : "responses"
+        : undefined);
     const normalizedBaseUrl = normalizeBaseUrlForMatch(baseUrl ?? "");
     const contextWindow =
       modelId && catalog?.metaById.get(modelId)?.contextWindow;
@@ -1235,7 +1610,6 @@ const ENV_MECHANISM: Record<
       typeof contextWindow === "number" && contextWindow > 0
         ? Math.floor(contextWindow)
         : undefined;
-    const warnings: string[] = [];
     if (baseUrl) {
       warnings.push(
         "copilot: COPILOT_PROVIDER_AZURE_API_VERSION, _API_KEY_COMMAND, " +
@@ -1244,7 +1618,7 @@ const ENV_MECHANISM: Record<
     }
     return envMapping(
       [
-        ["COPILOT_PROVIDER_BASE_URL", baseUrl ? withV1Suffix(baseUrl) : undefined],
+        ["COPILOT_PROVIDER_BASE_URL", baseUrl ? normalizeProtocolBaseUrl(baseUrl, providerType === "anthropic" ? "anthropic-messages" : modelApi) : undefined],
         ["COPILOT_PROVIDER_API_KEY", nonEmpty(e.apiKey)],
         ["COPILOT_PROVIDER_TYPE", providerType],
         ["COPILOT_PROVIDER_MODEL_ID", modelId],
@@ -1255,8 +1629,10 @@ const ENV_MECHANISM: Record<
           maxPromptTokens !== undefined ? String(maxPromptTokens) : undefined,
         ],
         ["COPILOT_MODEL", modelId],
+        ["COPILOT_OFFLINE", baseUrl ? "true" : undefined],
       ],
       warnings,
+      COPILOT_MANAGED_ENV_KEYS,
     );
   },
 };
@@ -1278,7 +1654,7 @@ export function deployCodexAuth(
   logger?: HarnessWriterLogger,
   harnessId = "codex",
 ): HarnessDeployFile {
-  const path = join(paths.acpxDir, "codex-home", "auth.json");
+  const path = join(paths.codexSourceHome, "auth.json");
   if (existsSync(path)) {
     logger?.debug?.(
       `[${harnessId}] auth.json already present; leaving untouched (helper semantics)`,
@@ -1519,9 +1895,11 @@ export function buildCodexConfigToml(
   entry: HarnessConfigEntry,
   modelCatalogPath?: string,
   postTurnCompactThresholdPercent?: number,
+  warnings: string[] = [],
+  modelCatalog?: ModelCatalog,
 ): string {
   const baseUrl = withV1Suffix(entry.baseUrl ?? "");
-  const providerId = deriveProviderId(entry.baseUrl ?? "");
+  const providerId = resolveHarnessProviderId("codex", entry, modelCatalog, warnings);
   const lines: string[] = [
     CODEX_SIGNATURE_LINE,
     // Self-Recognition + Refresh-Aufnahme (γ): nachweislich writer-generierte
@@ -1553,7 +1931,7 @@ export function buildCodexConfigToml(
   }
   lines.push(
     ``,
-    `[model_providers.${providerId}]`,
+    `[model_providers.${tomlString(providerId)}]`,
     `name = "harness-config-writer (${baseUrl})"`,
     `base_url = ${tomlString(baseUrl)}`,
     `wire_api = "responses"`,
@@ -1588,7 +1966,7 @@ export function buildCodexConfigToml(
       `trust_level = "trusted"`,
     ]),
   );
-  return `${lines.join("\n")}\n`;
+  return applyCodexNativeConfigToml(`${lines.join("\n")}\n`, entry, warnings);
 }
 
 export function deployCodexHarnessFiles(
@@ -1630,12 +2008,14 @@ export function deployCodexHarnessFiles(
     modelCatalog && entry.models !== undefined && entry.models.length > 0
       ? buildCodexModelCatalogJson(entry.models, modelCatalog.metaById, warnings)
       : null;
+  const effectiveCatalog = overlayCodexCatalog(entry, built, warnings);
   const action = manageCodexToml(
     tomlPath,
-    buildCodexConfigToml(entry, built ? catalogPath : undefined, postTurnCompactThresholdPercent),
+    buildCodexConfigToml(entry, effectiveCatalog ? catalogPath : undefined, postTurnCompactThresholdPercent, warnings, modelCatalog),
     entry,
     warnings,
     postTurnCompactThresholdPercent,
+    modelCatalog,
   );
   if (action === "note (customized, left intact)") {
     logger?.info?.(
@@ -1657,20 +2037,20 @@ export function deployCodexHarnessFiles(
   // geschriebener Katalog wäre ein Orphan mit täuschendem Deploy-Report.
   const tomlNow = tryOr(() => readFileSync(tomlPath, "utf-8"), "");
   const catalogReferenced = tomlNow.includes(tomlString(catalogPath));
-  if (built && modelCatalog && action !== "note (customized, left intact)" && catalogReferenced) {
-    const catalogFile = writeFileIfMissingOrDiffers(catalogPath, built.content);
+  if (effectiveCatalog && action !== "note (customized, left intact)" && catalogReferenced) {
+    const catalogFile = writeFileIfMissingOrDiffers(catalogPath, effectiveCatalog.content);
     files.push({ path: catalogPath, action: catalogFile });
     logger?.info?.(
-      `[${harnessId}] model catalog ${catalogPath}: ${built.included} model(s) with operator metadata` +
-        (built.skipped.length > 0
-          ? `; ${built.skipped.length} skipped (no contextWindow in openclaw.json — REPLACE-ALL nimmt sie aus dem codex-Picker, the 15.11 design (writer-owned file detection))`
+      `[${harnessId}] model catalog ${catalogPath}: ${effectiveCatalog.included} model(s) with operator metadata` +
+        (effectiveCatalog.skipped.length > 0
+          ? `; ${effectiveCatalog.skipped.length} skipped (no contextWindow in openclaw.json — REPLACE-ALL nimmt sie aus dem codex-Picker, the 15.11 design (writer-owned file detection))`
           : ""),
     );
-  } else if (built && action === "note (customized, left intact)") {
+  } else if (effectiveCatalog && action === "note (customized, left intact)") {
     logger?.info?.(
       `[${harnessId}] model catalog not written: config.toml is customized (adopt the key manually if wanted)`,
     );
-  } else if (!built && modelCatalog) {
+  } else if (!effectiveCatalog && modelCatalog) {
     logger?.info?.(
       `[${harnessId}] model catalog skipped: ${entry.models?.length ? "no model of the list has contextWindow in openclaw.json" : "no model list on the entry (models resolved to none/opt-out)"} (codex falls back to its bundled metadata)`,
     );
@@ -1690,9 +2070,14 @@ export function deployCodexHarnessFiles(
  * multi-Backend-safe. Plain JSON ist valid JSONC (OpenCode parst JSON(C)
  * unabhängig vom Dateinamen, Helper-Doku verbatim).
  */
-export function buildOpencodeConfigJsonc(entry: HarnessConfigEntry): string {
+function buildOpencodeCompatibleConfigJsonc(
+  entry: HarnessConfigEntry,
+  schema: string,
+  modelCatalog?: ModelCatalog,
+  warnings: string[] = [],
+): string {
   const baseUrl = entry.baseUrl ?? "";
-  const providerId = deriveProviderId(baseUrl);
+  const providerId = resolveHarnessProviderId("opencode", entry, modelCatalog, warnings);
   const smallModel = nonEmpty(entry.smallModel) ?? entry.model;
   // Multi-Model γ: mit verfügbarer Modellliste wandern ALLE ids in die
   // provider.models-Map (native Multi-Model-Surface; entry.model zuerst =
@@ -1709,7 +2094,7 @@ export function buildOpencodeConfigJsonc(entry: HarnessConfigEntry): string {
     modelIds = [entry.model];
   }
   const cfg = {
-    $schema: "https://opencode.ai/config.json",
+    $schema: schema,
     provider: {
       [providerId]: {
         npm: "@ai-sdk/openai-compatible",
@@ -1718,13 +2103,53 @@ export function buildOpencodeConfigJsonc(entry: HarnessConfigEntry): string {
           baseURL: withV1Suffix(baseUrl),
           apiKey: entry.apiKey ?? "ollama",
         },
-        models: Object.fromEntries(modelIds.map((id) => [id, {}])),
+        models: Object.fromEntries(
+          modelIds.map((id) => {
+            const contextWindow = modelCatalog?.metaById.get(id)?.contextWindow;
+            const maxTokens = modelCatalog?.rawMaxTokensById.get(id);
+            const displayName = modelCatalog?.metaById.get(id)?.displayName;
+            const limit: Record<string, number> = {};
+            if (typeof contextWindow === "number" && contextWindow > 0) {
+              limit.context = Math.floor(contextWindow);
+            }
+            if (typeof maxTokens === "number" && maxTokens > 0) {
+              limit.output = Math.floor(maxTokens);
+            }
+            return [
+              id,
+              {
+                ...(displayName ? { name: displayName } : {}),
+                ...(Object.keys(limit).length > 0 ? { limit } : {}),
+              },
+            ];
+          }),
+        ),
       },
     },
     model: `${providerId}/${entry.model}`,
     small_model: `${providerId}/${smallModel}`,
   };
-  return `${JSON.stringify(cfg, null, 2)}\n`;
+  return `${JSON.stringify(
+    mergeNativeConfigRecord(cfg, readNativeConfig(entry, warnings).config),
+    null,
+    2,
+  )}\n`;
+}
+
+export function buildOpencodeConfigJsonc(
+  entry: HarnessConfigEntry,
+  modelCatalog?: ModelCatalog,
+  warnings: string[] = [],
+): string {
+  return buildOpencodeCompatibleConfigJsonc(entry, "https://opencode.ai/config.json", modelCatalog, warnings);
+}
+
+export function buildKiloConfigJson(
+  entry: HarnessConfigEntry,
+  modelCatalog?: ModelCatalog,
+  warnings: string[] = [],
+): string {
+  return buildOpencodeCompatibleConfigJsonc(entry, "https://app.kilo.ai/config.json", modelCatalog, warnings);
 }
 
 /** Comment-only Neutralizer für das legacy-opencode config.toml (Helper). */
@@ -1752,14 +2177,18 @@ function manageOpencodeJsonc(
   desired: string,
   entry: HarnessConfigEntry,
   warnings: string[],
+  harnessId = "opencode",
+  modelCatalog?: ModelCatalog,
+  ownership: ManagedJsonOwnership = { scope: "full" },
 ): FileAction {
   const exists = existsSync(path);
   const current = exists ? tryOr(() => readFileSync(path, "utf-8"), null) : null;
+  const managedState = exists ? readManagedJsonState(path, harnessId) : null;
   if (!exists) {
     atomicWrite(path, desired, 0o600, warnings);
     return "created";
   }
-  if (current === desired) {
+  if (current === desired && (managedState === null || managedState.ownership === "full")) {
     // r3: Mode-Heilung auch bei byte-identischem Bestand (0600-Pflicht, apiKey).
     try {
       if ((statSync(path).mode & 0o777) !== 0o600) chmodSync(path, 0o600);
@@ -1769,7 +2198,7 @@ function manageOpencodeJsonc(
     return "unchanged";
   }
   if (current === null) {
-    warnings.push(`opencode: ${path} unreadable; leaving intact`);
+    warnings.push(`${harnessId}: ${path} unreadable; leaving intact`);
     return "note (customized, left intact)";
   }
   // Writer-eigene Datei? Unser Vollform-Shape parsen und mit dem gewünschten
@@ -1779,7 +2208,7 @@ function manageOpencodeJsonc(
   if (desiredObj === null || currentObj === null) {
     // current ist kein plain JSON (JSONC mit Kommentaren o.ä.) → never destroy.
     warnings.push(
-      `opencode: ${path} is customized (non-JSON or commented JSONC); leaving intact — ` +
+      `${harnessId}: ${path} is customized (non-JSON or commented JSONC); leaving intact — ` +
         `adopt the provider block manually if wanted`,
     );
     return "note (customized, left intact)";
@@ -1790,7 +2219,7 @@ function manageOpencodeJsonc(
   // Writer-owned = $schema passt UND provider enthält GENAU unsere derived
   // ProviderId mit deepEquals-identischem Block UND alle übrigen Keys sind
   // aus {$schema, model, small_model} mit Werten gleich dem Desired-Stand.
-  const providerId = deriveProviderId(entry.baseUrl ?? "");
+  const providerId = resolveHarnessProviderId(harnessId, entry, modelCatalog, warnings);
   const currentProviderObj =
     typeof currentObj.provider === "object" && currentObj.provider !== null &&
       !Array.isArray(currentObj.provider)
@@ -1808,14 +2237,14 @@ function manageOpencodeJsonc(
   // Listen-Änderungen nicht).
   const providerIdInDesired =
     currentProviderObj !== null && desiredProviderObj2 !== null &&
-    Object.keys(currentProviderObj).length === 1 &&
-    providerId in currentProviderObj &&
-    deepLooksGenerated(currentProviderObj[providerId]);
+    Object.values(currentProviderObj).filter(deepLooksGenerated).length === 1 &&
+    Object.keys(currentProviderObj).length === 1;
   // Struktur-Marker statt Content-Gleichheit (r2-Fix der r2-Fixes): der
   // Sync-on-Diff-Refresh lebt davon, dass Bestand ≠ Desired ist — Writer-
   // Owned wird an der GENERIERTEN BLOCKFORM erkannt (npm/name-Marker), nicht
   // am aktuellen Content. Ein fremder Block mit unserer providerId geht in
   // den Merge-Pfad (dort operator-wins-NOTE bei abweichendem Content).
+  const nativeConfig = readNativeConfig(entry, warnings).config;
   const isWriterOwned =
     typeof currentObj === "object" && currentObj !== null && desiredObj !== null &&
     currentObj.$schema === desiredObj.$schema &&
@@ -1824,27 +2253,55 @@ function manageOpencodeJsonc(
       // $schema/provider sind oben geprüft; model/small_model sind Writer-
       // Keys, deren CONTENT sich beim Sync-on-Diff legitim ändert — daher
       // hier NUR Key-Set-Prüfung, keine Content-Gleichheit (r2-Fix).
-      return key === "$schema" || key === "provider" || key === "model" || key === "small_model";
+      return key === "$schema" || key === "provider" || key === "model" || key === "small_model" ||
+        Object.hasOwn(nativeConfig ?? {}, key);
     });
-  if (isWriterOwned) {
-    atomicWrite(path, desired, 0o600, warnings);
-    return "updated";
-  }
-  // MERGE: Operator-Keys erhalten; nur unser provider-Block wandert rein.
   const desiredProviderObj =
     typeof desiredObj?.provider === "object" && desiredObj.provider !== null &&
       !Array.isArray(desiredObj.provider)
       ? (desiredObj.provider as Record<string, unknown>)
       : {};
+  const foreignProjection = mergeNativeConfigRecord(nativeConfig ?? {}, {
+    provider: { [providerId]: desiredProviderObj[providerId] },
+  });
+  if (
+    managedState && currentProviderObj &&
+    Object.values(currentProviderObj).some(deepLooksGenerated)
+  ) {
+    const legacyAugmented = managedState.ownership === undefined;
+    ownership.scope = managedState.ownership ?? "augmented";
+    ownership.projection = ownership.scope === "augmented" ? foreignProjection : undefined;
+    ownership.pruneUnowned = !legacyAugmented;
+    ownership.retirePaths = legacyAugmented
+      ? managedState.paths.filter((path) =>
+          path[0] === "provider" && path.length > 1 && path[1] !== providerId &&
+          deepLooksGenerated(currentProviderObj[path[1]]) && !Object.hasOwn(desiredProviderObj, path[1])
+        )
+      : undefined;
+    const merged = applyManagedJsonState(harnessId, currentObj, desiredObj, managedState, ownership);
+    const next = `${JSON.stringify(merged, null, 2)}\n`;
+    if (next === current) return "unchanged";
+    atomicWrite(path, next, 0o600, warnings);
+    return "updated";
+  }
+  if (isWriterOwned) {
+    atomicWrite(path, desired, 0o600, warnings);
+    return "updated";
+  }
+  // MERGE: Operator-Keys erhalten; nur unser provider-Block wandert rein.
   const desiredProvider = desiredProviderObj[providerId];
-  const merged: Record<string, unknown> = { ...currentObj };
+  ownership.scope = "augmented";
+  ownership.projection = foreignProjection;
+  const merged: Record<string, unknown> = nativeConfig
+    ? mergeNativeConfigRecord(currentObj, nativeConfig)
+    : { ...currentObj };
   // Final-Audit r2 (F2): provider als non-object (opencode Shorthand
   // `provider: "ollama"`) ist eine Operator-Entscheidung — niemals spread-en
   // (sonst Index-Key-Korruption); operator wins → NOTE.
   if (desiredProvider !== undefined && merged.provider !== undefined &&
       (typeof merged.provider !== "object" || merged.provider === null || Array.isArray(merged.provider))) {
     warnings.push(
-      `opencode: 'provider' in ${path} is not an object (operator shorthand); leaving intact — ` +
+      `${harnessId}: 'provider' in ${path} is not an object (operator shorthand); leaving intact — ` +
         `adopt the provider block manually if wanted`,
     );
     return "note (customized, left intact)";
@@ -1855,7 +2312,7 @@ function manageOpencodeJsonc(
   if (desiredProvider !== undefined) {
     if (providerId in mergedProvider && !deepEqualsWriter(mergedProvider[providerId], desiredProvider)) {
       warnings.push(
-        `opencode: provider '${providerId}' already present in ${path} with different content; ` +
+        `${harnessId}: provider '${providerId}' already present in ${path} with different content; ` +
           `operator wins, not overwriting — adopt manually if wanted`,
       );
       return "note (customized, left intact)";
@@ -1910,19 +2367,21 @@ export function deployOpencodeHarnessFiles(
   paths: HarnessWriterPaths,
   logger?: HarnessWriterLogger,
   harnessId = "opencode",
+  modelCatalog?: ModelCatalog,
 ): { warnings: string[]; files: HarnessDeployFile[] } {
   const warnings: string[] = [];
   const files: HarnessDeployFile[] = [];
-  const desired = buildOpencodeConfigJsonc(entry);
+  const desired = buildOpencodeConfigJsonc(entry, modelCatalog, warnings);
   for (const targetDir of [join(paths.acpxDir, "opencode-home"), paths.opencodeGlobalDir]) {
     const path = join(targetDir, "opencode.jsonc");
+    const ownership: ManagedJsonOwnership = { scope: "full" };
     // M3-Fix (2026-10-14): die Datei trägt den apiKey in Klartext → 0600
     // (Helper-Standard; Mode geht in atomicWrite — kein Exposé-Fenster).
-    const action = manageOpencodeJsonc(path, desired, entry, warnings);
+    const action = manageOpencodeJsonc(path, desired, entry, warnings, "opencode", modelCatalog, ownership);
     if (action !== "unchanged") {
       logger?.info?.(`[${harnessId}] ${action} ${path} (provider config)`);
     }
-    files.push({ path, action });
+    files.push({ path, action }, ...writeManagedStateIfApplied(path, harnessId, desired, action, warnings, ownership));
   }
   // Legacy TOML neutralisieren — NUR wenn sie fehlt oder bereits der
   // comment-only Placeholder ist (Augment-Design: echte Operator-Configs
@@ -1950,6 +2409,27 @@ export function deployOpencodeHarnessFiles(
   return { warnings, files };
 }
 
+export function deployKiloHarnessFiles(
+  entry: HarnessConfigEntry,
+  paths: HarnessWriterPaths,
+  logger?: HarnessWriterLogger,
+  modelCatalog?: ModelCatalog,
+): { warnings: string[]; files: HarnessDeployFile[] } {
+  const warnings: string[] = [];
+  if (!paths.kiloGlobalDir) {
+    return { warnings: ["kilo: XDG_CONFIG_HOME/HOME could not be resolved; skipping kilo.json"], files: [] };
+  }
+  const path = join(paths.kiloGlobalDir, "kilo.json");
+  const desired = buildKiloConfigJson(entry, modelCatalog, warnings);
+  const ownership: ManagedJsonOwnership = { scope: "full" };
+  const action = manageOpencodeJsonc(path, desired, entry, warnings, "kilo", modelCatalog, ownership);
+  if (action !== "unchanged") logger?.info?.(`[kilo] ${action} ${path} (native config)`);
+  return {
+    warnings,
+    files: [{ path, action }, ...writeManagedStateIfApplied(path, "kilo", desired, action, warnings, ownership)],
+  };
+}
+
 
 // ---------------------------------------------------------------------------
 // Mechanismus A — claude (FILE, zusätzlich zum ENV-Mechanismus)
@@ -1957,7 +2437,11 @@ export function deployOpencodeHarnessFiles(
 
 const CLAUDE_EFFORT_LEVELS = new Set(["low", "medium", "high", "xhigh", "max"]);
 
-export function buildClaudeSettingsJson(entry: HarnessConfigEntry, warnings: string[]): string {
+export function buildClaudeSettingsJson(
+  entry: HarnessConfigEntry,
+  warnings: string[],
+  modelCatalog?: ModelCatalog,
+): string {
   const model = nonEmpty(entry.model);
   const baseUrl = nonEmpty(entry.baseUrl);
   const apiKey = nonEmpty(entry.apiKey);
@@ -1974,11 +2458,29 @@ export function buildClaudeSettingsJson(entry: HarnessConfigEntry, warnings: str
     }
   }
   cfg.env = {
-    ANTHROPIC_BASE_URL: baseUrl,
+    ANTHROPIC_BASE_URL: baseUrl ? normalizeAnthropicBaseUrl(baseUrl) : undefined,
     ANTHROPIC_AUTH_TOKEN: apiKey,
     ANTHROPIC_SMALL_FAST_MODEL: smallModel,
   };
-  return `${JSON.stringify(cfg, null, 2)}\n`;
+  const availableModels = dedupeModelIds([
+    ...(model ? [model] : []),
+    ...(entry.models ?? []),
+  ]);
+  if (availableModels.length > 0) cfg.availableModels = availableModels;
+  const modelSettings = Object.fromEntries(
+    availableModels.flatMap((modelId) => {
+      const contextWindow = modelCatalog?.metaById.get(modelId)?.contextWindow;
+      return typeof contextWindow === "number" && contextWindow > 0
+        ? [[modelId, { autoCompactWindow: Math.floor(contextWindow) }]]
+        : [];
+    }),
+  );
+  if (Object.keys(modelSettings).length > 0) cfg.modelSettings = modelSettings;
+  return `${JSON.stringify(
+    mergeNativeConfigRecord(cfg, readNativeConfig(entry, warnings).settings),
+    null,
+    2,
+  )}\n`;
 }
 
 function manageClaudeSettingsJson(
@@ -1986,14 +2488,16 @@ function manageClaudeSettingsJson(
   desired: string,
   entry: HarnessConfigEntry,
   warnings: string[],
+  ownership: ManagedJsonOwnership = { scope: "full" },
 ): FileAction {
   const exists = existsSync(path);
+  const managedState = exists ? readManagedJsonState(path, "claude") : null;
   if (!exists) {
     atomicWrite(path, desired, 0o600, warnings);
     return "created";
   }
   const current = tryOr(() => readFileSync(path, "utf-8"), null);
-  if (current === desired) {
+  if (current === desired && (managedState === null || managedState.ownership === "full")) {
     try {
       if ((statSync(path).mode & 0o777) !== 0o600) chmodSync(path, 0o600);
     } catch (error) {
@@ -2012,21 +2516,98 @@ function manageClaudeSettingsJson(
     return "note (customized, left intact)";
   }
   const managedEnvKeys = ["ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_SMALL_FAST_MODEL"];
+  const nativeSettings = readNativeConfig(entry, warnings).settings;
+  const generatedEnv = Object.fromEntries(
+    managedEnvKeys
+      .filter((key) => isNativeRecord(desiredObj.env) && Object.hasOwn(desiredObj.env, key))
+      .map((key) => [key, (desiredObj.env as Record<string, unknown>)[key]]),
+  );
+  const foreignProjection = mergeNativeConfigRecord({
+    model: desiredObj.model,
+    ...("effort" in desiredObj ? { effort: desiredObj.effort } : {}),
+    env: generatedEnv,
+  }, nativeSettings ?? {});
+  if (managedState) {
+    const legacyAugmented = managedState.ownership === undefined;
+    ownership.scope = managedState.ownership ?? "augmented";
+    ownership.projection = ownership.scope === "augmented" ? foreignProjection : undefined;
+    ownership.pruneUnowned = !legacyAugmented;
+    const merged = applyManagedJsonState("claude", currentObj, desiredObj, managedState, ownership);
+    const next = `${JSON.stringify(merged, null, 2)}\n`;
+    if (next === current) return "unchanged";
+    atomicWrite(path, next, 0o600, warnings);
+    return "updated";
+  }
+  const nativeEnv = isNativeRecord(nativeSettings?.env) ? nativeSettings.env : {};
+  const desiredEnv = (desiredObj.env as Record<string, unknown> | undefined) ?? {};
   const currentEnv =
     typeof currentObj.env === "object" && currentObj.env !== null && !Array.isArray(currentObj.env)
       ? (currentObj.env as Record<string, unknown>)
       : {};
-  const mergedEnv: Record<string, unknown> = {};
+  const mergedEnv: Record<string, unknown> = {
+    ...((desiredObj.env as Record<string, unknown> | undefined) ?? {}),
+  };
   for (const key of managedEnvKeys) {
     mergedEnv[key] = (desiredObj.env as Record<string, unknown>)[key];
   }
   for (const key of Object.keys(currentEnv).sort()) {
-    if (!managedEnvKeys.includes(key)) mergedEnv[key] = currentEnv[key];
+    if (!managedEnvKeys.includes(key) && !Object.hasOwn(nativeEnv, key)) mergedEnv[key] = currentEnv[key];
   }
-  const merged: Record<string, unknown> = { model: desiredObj.model, env: mergedEnv };
+  ownership.scope = "augmented";
+  ownership.projection = foreignProjection;
+  const merged: Record<string, unknown> = { ...desiredObj, model: desiredObj.model, env: mergedEnv };
   if ("effort" in desiredObj) merged.effort = desiredObj.effort;
+  const desiredModelSettings =
+    typeof desiredObj.modelSettings === "object" &&
+    desiredObj.modelSettings !== null &&
+    !Array.isArray(desiredObj.modelSettings)
+      ? (desiredObj.modelSettings as Record<string, unknown>)
+      : {};
+  const currentModelSettings =
+    typeof currentObj.modelSettings === "object" &&
+    currentObj.modelSettings !== null &&
+    !Array.isArray(currentObj.modelSettings)
+      ? (currentObj.modelSettings as Record<string, unknown>)
+      : {};
+  const nativeModelSettings = isNativeRecord(nativeSettings?.modelSettings) ? nativeSettings.modelSettings : {};
+  if (
+    Object.keys(desiredModelSettings).length > 0 ||
+    Object.keys(currentModelSettings).length > 0
+  ) {
+    const modelSettings: Record<string, unknown> = { ...desiredModelSettings };
+    for (const [modelId, value] of Object.entries(currentModelSettings)) {
+      const desiredValue = desiredModelSettings[modelId];
+      if (Object.hasOwn(nativeModelSettings, modelId)) {
+        modelSettings[modelId] = isNativeRecord(value) && isNativeRecord(desiredValue)
+          ? mergeNativeConfigRecord(value, desiredValue)
+          : desiredValue;
+        continue;
+      }
+      modelSettings[modelId] =
+        typeof value === "object" && value !== null && !Array.isArray(value)
+          ? {
+              ...(typeof desiredValue === "object" &&
+              desiredValue !== null &&
+              !Array.isArray(desiredValue)
+                ? desiredValue
+                : {}),
+              ...value,
+            }
+          : value;
+    }
+    // Existing per-model settings are operator-owned; HCW only fills absent metadata.
+    merged.modelSettings = modelSettings;
+  }
   for (const key of Object.keys(currentObj).sort()) {
-    if (key !== "model" && key !== "effort" && key !== "env") merged[key] = currentObj[key];
+    if (key !== "model" && key !== "effort" && key !== "env" && key !== "modelSettings") {
+      if (Object.hasOwn(nativeSettings ?? {}, key) && key in desiredObj) {
+        merged[key] = isNativeRecord(currentObj[key]) && isNativeRecord(desiredObj[key])
+          ? mergeNativeConfigRecord(currentObj[key] as Record<string, unknown>, desiredObj[key] as Record<string, unknown>)
+          : desiredObj[key];
+      } else {
+        merged[key] = currentObj[key];
+      }
+    }
   }
   const next = `${JSON.stringify(merged, null, 2)}\n`;
   if (next === current) return "unchanged";
@@ -2040,15 +2621,17 @@ export function deployClaudeHarnessFiles(
   warnings: string[],
   logger?: HarnessWriterLogger,
   harnessId = "claude",
+  modelCatalog?: ModelCatalog,
 ): { files: HarnessDeployFile[] } {
   const files: HarnessDeployFile[] = [];
   const path = join(paths.claudeSourceHome, "settings.json");
-  const desired = buildClaudeSettingsJson(entry, warnings);
-  const action = manageClaudeSettingsJson(path, desired, entry, warnings);
+  const desired = buildClaudeSettingsJson(entry, warnings, modelCatalog);
+  const ownership: ManagedJsonOwnership = { scope: "full" };
+  const action = manageClaudeSettingsJson(path, desired, entry, warnings, ownership);
   if (action !== "unchanged") {
     logger?.info?.(`[${harnessId}] ${action} ${path} (settings.json)`);
   }
-  files.push({ path, action });
+  files.push({ path, action }, ...writeManagedStateIfApplied(path, "claude", desired, action, warnings, ownership));
   return { files };
 }
 
@@ -2086,13 +2669,17 @@ function readEnvFileVars(path: string): Record<string, string> | null {
   return vars;
 }
 
-/** Merge managed vars with foreign keys already present in the file (copilot merge rule). */
-function mergeEnvFileVars(path: string, managed: Record<string, string>): Record<string, string> {
+function mergeEnvFileVars(
+  path: string,
+  managed: Record<string, string>,
+  managedKeys: readonly string[] = Object.keys(managed),
+): Record<string, string> {
   const existing = readEnvFileVars(path);
   if (existing === null) return managed;
+  const managedSet = new Set(managedKeys);
   const foreign: Record<string, string> = {};
   for (const key of Object.keys(existing).sort()) {
-    if (!(key in managed)) foreign[key] = existing[key];
+    if (!(key in managed) && !managedSet.has(key)) foreign[key] = existing[key];
   }
   return { ...managed, ...foreign };
 }
@@ -2118,7 +2705,9 @@ export function deployHarnessEnvFile(
     "plugins.entries.acpx.config.agents.<id>.command/args — the 15.2 design (the three mechanisms: FILE / ENV / NONE).",
     "GENERIERT (Phase 3): Hand-Edits werden beim nächsten Boot überschrieben.",
   ];
-  const mergedVars = existsSync(path) ? mergeEnvFileVars(path, mapping.vars) : mapping.vars;
+  const mergedVars = existsSync(path)
+    ? mergeEnvFileVars(path, mapping.vars, mapping.managedKeys)
+    : mapping.vars;
   let content = renderEnvFile(mergedVars, header);
   // Multi-Model γ: ENV-Harnesses ohne Multi-Model-Surface bekommen die
   // verfügbaren Modelle als INFORMATIONAL-Kommentar (cap 25 + more-Zeile).
@@ -2173,14 +2762,92 @@ export function derivePiProviderId(baseUrl: string): string {
  *  2. `deriveProviderId(baseUrl)` — Fallback, wenn die baseUrl nicht (oder
  *     nicht eindeutig) im Gateway-Katalog steht.
  */
+function expectedHarnessApi(
+  harnessId: string,
+  entry: HarnessConfigEntry,
+  catalog: ModelCatalog | null | undefined,
+): string | undefined {
+  const modelApi = entry.model ? catalog?.metaById.get(entry.model)?.api : undefined;
+  if (harnessId === "codex") return "openai-responses";
+  if (harnessId === "copilot") {
+    if (entry.providerType === "anthropic") return "anthropic-messages";
+    if (entry.wireApi === "completions") return "openai-completions";
+    return "openai-responses";
+  }
+  if (harnessId === "qwen" || harnessId === "pi" || harnessId === "droid" || harnessId === "kimi") {
+    return "openai-completions";
+  }
+  if (harnessId === "opencode" || harnessId === "kilo" || harnessId === "kilocode") {
+    return "openai-completions";
+  }
+  return modelApi;
+}
+
+export function resolveHarnessProviderId(
+  harnessId: string,
+  entry: HarnessConfigEntry,
+  catalog: ModelCatalog | null | undefined,
+  warnings: string[] = [],
+): string {
+  const explicit = nonEmpty(entry.providerKey);
+  const baseUrl = entry.baseUrl ?? "";
+  const normalized = normalizeBaseUrlForMatch(baseUrl);
+  const fallback = deriveProviderId(baseUrl);
+  const finalize = (providerKey: string): string => {
+    if (harnessId === "codex" && providerKey === "ollama") {
+      return fallback;
+    }
+    return providerKey;
+  };
+  if (explicit) return finalize(explicit);
+  const inherited = normalized ? catalog?.providerKeyByBaseUrl.get(normalized) : undefined;
+  if (inherited) return finalize(inherited);
+  const allCandidates = normalized ? catalog?.routeCandidatesByBaseUrl?.get(normalized) ?? [] : [];
+  const modelCandidates = entry.model
+    ? allCandidates.filter((candidate) => candidate.modelIds.includes(entry.model))
+    : allCandidates;
+  if (entry.model && modelCandidates.length === 0 && allCandidates.length > 0) {
+    warnings.push(
+      `${harnessId}: no provider on the matched baseUrl lists model ${entry.model}; ` +
+        `set providerKey explicitly to avoid the URL-derived fallback`,
+    );
+    return fallback;
+  }
+  const candidates = modelCandidates;
+  const expectedApi = expectedHarnessApi(harnessId, entry, catalog);
+  const matching = candidates.filter((candidate) => {
+    const api = entry.model ? candidate.modelApis[entry.model] ?? candidate.api : candidate.api;
+    return api === expectedApi;
+  });
+  if (matching.length === 1) return finalize(matching[0]!.providerKey);
+  if (candidates.length > 0) {
+    warnings.push(
+      `${harnessId}: provider route is not a unique model+API match for ${entry.model} and ${expectedApi ?? "unspecified"}; ` +
+        `set providerKey explicitly to avoid the URL-derived fallback`,
+    );
+  }
+  return fallback;
+}
+
+function providerModelApi(
+  catalog: ModelCatalog | null | undefined,
+  baseUrl: string,
+  providerKey: string,
+  modelId: string,
+): string | undefined {
+  const normalized = normalizeBaseUrlForMatch(baseUrl);
+  if (!catalog?.routeCandidatesByBaseUrl) return catalog?.metaById.get(modelId)?.api;
+  const candidate = catalog.routeCandidatesByBaseUrl.get(normalized)
+    ?.find((route) => route.providerKey === providerKey);
+  if (!candidate) return undefined;
+  return candidate.modelApis[modelId] ?? candidate.api;
+}
+
 export function resolvePiProviderId(
   baseUrl: string,
   catalog: ModelCatalog | null,
 ): string {
-  const normalized = normalizeBaseUrlForMatch(baseUrl);
-  const inherited = normalized ? catalog?.providerKeyByBaseUrl.get(normalized) : undefined;
-  if (inherited) return inherited;
-  return derivePiProviderId(baseUrl);
+  return resolveHarnessProviderId("pi", { model: "", baseUrl }, catalog);
 }
 
 /**
@@ -2206,6 +2873,8 @@ export function buildPiModelsJson(
   providerId: string,
   metaById?: Map<string, ModelMeta>,
   rawMaxTokensById?: Map<string, number>,
+  warnings: string[] = [],
+  providerApi?: string,
 ): string {
   const baseUrl = withV1Suffix(entry.baseUrl ?? "");
   // pi liest models.json als ARRAY und nimmt models[0] als Default — die
@@ -2234,6 +2903,9 @@ export function buildPiModelsJson(
     if (typeof rawMaxTokens === "number" && rawMaxTokens > 0) {
       rec.maxTokens = Math.floor(rawMaxTokens);
     }
+    if (meta?.cost) {
+      rec.cost = { ...meta.cost };
+    }
     if (typeof meta?.contextWindow === "number" && meta.contextWindow > 0) {
       rec.contextWindow = Math.floor(meta.contextWindow);
     }
@@ -2245,13 +2917,17 @@ export function buildPiModelsJson(
       [providerId]: {
         name: `harness-config-writer (${baseUrl})`,
         baseUrl,
-        api: "openai-completions",
+        api: providerApi ?? metaById?.get(entry.model)?.api ?? "openai-completions",
         apiKey: entry.apiKey ?? "ollama",
         models,
       },
     },
   };
-  return `${JSON.stringify(cfg, null, 2)}\n`;
+  return `${JSON.stringify(
+    mergeNativeConfigRecord(cfg, readNativeConfig(entry, warnings).models),
+    null,
+    2,
+  )}\n`;
 }
 
 export function buildPiSettingsJson(
@@ -2274,13 +2950,18 @@ export function buildPiSettingsJson(
       );
     }
   }
-  return `${JSON.stringify(cfg, null, 2)}\n`;
+  return `${JSON.stringify(
+    mergeNativeConfigRecord(cfg, readNativeConfig(entry, warnings).settings),
+    null,
+    2,
+  )}\n`;
 }
 
 function managePiModelsJson(
   path: string,
   desired: string,
   providerId: string,
+  entry: HarnessConfigEntry,
   warnings: string[],
 ): FileAction {
   const exists = existsSync(path);
@@ -2308,6 +2989,14 @@ function managePiModelsJson(
   if (desiredObj === null || currentObj === null) {
     warnings.push(`pi: ${path} is not valid JSON; leaving intact`);
     return "note (customized, left intact)";
+  }
+  const managedState = readManagedJsonState(path, "pi-models");
+  if (managedState) {
+    const merged = applyManagedJsonState("pi-models", currentObj, desiredObj, managedState);
+    const next = `${JSON.stringify(merged, null, 2)}\n`;
+    if (next === current) return "unchanged";
+    atomicWrite(path, next, 0o600, warnings);
+    return "updated";
   }
   const desiredProviders =
     typeof desiredObj.providers === "object" && desiredObj.providers !== null && !Array.isArray(desiredObj.providers)
@@ -2437,9 +3126,17 @@ function managePiModelsJson(
     }
   }
   mergedProviders[providerId] = desiredProviders[providerId];
-  const merged: Record<string, unknown> = { $schema: desiredObj.$schema, providers: mergedProviders };
+  const merged: Record<string, unknown> = { ...desiredObj, $schema: desiredObj.$schema, providers: mergedProviders };
+  const nativeModels = readNativeConfig(entry, warnings).models;
   for (const key of Object.keys(currentObj).sort()) {
-    if (key !== "$schema" && key !== "providers") merged[key] = currentObj[key];
+    if (key !== "$schema" && key !== "providers") {
+      merged[key] = Object.hasOwn(nativeModels ?? {}, key) && key in desiredObj &&
+          isNativeRecord(currentObj[key]) && isNativeRecord(desiredObj[key])
+        ? mergeNativeConfigRecord(currentObj[key] as Record<string, unknown>, desiredObj[key] as Record<string, unknown>)
+        : Object.hasOwn(nativeModels ?? {}, key) && key in desiredObj
+          ? desiredObj[key]
+          : currentObj[key];
+    }
   }
   const next = `${JSON.stringify(merged, null, 2)}\n`;
   if (next === current) return "unchanged";
@@ -2450,6 +3147,7 @@ function managePiModelsJson(
 function managePiSettingsJson(
   path: string,
   desired: string,
+  entry: HarnessConfigEntry,
   warnings: string[],
 ): FileAction {
   const exists = existsSync(path);
@@ -2478,8 +3176,16 @@ function managePiSettingsJson(
     warnings.push(`pi: ${path} is not valid JSON; leaving intact`);
     return "note (customized, left intact)";
   }
+  const managedState = readManagedJsonState(path, "pi-settings");
+  if (managedState) {
+    const merged = applyManagedJsonState("pi-settings", currentObj, desiredObj, managedState);
+    const next = `${JSON.stringify(merged, null, 2)}\n`;
+    if (next === current) return "unchanged";
+    atomicWrite(path, next, 0o600, warnings);
+    return "updated";
+  }
   const managedKeys = ["defaultProvider", "defaultModel", "defaultThinkingLevel", "enabledModels"];
-  const merged: Record<string, unknown> = {};
+  const merged: Record<string, unknown> = { ...desiredObj };
   for (const key of managedKeys) {
     if (!(key in desiredObj)) continue;
     if (key === "enabledModels") {
@@ -2499,8 +3205,16 @@ function managePiSettingsJson(
     }
     merged[key] = desiredObj[key];
   }
+  const nativeSettings = readNativeConfig(entry, warnings).settings;
   for (const key of Object.keys(currentObj).sort()) {
-    if (!managedKeys.includes(key)) merged[key] = currentObj[key];
+    if (!managedKeys.includes(key)) {
+      merged[key] = Object.hasOwn(nativeSettings ?? {}, key) && key in desiredObj &&
+          isNativeRecord(currentObj[key]) && isNativeRecord(desiredObj[key])
+        ? mergeNativeConfigRecord(currentObj[key] as Record<string, unknown>, desiredObj[key] as Record<string, unknown>)
+        : Object.hasOwn(nativeSettings ?? {}, key) && key in desiredObj
+          ? desiredObj[key]
+          : currentObj[key];
+    }
   }
   const next = `${JSON.stringify(merged, null, 2)}\n`;
   if (next === current) return "unchanged";
@@ -2520,7 +3234,8 @@ export function deployPiHarnessFiles(
   // Provider-Key (Variante A): der GATEWAY-Provider-Key (z. B. "ollama"),
   // falls die baseUrl eindeutig im Gateway-Katalog steht — sonst der
   // URL-abgeleitete Fallback.
-  const providerId = resolvePiProviderId(entry.baseUrl ?? "", modelCatalog ?? null);
+  const providerId = resolveHarnessProviderId("pi", entry, modelCatalog, warnings);
+  const providerApi = providerModelApi(modelCatalog, entry.baseUrl ?? "", providerId, entry.model);
   const modelsPath = join(paths.piAgentDir, "models.json");
   const settingsPath = join(paths.piAgentDir, "settings.json");
   const desiredModels = buildPiModelsJson(
@@ -2528,24 +3243,668 @@ export function deployPiHarnessFiles(
     providerId,
     modelCatalog?.metaById,
     modelCatalog?.rawMaxTokensById,
+    warnings,
+    providerApi,
   );
   const desiredSettings = buildPiSettingsJson(entry, providerId, warnings);
-  const modelsAction = managePiModelsJson(modelsPath, desiredModels, providerId, warnings);
-  const settingsAction = managePiSettingsJson(settingsPath, desiredSettings, warnings);
+  const modelsAction = managePiModelsJson(modelsPath, desiredModels, providerId, entry, warnings);
+  const settingsAction = managePiSettingsJson(settingsPath, desiredSettings, entry, warnings);
   if (modelsAction !== "unchanged") {
     logger?.info?.(`[${harnessId}] ${modelsAction} ${modelsPath} (models.json)`);
   }
   if (settingsAction !== "unchanged") {
     logger?.info?.(`[${harnessId}] ${settingsAction} ${settingsPath} (settings.json)`);
   }
-  files.push({ path: modelsPath, action: modelsAction });
-  files.push({ path: settingsPath, action: settingsAction });
+  files.push(
+    { path: modelsPath, action: modelsAction },
+    ...writeManagedStateIfApplied(modelsPath, "pi-models", desiredModels, modelsAction, warnings),
+    { path: settingsPath, action: settingsAction },
+    ...writeManagedStateIfApplied(settingsPath, "pi-settings", desiredSettings, settingsAction, warnings),
+  );
   // Addon-Pfad: pi muss seinen Agent-Dir via ENV finden, da im Container HOME
   // nicht auf /config zeigt. Nur setzen, wenn ein Pfad vorliegt.
   if (paths.piAgentDir) {
     process.env.PI_CODING_AGENT_DIR = paths.piAgentDir;
   }
   return { warnings, files };
+}
+
+// ---------------------------------------------------------------------------
+// Native config files for the remaining ENV-backed harnesses.
+// ---------------------------------------------------------------------------
+
+export function buildHarnessNativeSettingsJson(
+  harnessId: string,
+  entry: HarnessConfigEntry,
+  modelCatalog?: ModelCatalog,
+  warnings: string[] = [],
+): string {
+  const baseUrl = nonEmpty(entry.baseUrl);
+  const normalizedBaseUrl = baseUrl ? withV1Suffix(baseUrl) : undefined;
+  const normalizedForMatch = normalizeBaseUrlForMatch(baseUrl ?? "");
+  const providerPolicy = modelCatalog?.policyByBaseUrl.get(normalizedForMatch);
+  const modelIds = dedupeModelIds([entry.model, ...(entry.models ?? [])]);
+  let generated: Record<string, unknown>;
+  switch (harnessId) {
+    case "gemini": {
+      const model: Record<string, unknown> = { name: entry.model };
+      if (typeof providerPolicy?.postTurnCompactThresholdPercent === "number") {
+        model.compressionThreshold = providerPolicy.postTurnCompactThresholdPercent / 100;
+      }
+      generated = { model };
+      break;
+    }
+    case "copilot":
+      generated = { model: entry.model };
+      break;
+    case "iflow":
+      generated = {
+        modelName: entry.model,
+        ...(normalizedBaseUrl ? { baseUrl: normalizedBaseUrl } : {}),
+        ...(nonEmpty(entry.apiKey) ? { apiKey: "${IFLOW_API_KEY}" } : {}),
+      };
+      break;
+    case "droid": {
+      const defaultMeta = modelCatalog?.metaById.get(entry.model);
+      const routeProviderId = resolveHarnessProviderId("droid", entry, modelCatalog, warnings);
+      generated = {
+        model: entry.model,
+        ...(nonEmpty(entry.thinking) ? { reasoningEffort: nonEmpty(entry.thinking) } : {}),
+        ...(typeof defaultMeta?.contextWindow === "number" && defaultMeta.contextWindow > 0 &&
+            typeof providerPolicy?.postTurnCompactThresholdPercent === "number"
+          ? { compactionTokenLimit: Math.floor(defaultMeta.contextWindow * providerPolicy.postTurnCompactThresholdPercent / 100) }
+          : {}),
+        ...(normalizedBaseUrl
+          ? {
+              customModels: modelIds.map((id) => {
+                const meta = modelCatalog?.metaById.get(id);
+                return {
+                  model: id,
+                  displayName: `harness-config-writer (${meta?.displayName ?? id})`,
+                  baseUrl: normalizeProtocolBaseUrl(baseUrl ?? "", meta?.api),
+                  ...(nonEmpty(entry.apiKey) ? { apiKey: "${FACTORY_API_KEY}" } : {}),
+                  provider: (providerModelApi(modelCatalog, baseUrl ?? "", routeProviderId, id) ?? meta?.api) === "anthropic-messages"
+                    ? "anthropic"
+                    : (providerModelApi(modelCatalog, baseUrl ?? "", routeProviderId, id) ?? meta?.api) === "openai-responses"
+                      ? "openai"
+                      : "generic-chat-completion-api",
+                  ...(typeof meta?.contextWindow === "number" && meta.contextWindow > 0
+                    ? { maxContextLimit: Math.floor(meta.contextWindow) }
+                    : {}),
+                  ...(typeof modelCatalog?.rawMaxTokensById.get(id) === "number" &&
+                      (modelCatalog.rawMaxTokensById.get(id) ?? 0) > 0
+                    ? { maxOutputTokens: Math.floor(modelCatalog.rawMaxTokensById.get(id) ?? 0) }
+                    : {}),
+                  ...(nonEmpty(entry.thinking) ? { reasoningEffort: nonEmpty(entry.thinking) } : {}),
+                };
+              }),
+            }
+          : {}),
+      };
+      break;
+    }
+    case "kiro":
+      generated = {
+        "chat.defaultModel": entry.model,
+        ...(typeof providerPolicy?.postTurnCompactThresholdPercent === "number"
+          ? { "compaction.autoCompactionThreshold": providerPolicy.postTurnCompactThresholdPercent }
+          : {}),
+      };
+      break;
+    default:
+      throw new Error(`no native JSON settings projection for ${harnessId}`);
+  }
+  return `${JSON.stringify(
+    mergeNativeConfigRecord(generated, readNativeConfig(entry, warnings).settings),
+    null,
+    2,
+  )}\n`;
+}
+
+function buildKimiConfigRecord(
+  entry: HarnessConfigEntry,
+  modelCatalog: ModelCatalog | undefined,
+  warnings: string[],
+): Record<string, unknown> {
+  const baseUrl = nonEmpty(entry.baseUrl);
+  const providerId = resolveHarnessProviderId("kimi", entry, modelCatalog, warnings);
+  const modelIds = dedupeModelIds([entry.model, ...(entry.models ?? [])]);
+  const nativeConfig = readNativeConfig(entry, warnings).config;
+  const modelApi = providerModelApi(modelCatalog, baseUrl ?? "", providerId, entry.model);
+  const generated: Record<string, unknown> = {
+    default_model: `${providerId}/${entry.model}`,
+    providers: {
+      [providerId]: {
+        type: modelApi === "anthropic-messages"
+          ? "anthropic"
+          : modelApi === "openai-responses"
+            ? "openai_responses"
+            : "openai",
+        ...(baseUrl ? { base_url: normalizeProtocolBaseUrl(baseUrl, modelApi) } : {}),
+        api_key_env: "KIMI_MODEL_API_KEY",
+      },
+    },
+    models: Object.fromEntries(modelIds.map((id) => {
+      const meta = modelCatalog?.metaById.get(id);
+      const alias = `${providerId}/${id}`;
+      const nativeModel = isNativeRecord(nativeConfig?.models) && isNativeRecord(nativeConfig.models[alias])
+        ? nativeConfig.models[alias]
+        : undefined;
+      const explicitContext = nativeModel?.max_context_size;
+      const hasCatalogContext = typeof meta?.contextWindow === "number" && meta.contextWindow > 0;
+      if (!hasCatalogContext && !(typeof explicitContext === "number" && Number.isInteger(explicitContext) && explicitContext > 0)) {
+        warnings.push(`kimi: model ${alias} has no contextWindow; using Kimi's documented default max_context_size 262144`);
+      }
+      return [alias, {
+        provider: providerId,
+        model: id,
+        max_context_size: hasCatalogContext ? Math.floor(meta?.contextWindow ?? 262144) : 262144,
+        ...(meta?.displayName ? { display_name: meta.displayName } : {}),
+        ...(nonEmpty(entry.thinking) ? { default_effort: nonEmpty(entry.thinking) } : {}),
+      }];
+    })),
+    ...(nonEmpty(entry.thinking) ? { thinking: { effort: nonEmpty(entry.thinking) } } : {}),
+  };
+  return mergeNativeConfigRecord(generated, nativeConfig);
+}
+
+function validateKimiConfigRecord(config: Record<string, unknown>): string[] {
+  const errors: string[] = [];
+  const models = isNativeRecord(config.models) ? config.models : {};
+  if (typeof config.default_model !== "string" || !Object.hasOwn(models, config.default_model)) {
+    errors.push(`kimi: default_model ${String(config.default_model)} does not reference a configured model`);
+  }
+  for (const [alias, value] of Object.entries(models)) {
+    const context = isNativeRecord(value) ? value.max_context_size : undefined;
+    if (typeof context !== "number" || !Number.isInteger(context) || context <= 0) {
+      errors.push(`kimi: model ${alias} must define a positive integer max_context_size`);
+    }
+  }
+  if (isNativeRecord(config.secondary_model)) {
+    const aliases = [config.secondary_model.default_model, config.secondary_model.model]
+      .filter((alias): alias is string => typeof alias === "string" && alias.length > 0);
+    if (isNativeRecord(config.secondary_model.models)) aliases.push(...Object.keys(config.secondary_model.models));
+    for (const alias of new Set(aliases)) {
+      if (!Object.hasOwn(models, alias)) errors.push(`kimi: secondary_model reference ${alias} is dangling after route projection`);
+    }
+  }
+  return errors;
+}
+
+function renderKimiConfigRecord(config: Record<string, unknown>, warnings: string[]): string {
+  const lines: string[] = [];
+  renderCodexNativeObject(config, [], warnings, lines);
+  return `${CODEX_SIGNATURE_LINE}\n${lines.join("\n")}\n`;
+}
+
+export function buildKimiConfigToml(
+  entry: HarnessConfigEntry,
+  modelCatalog?: ModelCatalog,
+  warnings: string[] = [],
+): string {
+  return renderKimiConfigRecord(buildKimiConfigRecord(entry, modelCatalog, warnings), warnings);
+}
+
+type HcwManagedJsonState = {
+  version: 1;
+  harness: string;
+  /** Full writer-owned output versus an explicit foreign-file ownership projection. */
+  ownership?: "full" | "augmented";
+  paths: string[][];
+  /** Pi only: previously managed model wildcards (non-secret route identifiers). */
+  managedEnabledModels?: string[];
+};
+
+function managedJsonStatePath(configPath: string): string {
+  return `${configPath}.hcw-managed.json`;
+}
+
+function collectManagedJsonPaths(
+  record: Record<string, unknown>,
+  prefix: string[] = [],
+): string[][] {
+  const paths: string[][] = [];
+  for (const [key, value] of Object.entries(record)) {
+    const path = [...prefix, key];
+    if (isNativeRecord(value) && Object.keys(value).length > 0) {
+      paths.push(...collectManagedJsonPaths(value, path));
+    } else {
+      paths.push(path);
+    }
+  }
+  return paths;
+}
+
+function readManagedJsonState(
+  configPath: string,
+  harnessId: string,
+): HcwManagedJsonState | null {
+  const raw = tryOr(() => readFileSync(managedJsonStatePath(configPath), "utf-8"), null);
+  if (raw === null) return null;
+  const parsed = tryOr(() => JSON.parse(raw) as Partial<HcwManagedJsonState>, null);
+  if (parsed?.version !== 1 || parsed.harness !== harnessId || !Array.isArray(parsed.paths)) return null;
+  const paths = parsed.paths.filter((path): path is string[] =>
+    Array.isArray(path) && path.length > 0 && path.every((segment) => typeof segment === "string")
+  );
+  return {
+    version: 1,
+    harness: harnessId,
+    ...(parsed.ownership === "full" || parsed.ownership === "augmented"
+      ? { ownership: parsed.ownership }
+      : {}),
+    paths,
+    ...(Array.isArray(parsed.managedEnabledModels)
+      ? { managedEnabledModels: parsed.managedEnabledModels.filter((value): value is string => typeof value === "string") }
+      : {}),
+  };
+}
+
+function deleteManagedJsonPath(root: Record<string, unknown>, path: string[], depth = 0): void {
+  const key = path[depth];
+  if (key === undefined) return;
+  if (depth === path.length - 1) {
+    delete root[key];
+    return;
+  }
+  const child = root[key];
+  if (!isNativeRecord(child)) return;
+  deleteManagedJsonPath(child, path, depth + 1);
+  if (Object.keys(child).length === 0) delete root[key];
+}
+
+function managedJsonPathValue(root: Record<string, unknown>, path: string[]): unknown {
+  let value: unknown = root;
+  for (const segment of path) {
+    if (!isNativeRecord(value) || !Object.hasOwn(value, segment)) return undefined;
+    value = value[segment];
+  }
+  return value;
+}
+
+function setManagedJsonPath(root: Record<string, unknown>, path: string[], value: unknown): void {
+  let target = root;
+  for (const segment of path.slice(0, -1)) {
+    if (!isNativeRecord(target[segment])) target[segment] = {};
+    target = target[segment] as Record<string, unknown>;
+  }
+  const key = path[path.length - 1];
+  if (key !== undefined) target[key] = value;
+}
+
+type ManagedJsonOwnership = {
+  scope: "full" | "augmented";
+  /** Desired subset actually managed in a foreign file; omitted for full ownership. */
+  projection?: Record<string, unknown>;
+  /** Legacy sidecars over-recorded preserved fields: retain ambiguous values on migration. */
+  pruneUnowned?: boolean;
+  /** Known stale generated provider leaves that must still be retired during legacy migration. */
+  retirePaths?: string[][];
+};
+
+function applyManagedJsonState(
+  harnessId: string,
+  current: Record<string, unknown>,
+  desired: Record<string, unknown>,
+  state: HcwManagedJsonState,
+  ownership: ManagedJsonOwnership = { scope: "full" },
+): Record<string, unknown> {
+  const next = JSON.parse(JSON.stringify(current)) as Record<string, unknown>;
+  const projected = ownership.scope === "full" ? desired : ownership.projection ?? {};
+  const projectedPaths = collectManagedJsonPaths(projected);
+  const desiredPaths = new Set(projectedPaths.map((path) => JSON.stringify(path)));
+  const retirePaths = new Set((ownership.retirePaths ?? []).map((path) => JSON.stringify(path)));
+  for (const path of state.paths) {
+    if (desiredPaths.has(JSON.stringify(path))) continue;
+    if (ownership.pruneUnowned === false && !retirePaths.has(JSON.stringify(path))) continue;
+    if (harnessId === "droid" && path.length === 1 && path[0] === "customModels") continue;
+    if (harnessId === "pi-settings" && path.length === 1 && path[0] === "enabledModels") continue;
+    deleteManagedJsonPath(next, path);
+  }
+  if (harnessId === "droid" && Array.isArray(next.customModels)) {
+    next.customModels = next.customModels.filter((model) =>
+      !isNativeRecord(model) || typeof model.displayName !== "string" || !model.displayName.startsWith("harness-config-writer (")
+    );
+  }
+  if (harnessId === "pi-settings" && Array.isArray(next.enabledModels)) {
+    const previouslyManaged = new Set(state.managedEnabledModels ?? []);
+    const retained = next.enabledModels.filter((value) => !previouslyManaged.has(value));
+    if (retained.length > 0) next.enabledModels = retained;
+    else delete next.enabledModels;
+  }
+  for (const path of projectedPaths) {
+    const key = path[0];
+    const desiredValue = managedJsonPathValue(projected, path);
+    const currentValue = key === undefined ? undefined : next[key];
+    if (harnessId === "pi-settings" && path.length === 1 && key === "enabledModels" && Array.isArray(currentValue) && Array.isArray(desiredValue)) {
+      next[key] = dedupeModelIds([...currentValue, ...desiredValue].filter((value): value is string => typeof value === "string"));
+    } else if (harnessId === "droid" && path.length === 1 && key === "customModels") {
+      const operatorModels = Array.isArray(currentValue) ? currentValue : [];
+      next[key] = [...operatorModels, ...(Array.isArray(desiredValue) ? desiredValue : [])];
+    } else {
+      setManagedJsonPath(next, path, desiredValue);
+    }
+  }
+  return next;
+}
+
+function writeManagedJsonState(
+  configPath: string,
+  harnessId: string,
+  desired: string,
+  warnings: string[],
+  ownership: ManagedJsonOwnership = { scope: "full" },
+): HarnessDeployFile {
+  const desiredObj = JSON.parse(desired) as Record<string, unknown>;
+  const projected = ownership.scope === "full" ? desiredObj : ownership.projection ?? {};
+  const state: HcwManagedJsonState = {
+    version: 1,
+    harness: harnessId,
+    ownership: ownership.scope,
+    paths: collectManagedJsonPaths(projected),
+    ...(harnessId === "pi-settings" && Array.isArray(desiredObj.enabledModels)
+      ? { managedEnabledModels: desiredObj.enabledModels.filter((value): value is string => typeof value === "string") }
+      : {}),
+  };
+  const path = managedJsonStatePath(configPath);
+  const action = writeFileIfMissingOrDiffers(path, `${JSON.stringify(state, null, 2)}\n`, 0o600, warnings);
+  return { path, action };
+}
+
+function writeManagedStateIfApplied(
+  configPath: string,
+  harnessId: string,
+  desired: string,
+  action: FileAction,
+  warnings: string[],
+  ownership: ManagedJsonOwnership = { scope: "full" },
+): HarnessDeployFile[] {
+  return action === "note (customized, left intact)"
+    ? []
+    : [writeManagedJsonState(configPath, harnessId, desired, warnings, ownership)];
+}
+
+function manageNativeJsonSettings(
+  harnessId: string,
+  path: string,
+  desired: string,
+  warnings: string[],
+): FileAction {
+  if (!existsSync(path)) {
+    atomicWrite(path, desired, 0o600, warnings);
+    return "created";
+  }
+  const current = tryOr(() => readFileSync(path, "utf-8"), null);
+  if (current === desired) {
+    try {
+      if ((statSync(path).mode & 0o777) !== 0o600) chmodSync(path, 0o600);
+    } catch (error) {
+      warnings.push(`could not chmod ${path}: ${briefError(error)}`);
+    }
+    return "unchanged";
+  }
+  const desiredObj = tryOr(() => JSON.parse(desired) as Record<string, unknown>, null);
+  const currentObj = current === null
+    ? null
+    : tryOr(() => JSON.parse(current) as Record<string, unknown>, null);
+  if (!desiredObj || !currentObj) {
+    warnings.push(`${harnessId}: ${path} unreadable or not valid JSON; leaving intact`);
+    return "note (customized, left intact)";
+  }
+  const managedState = readManagedJsonState(path, harnessId);
+  const merged: Record<string, unknown> = managedState
+    ? applyManagedJsonState(harnessId, currentObj, desiredObj, managedState)
+    : { ...currentObj };
+  if (managedState === null) for (const [key, desiredValue] of Object.entries(desiredObj)) {
+    const currentValue = merged[key];
+    if (harnessId === "droid" && key === "customModels" && Array.isArray(currentValue) && Array.isArray(desiredValue)) {
+      const operatorModels = currentValue.filter((model) =>
+        !isNativeRecord(model) || typeof model.displayName !== "string" || !model.displayName.startsWith("harness-config-writer (")
+      );
+      merged[key] = [...operatorModels, ...desiredValue];
+    } else {
+      merged[key] = isNativeRecord(currentValue) && isNativeRecord(desiredValue)
+        ? mergeNativeConfigRecord(currentValue, desiredValue)
+        : desiredValue;
+    }
+  }
+  const next = `${JSON.stringify(merged, null, 2)}\n`;
+  if (next === current) return "unchanged";
+  atomicWrite(path, next, 0o600, warnings);
+  return managedState ? "updated" : "augmented";
+}
+
+function manageKimiConfigToml(path: string, desired: string, warnings: string[]): FileAction {
+  if (!existsSync(path)) {
+    atomicWrite(path, desired, 0o600, warnings);
+    return "created";
+  }
+  const current = tryOr(() => readFileSync(path, "utf-8"), null);
+  if (current === desired) {
+    try {
+      if ((statSync(path).mode & 0o777) !== 0o600) chmodSync(path, 0o600);
+    } catch (error) {
+      warnings.push(`could not chmod ${path}: ${briefError(error)}`);
+    }
+    return "unchanged";
+  }
+  if (current?.startsWith(`${CODEX_SIGNATURE_LINE}\n`)) {
+    atomicWrite(path, desired, 0o600, warnings);
+    return "updated";
+  }
+  warnings.push(`kimi: ${path} is operator-owned; leaving intact`);
+  return "note (customized, left intact)";
+}
+
+export function deployNativeHarnessFiles(
+  harnessId: string,
+  entry: HarnessConfigEntry,
+  paths: HarnessWriterPaths,
+  logger?: HarnessWriterLogger,
+  modelCatalog?: ModelCatalog,
+): { warnings: string[]; files: HarnessDeployFile[] } {
+  const warnings: string[] = [];
+  const home = paths.nativeHomes?.[harnessId];
+  if (!home) return { warnings: [`${harnessId}: native home could not be resolved; skipping native config`], files: [] };
+  if (harnessId === "kimi") {
+    const path = join(home, "config.toml");
+    const config = buildKimiConfigRecord(entry, modelCatalog, warnings);
+    const validationErrors = validateKimiConfigRecord(config);
+    if (validationErrors.length > 0) {
+      return { warnings: [...warnings, ...validationErrors], files: [] };
+    }
+    const desired = renderKimiConfigRecord(config, warnings);
+    const action = manageKimiConfigToml(path, desired, warnings);
+    if (action !== "unchanged") logger?.info?.(`[kimi] ${action} ${path} (native config)`);
+    return { warnings, files: [{ path, action }] };
+  }
+  const relativePath = harnessId === "kiro" ? join("settings", "cli.json") : "settings.json";
+  const path = join(home, relativePath);
+  const desired = buildHarnessNativeSettingsJson(harnessId, entry, modelCatalog, warnings);
+  const action = manageNativeJsonSettings(harnessId, path, desired, warnings);
+  if (action !== "unchanged") logger?.info?.(`[${harnessId}] ${action} ${path} (native settings)`);
+  return {
+    warnings,
+    files: [{ path, action }, ...writeManagedStateIfApplied(path, harnessId, desired, action, warnings)],
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Mechanismus A — qwen (native settings.json, zusätzlich zum ENV-Mechanismus)
+// ---------------------------------------------------------------------------
+
+const QWEN_EFFORT_LEVELS = new Set(["none", "low", "medium", "high", "xhigh", "max"]);
+
+export function buildQwenSettingsJson(
+  entry: HarnessConfigEntry,
+  modelCatalog?: ModelCatalog,
+  warnings: string[] = [],
+): string {
+  const baseUrl = nonEmpty(entry.baseUrl);
+  const normalizedBaseUrl = baseUrl ? withV1Suffix(baseUrl) : undefined;
+  const providerId = resolveHarnessProviderId("qwen", entry, modelCatalog, warnings);
+  const modelApi = providerModelApi(modelCatalog, baseUrl ?? "", providerId, entry.model);
+  const credentialEnvKey = modelApi === "anthropic-messages" ? "ANTHROPIC_API_KEY" : "OPENAI_API_KEY";
+  const providerProtocol = modelApi === "anthropic-messages" ? "anthropic" : "openai";
+  const modelIds = dedupeModelIds([entry.model, ...(entry.models ?? [])]);
+  const thinking = nonEmpty(entry.thinking);
+  const model: Record<string, unknown> = {
+    name: entry.model,
+    ...(normalizedBaseUrl ? { baseUrl: normalizedBaseUrl } : {}),
+  };
+  if (thinking) {
+    if (QWEN_EFFORT_LEVELS.has(thinking)) model.reasoningEffort = thinking;
+    else warnings.push(`qwen: reasoningEffort "${thinking}" is not supported; skipping`);
+  }
+  const cfg: Record<string, unknown> = {
+    model,
+    modelProviders: {
+      [providerId]: modelIds.map((id) => {
+        const meta = modelCatalog?.metaById.get(id);
+        const api = providerModelApi(modelCatalog, baseUrl ?? "", providerId, id);
+        const contextWindow = meta?.contextWindow;
+        return {
+          id,
+          name: `harness-config-writer (${normalizedBaseUrl ?? "default provider route"})`,
+          envKey: credentialEnvKey,
+          ...(normalizedBaseUrl ? { baseUrl: normalizedBaseUrl } : {}),
+          ...(api === "openai-responses"
+            ? { wireApi: "responses" }
+            : api === "openai-completions"
+              ? { wireApi: "chat-completions" }
+              : {}),
+          ...(typeof contextWindow === "number" && contextWindow > 0
+            ? { generationConfig: { contextWindowSize: Math.floor(contextWindow) } }
+            : {}),
+        };
+      }),
+    },
+    providerProtocol: { [providerId]: providerProtocol },
+  };
+  return `${JSON.stringify(
+    mergeNativeConfigRecord(cfg, readNativeConfig(entry, warnings).settings),
+    null,
+    2,
+  )}\n`;
+}
+
+function qwenGeneratedProviderIds(value: Record<string, unknown>): string[] {
+  if (!isNativeRecord(value.modelProviders)) return [];
+  return Object.entries(value.modelProviders).flatMap(([providerId, models]) =>
+    Array.isArray(models) && models.length > 0 && models.every((model) =>
+      isNativeRecord(model) && typeof model.name === "string" && model.name.startsWith("harness-config-writer (")
+    )
+      ? [providerId]
+      : [],
+  );
+}
+
+function manageQwenSettingsJson(
+  path: string,
+  desired: string,
+  entry: HarnessConfigEntry,
+  warnings: string[],
+  ownership: ManagedJsonOwnership = { scope: "full" },
+): FileAction {
+  const exists = existsSync(path);
+  const managedState = exists ? readManagedJsonState(path, "qwen") : null;
+  if (!exists) {
+    atomicWrite(path, desired, 0o600, warnings);
+    return "created";
+  }
+  const current = tryOr(() => readFileSync(path, "utf-8"), null);
+  if (current === desired && (managedState === null || managedState.ownership === "full")) {
+    try {
+      if ((statSync(path).mode & 0o777) !== 0o600) chmodSync(path, 0o600);
+    } catch (error) {
+      warnings.push(`could not chmod ${path}: ${briefError(error)}`);
+    }
+    return "unchanged";
+  }
+  const desiredObj = tryOr(() => JSON.parse(desired) as Record<string, unknown>, null);
+  const currentObj = current === null
+    ? null
+    : tryOr(() => JSON.parse(current) as Record<string, unknown>, null);
+  if (!desiredObj || !currentObj) {
+    warnings.push(`qwen: ${path} unreadable or not valid JSON; leaving intact`);
+    return "note (customized, left intact)";
+  }
+  const desiredProviders = isNativeRecord(desiredObj.modelProviders) ? desiredObj.modelProviders : {};
+  const desiredProtocols = isNativeRecord(desiredObj.providerProtocol) ? desiredObj.providerProtocol : {};
+  const currentProviders = isNativeRecord(currentObj.modelProviders) ? currentObj.modelProviders : {};
+  const currentProtocols = isNativeRecord(currentObj.providerProtocol) ? currentObj.providerProtocol : {};
+  const generatedIds = qwenGeneratedProviderIds(currentObj);
+  const nativeSettings = readNativeConfig(entry, warnings).settings;
+  const foreignProjection = mergeNativeConfigRecord({
+    modelProviders: desiredProviders,
+    providerProtocol: desiredProtocols,
+  }, nativeSettings ?? {});
+  if (managedState && generatedIds.length > 0) {
+    const legacyAugmented = managedState.ownership === undefined;
+    ownership.scope = managedState.ownership ?? "augmented";
+    ownership.projection = ownership.scope === "augmented" ? foreignProjection : undefined;
+    ownership.pruneUnowned = !legacyAugmented;
+    ownership.retirePaths = legacyAugmented
+      ? managedState.paths.filter((path) =>
+          (path[0] === "modelProviders" || path[0] === "providerProtocol") &&
+          path.length > 1 && generatedIds.includes(path[1]) &&
+          !Object.hasOwn(path[0] === "modelProviders" ? desiredProviders : desiredProtocols, path[1])
+        )
+      : undefined;
+    const merged = applyManagedJsonState("qwen", currentObj, desiredObj, managedState, ownership);
+    const next = `${JSON.stringify(merged, null, 2)}\n`;
+    if (next === current) return "unchanged";
+    atomicWrite(path, next, 0o600, warnings);
+    return "updated";
+  }
+  let merged: Record<string, unknown>;
+  if (generatedIds.length > 0) {
+    const providers = { ...currentProviders };
+    const protocols = { ...currentProtocols };
+    for (const providerId of generatedIds) {
+      delete providers[providerId];
+      delete protocols[providerId];
+    }
+    Object.assign(providers, desiredProviders);
+    Object.assign(protocols, desiredProtocols);
+    merged = { ...currentObj, ...desiredObj, modelProviders: providers, providerProtocol: protocols };
+  } else {
+    ownership.scope = "augmented";
+    ownership.projection = foreignProjection;
+    merged = nativeSettings ? mergeNativeConfigRecord(currentObj, nativeSettings) : { ...currentObj };
+    for (const [providerId, route] of Object.entries(desiredProviders)) {
+      if (providerId in currentProviders && !deepEqualsWriter(currentProviders[providerId], route)) {
+        warnings.push(`qwen: provider '${providerId}' already exists with different content; leaving intact`);
+        return "note (customized, left intact)";
+      }
+    }
+    merged.modelProviders = { ...currentProviders, ...desiredProviders };
+    merged.providerProtocol = { ...currentProtocols, ...desiredProtocols };
+  }
+  const next = `${JSON.stringify(merged, null, 2)}\n`;
+  if (next === current) return "unchanged";
+  atomicWrite(path, next, 0o600, warnings);
+  return generatedIds.length > 0 ? "updated" : "augmented";
+}
+
+export function deployQwenHarnessFiles(
+  entry: HarnessConfigEntry,
+  paths: HarnessWriterPaths,
+  logger?: HarnessWriterLogger,
+  modelCatalog?: ModelCatalog,
+): { warnings: string[]; files: HarnessDeployFile[] } {
+  const warnings: string[] = [];
+  if (!paths.qwenHome) {
+    return { warnings: ["qwen: QWEN_HOME/HOME could not be resolved; skipping settings.json"], files: [] };
+  }
+  const path = join(paths.qwenHome, "settings.json");
+  const desired = buildQwenSettingsJson(entry, modelCatalog, warnings);
+  const ownership: ManagedJsonOwnership = { scope: "full" };
+  const action = manageQwenSettingsJson(path, desired, entry, warnings, ownership);
+  if (action !== "unchanged") logger?.info?.(`[qwen] ${action} ${path} (native settings)`);
+  return {
+    warnings,
+    files: [{ path, action }, ...writeManagedStateIfApplied(path, "qwen", desired, action, warnings, ownership)],
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -2583,7 +3942,7 @@ export function deployPiHarnessFiles(
  * - alle übrigen (Mechanismus NONE): bekommen nichts.
  */
 export function harnessSupportsModelCatalog(harnessId: string): boolean {
-  if (harnessId === "codex" || harnessId === "opencode" || harnessId === "pi") return true;
+  if (["codex", "opencode", "pi", "kilo", "kilocode"].includes(harnessId)) return true;
   return Object.hasOwn(ENV_MECHANISM, harnessId);
 }
 
@@ -2627,6 +3986,7 @@ export function deployHarnessConfigs(
         : entry;
     const entryWarnings = [
       ...(resolvedModels?.warnings ?? []),
+      ...validateNativeTargets(harnessId, entry),
     ];
     if (harnessId === "codex" || harnessId === "opencode") {
       // FILE-Mechanismus ohne baseUrl kann keine sinnvolle Provider-Route
@@ -2647,23 +4007,14 @@ export function deployHarnessConfigs(
         harnessId === "codex"
           ? // γ.1: Katalog (metabyId) für die codex-Metadaten-Datei mitgeben.
             deployCodexHarnessFiles(enriched, paths, logger, harnessId, modelCatalog)
-          : deployOpencodeHarnessFiles(enriched, paths, logger, harnessId);
-      // Schritt 4 (Weg A'): zusätzlich HCW-eigenen Codex-Wrapper + Home
-      // deployen, damit acpx diesen Wrapper über agents.codex.command aufrufen
-      // kann. Der bestehende FILE-Mechanismus bleibt aktiv (kein Verhaltens-
-      // Change ohne Config-Setzung).
-      const hcwWrapper: CodexHcwWrapperDeployResult | null =
-        harnessId === "codex" && enriched.baseUrl
-          ? deployCodexHcwWrapper(enriched, paths, logger, modelCatalog)
-          : null;
-      const hcwFiles = hcwWrapper ? hcwWrapper.files : [];
+          : deployOpencodeHarnessFiles(enriched, paths, logger, harnessId, modelCatalog);
       results.push({
         harnessId,
         mechanism: harnessId === "codex" ? "file-codex" : "file-opencode",
         ...deploy,
         warnings: [...entryWarnings, ...deploy.warnings],
         modelsSource: resolvedModels?.source,
-        files: [...deploy.files, ...hcwFiles],
+        files: deploy.files,
       });
       continue;
     }
@@ -2685,8 +4036,27 @@ export function deployHarnessConfigs(
       const envWarnings = [...envResult.warnings];
       // Schritt 2: claude bekommt zusätzlich ~/.claude/settings.json.
       if (harnessId === "claude") {
-        const claudeFiles = deployClaudeHarnessFiles(enriched, paths, envWarnings, logger, harnessId).files;
+        const claudeFiles = deployClaudeHarnessFiles(
+          enriched,
+          paths,
+          envWarnings,
+          logger,
+          harnessId,
+          modelCatalog,
+        ).files;
         files.push(...claudeFiles);
+      }
+      // Qwen behaelt die dokumentierte ENV-Route und erhaelt zusaetzlich
+      // native settings.json inklusive Rollen-/Tool-/Compaction-Overlays.
+      if (harnessId === "qwen") {
+        const qwenResult = deployQwenHarnessFiles(enriched, paths, logger, modelCatalog);
+        files.push(...qwenResult.files);
+        envWarnings.push(...qwenResult.warnings);
+      }
+      if (["gemini", "droid", "kimi", "kiro", "iflow", "copilot"].includes(harnessId)) {
+        const nativeResult = deployNativeHarnessFiles(harnessId, enriched, paths, logger, modelCatalog);
+        files.push(...nativeResult.files);
+        envWarnings.push(...nativeResult.warnings);
       }
       results.push({
         harnessId,
@@ -2718,8 +4088,29 @@ export function deployHarnessConfigs(
       });
       continue;
     }
+    // Kilo besitzt eine eigene native globale kilo.json statt eines ENV-Alias.
+    if (harnessId === "kilo" || harnessId === "kilocode") {
+      if (!nonEmpty(entry.baseUrl)) {
+        results.push({
+          harnessId,
+          mechanism: "file-kilo",
+          warnings: [...entryWarnings, "baseUrl (non-empty) ist für den FILE-Mechanismus Pflicht — skipt"],
+          files: [],
+        });
+        continue;
+      }
+      const deploy = deployKiloHarnessFiles(enriched, paths, logger, modelCatalog);
+      results.push({
+        harnessId,
+        mechanism: "file-kilo",
+        ...deploy,
+        warnings: [...entryWarnings, ...deploy.warnings],
+        modelsSource: resolvedModels?.source,
+      });
+      continue;
+    }
     // Mechanismus C: NONE — CLI-OAuth-owned.
-      results.push({ harnessId, mechanism: "none", warnings: [], files: [] });
+      results.push({ harnessId, mechanism: "none", warnings: [...entryWarnings], files: [] });
     } catch (error) {
       results.push({
         harnessId,
