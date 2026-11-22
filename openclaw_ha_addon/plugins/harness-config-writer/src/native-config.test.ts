@@ -18,6 +18,7 @@ import {
   deriveProviderId,
   mergeNativeConfigRecord,
   overlayCodexCatalog,
+  SUPPORTED_WRITER_HARNESS_IDS,
   type HarnessConfigEntry,
   type HarnessWriterPaths,
 } from "./harness-config-writer.js";
@@ -104,6 +105,20 @@ describe("nativeConfig schema and merge", () => {
     const schema = manifest.configSchema.properties.harnesses.additionalProperties.properties.nativeConfig;
     expect(Object.keys(schema.properties).sort()).toEqual(["catalog", "config", "models", "settings"]);
     expect(schema.additionalProperties).toBe(false);
+  });
+
+  it("documents every supported id and the providerKey/nativeConfig surfaces without the removed plugin", () => {
+    const manifest = JSON.parse(readFileSync(new URL("../openclaw.plugin.json", import.meta.url), "utf-8"));
+    const harnesses = manifest.configSchema.properties.harnesses;
+    for (const id of SUPPORTED_WRITER_HARNESS_IDS) {
+      expect(manifest.description).toContain(id);
+      expect(harnesses.description).toContain(id);
+    }
+    expect(harnesses.additionalProperties.properties.providerKey.type).toBe("string");
+    expect(Object.keys(harnesses.additionalProperties.properties.nativeConfig.properties).sort()).toEqual([
+      "catalog", "config", "models", "settings",
+    ]);
+    expect(JSON.stringify(manifest)).not.toContain("acp-dashboard-binding");
   });
 
   it("warns instead of silently accepting a non-object target", () => {
@@ -559,7 +574,7 @@ describe("foreign managed-state ownership", () => {
     }
   });
 
-  it.each(["kilo", "kilocode"] as const)("keeps foreign %s operator models stable across identical runs and route A to B", (harnessId) => {
+  it.each(["kilo", "kilocode"] as const)("keeps foreign %s operator models stable across identical runs and route A to B", (harnessId: "kilo" | "kilocode") => {
     const p = paths();
     const path = join(p.kiloGlobalDir!, "kilo.json");
     const foreignProvider = { npm: "operator-kilo", options: { baseURL: "http://operator.example/v1" } };
@@ -815,7 +830,7 @@ describe("ambiguous legacy sidecar migration", () => {
     }
   });
 
-  it.each(["kilo", "kilocode"] as const)("never promotes generated-shaped foreign %s operator models to full ownership", (harnessId) => {
+  it.each(["kilo", "kilocode"] as const)("never promotes generated-shaped foreign %s operator models to full ownership", (harnessId: "kilo" | "kilocode") => {
     const p = paths();
     const path = join(p.kiloGlobalDir!, "kilo.json");
     const initialEntry: HarnessConfigEntry = {
@@ -1163,7 +1178,7 @@ describe("review lifecycle regressions", () => {
 
 describe("provider-key cleanup across duplicate base URLs", () => {
   it("selects stable gateway keys by harness wire API instead of URL-derived binding IDs", () => {
-    const baseUrl = "http://192.168.178.34:11434";
+    const baseUrl = "http://192.0.2.34:11434";
     const model = { id: "main-model", contextWindow: 128000 };
     const catalog = buildModelCatalog({
       models: {

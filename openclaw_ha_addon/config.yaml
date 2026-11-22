@@ -1,8 +1,8 @@
-# OpenClaw Home Assistant App v0.7.13.38 Configuration
+# OpenClaw Home Assistant App v0.7.13.39 Configuration
 # Full OpenClaw runtime with Ingress Web UI, web terminal, Assist pipeline
 # and MCP integration. Option reference lives in DOCS.md ("Configuration").
 name: OpenClaw Assistant
-version: "0.7.13.38"
+version: "0.7.13.39"
 slug: openclaw_ha_addon
 description: Agentic AI assistant for Home Assistant — full OpenClaw runtime with Ingress Web UI, web terminal, Assist pipeline and MCP integration
 url: https://github.com/chillkiller/openclaw-ha-addon
@@ -14,6 +14,10 @@ boot: auto
 init: false
 host_network: true
 hassio_api: true
+# Supervisor manager role: list add-ons and store entries, read status, and
+# perform owner-approved lifecycle operations. This API role itself grants
+# neither host filesystem nor Docker access.
+hassio_role: manager
 homeassistant_api: true
 full_access: true
 audio: true
@@ -31,18 +35,21 @@ panel_icon: mdi:robot
 # which the Ingress lockdown allowlist explicitly permits (since 0.7.12.1).
 watchdog: tcp://[HOST]:49200
 
-# Exclude regenerable caches and toolchains from Home Assistant backups:
-# Homebrew, npm cache, node compile cache, __pycache__ and stale lock files
-# are rebuilt on demand. User state (openclaw.json, agent databases, skills,
-# sessions, clawd workspace, keys, certs) is always backed up.
+# Exclude regenerable caches and compile artifacts from Home Assistant backups.
+# Persistent package/tool installations are INCLUDED: /config/.node_global
+# holds user-global npm/pnpm packages and the harness executable symlinks,
+# /config/.linuxbrew holds user-installed
+# Homebrew tools, and /config/.openclaw/acpx/.node_project holds the pinned
+# ACPX harness CLIs. None of these is treated as a disposable cache here.
+# Only npm/cache/compile data, __pycache__, stale lock files and interrupted
+# upgrade-archive fragments are omitted. Completed upgrade archives stay included.
 backup_exclude:
-  - .linuxbrew
-  - .node_global
   - .npm
   - .cache
   - .node-compile-cache
   - __pycache__
   - "*.jsonl.lock"
+  - "*.tar.gz.partial"
 
 map:
   - addon_config:rw
@@ -52,7 +59,7 @@ map:
 # -----------------------------------------------------------------------------
 # Options layout (collapsible sections, v0.7.13.30)
 #
-# Top level: core gateway knobs + surface switches + the two plugin switches
+# Top level: core gateway knobs + surface switches + the two ACP switches
 # (acpx_enabled, harness_config_writer_enabled). Everything clusterable lives
 # in a named group (rendered as a collapsible section in the HA options UI,
 # max nesting depth 2 — which is why gateway_env_vars, a list-of-objects,
@@ -103,12 +110,12 @@ options:
   # app does not modify agents.list.
   #
   # v0.7.13.30, Owner decision 2026-10-15: acpx_enabled is the MASTER gate
-  # for the whole acp(x) surface. acpx_enabled=false means NO writer and NO
-  # binding deploy / config transfer, whatever their switches say. With the
-  # master on, the two plugin switches below (writer/binding, both DEFAULT
-  # OFF) act independently of each other (the writer does not need the
-  # binding and vice versa).
+  # for the whole acp(x) surface. acpx_enabled=false means NO writer deploy /
+  # config transfer, whatever its switch says.
   #
+  # The add-on contributes exactly codex, claude, opencode and pi to the ACP
+  # allowlist. A coordinator is onboarding-owned and is never generated here;
+  # openclaw is not added by the add-on. Operator roster entries are preserved.
   # Without harness_base_url, every value in the `harness` group below
   # is IGNORED except the switches themselves (models, agents, utility_model
   # only apply once a base URL is configured).
@@ -116,10 +123,8 @@ options:
   # Deploy + register the bundled harness-config-writer plugin in OpenClaw
   # (generates the harness-native file/env config for local-provider
   # harnesses from its config.harnesses surface). Fine switch WITHIN the
-  # acpx_enabled master gate, INDEPENDENT of acp_dashboard_binding_enabled
-  # (neither follows nor drives it), DEFAULT OFF, and needs
-  # harness_base_url to actually generate anything (empty base URL
-  # = complete no-op). The legacy
+  # acpx_enabled master gate, DEFAULT OFF, and needs harness_base_url to
+  # actually generate anything (empty base URL = complete no-op). The legacy
   # plugins.entries['acp-dashboard-binding'].config.harnesses key is
   # migrated to plugins.entries['harness-config-writer'].config.harnesses
   # once at boot (idempotent, before the gateway reads the config).
@@ -132,9 +137,8 @@ options:
   harness_config_writer_enabled: false
   # Shared custom-plugin/harness defaults (eine Ebene tiefer).
   # GATING (v0.7.13.30): ohne harness_base_url sind ALLE Werte hier
-  # INERT — es gelten nur die Schalter (harness_config_writer_enabled /
-  # acp_dashboard_binding_enabled). Modelle, Agents und utility_model werden
-  # erst mit gesetzter Base URL übernommen.
+  # INERT. Modelle, Agents und utility_model werden erst mit gesetzter Base URL
+  # übernommen.
   harness:
     # Backend endpoint for ALL local-provider harnesses (any OpenAI-compatible
     # API — not just Ollama): forwarded to the acpx wrapper templates and the
@@ -160,8 +164,8 @@ options:
     # sauberem strict-JSON-Output, z. B. "ollama/nemotron-3-super:cloud" oder
     # "ollama/deepseek-v4.1-flash:cloud".
     utility_model: ""
-    # Per-harness model overrides (the 3 harnesses come bundled with acpx;
-    # everything else is extra — see additional_agents below).
+    # Per-harness model overrides for the four reference workers.
+    # Everything else is extra — see additional_agents below.
     # Empty = harness_model (shared), and if that is empty too: Gateway-Default.
     # OpenCode harness model.
     harness_opencode_model: ""
@@ -178,19 +182,12 @@ options:
     # above (e.g. "codex,opencode").
     harness_excluded_agents: ""
     # Optional: comma-separated ADDITIONAL agent/harness names to allow in
-    # acp.allowedAgents besides the bundled claude/codex/opencode/openclaw
-    # (e.g. "pi,colibri,gemini"). Custom agents must also exist in the
+    # acp.allowedAgents besides the reference workers claude/codex/opencode/pi
+    # (e.g. "colibri,gemini"). Custom agents must also exist in the
     # OpenClaw agent roster with runtime.type=acp pointing at a harness
     # adapter; the helper unions them in and never overwrites a user-owned
     # list. Empty = built-ins only.
     additional_agents: ""
-    # Optional (Phase 2.15, GaRoN): deploy + register the bundled
-    # acp-dashboard-binding plugin in OpenClaw (resolves dashboard/webchat
-    # conversations to ACP harness sessions). Fine switch WITHIN the
-    # acpx_enabled master gate (config transfer only happens while
-    # acpx_enabled is true), INDEPENDENT of harness_config_writer_enabled
-    # (neither follows nor drives it), DEFAULT OFF (v0.7.13.30).
-    acp_dashboard_binding_enabled: false
 
   gateway_ext:
     # Public base URL for opening the Gateway Web UI in a new tab (not embedded).
@@ -310,7 +307,6 @@ schema:
     harness_pi_model: str?
     harness_excluded_agents: str?
     additional_agents: str?
-    acp_dashboard_binding_enabled: bool?
   gateway_ext:
     gateway_public_url: str?
     gateway_remote_url: str?

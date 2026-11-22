@@ -1,19 +1,19 @@
 #!/usr/bin/env bash
 # acp_smoke_check.sh — read-only health check after a Gateway restart.
 #
-# Answers in one run: did the restart of the gateway break the
-# acp-dashboard-binding plugin / ACP-main session, or is everything intact?
+# Answers in one run: is harness-config-writer still deployed and registered,
+# is the removed acp-dashboard-binding fully absent, and are ACP sessions and
+# the Gateway healthy after the restart?
 #
 # Checks:
 #   1. Gateway process
-#   2. Deployed plugins: bundled root (/usr/lib .../dist/extensions) valid,
-#      stale external copies absent
-#   3. openclaw.json plugin config present + valid
-#   4. Webchat conversation bindings (plugin-owned vs generic) + ACP sessions
+#   2. harness-config-writer deployment; removed-plugin artifacts absent
+#   3. openclaw.json plugin config present + valid; removed plugin unregistered
+#   4. Generic ACP session roster
 #   5. Stuck session_nodes (running > 15 min) in the agent DB
 #   6. Gateway log errors since last boot (JSON log, extracts messages)
 #   7. harness-config-writer env on the gateway process (Ollama wiring)
-#   8. "bundled channel" load warnings (stale TS payload in the bundled root)
+#   8. Generic plugin load failures + no removed-plugin load since last boot
 #
 # Usage:  bash acp_smoke_check.sh
 # Exit:   0 = all green, 1 = at least one check failed (WARN ignored).
@@ -39,6 +39,9 @@ DEPLOY_PLUGIN="$CFG/plugins"
 STATE_DB="$CFG/state/openclaw.sqlite"
 CONFIG_JSON="$CFG/openclaw.json"
 LOG_GLOB="${TMPDIR:-/tmp}/openclaw/openclaw-$(date +%F).log"
+BUNDLED_ROOT="${OPENCLAW_BUNDLED_EXTENSIONS_DIR:-/usr/lib/node_modules/openclaw/dist/extensions}"
+WRITER_PLUGIN=harness-config-writer
+REMOVED_PLUGIN=acp-dashboard-binding
 
 # --------------------------------------------------------- 1. gateway alive
 bold "1) Gateway process"
@@ -51,71 +54,83 @@ else
 fi
 
 # --------------------------------------------- 2. plugin deployment matches
-# Since the bundled-root-trust deploy (0.7.13.18) the helper compiles each
-# plugin (esbuild index.mjs) into the gateway's bundled extensions root
-# (origin "bundled" → trusted runtime stores) and REMOVES the external
-# $CFG/plugins/<name> copy (both candidates of an id → config wins and
-# shadows the trusted bundled candidate).
-BUNDLED_ROOT=/usr/lib/node_modules/openclaw/dist/extensions
-bold "2) Plugin deployment (bundled root / external removal)"
-for plugin in acp-dashboard-binding harness-config-writer; do
-    if [ -d "$BUNDLED_ROOT/$plugin" ]; then
-        if [ -s "$BUNDLED_ROOT/$plugin/index.mjs" ]; then
-            ok "$plugin bundled index.mjs present ($(( $(stat -c%s "$BUNDLED_ROOT/$plugin/index.mjs") / 1024 )) KiB)"
-        else
-            bad "$plugin bundled index.mjs missing/empty in $BUNDLED_ROOT/$plugin"
-            fail
-        fi
-        if python3 -c "import json;json.load(open('$BUNDLED_ROOT/$plugin/package.json'))" 2>/dev/null; then
-            ok "$plugin bundled package.json valid"
-        else
-            bad "$plugin bundled package.json missing/invalid JSON"
-            fail
-        fi
-        if [ -d "$DEPLOY_PLUGIN/$plugin" ]; then
-            bad "$plugin stale external copy still at $DEPLOY_PLUGIN/$plugin (shadows bundled candidate)"
-            fail
-        else
-            ok "$plugin no stale external copy"
-        fi
-    elif [ -d "$DEPLOY_PLUGIN/$plugin" ]; then
-        warn "$plugin NOT in bundled root — legacy external deploy at $DEPLOY_PLUGIN/$plugin (esbuild fallback active?)"
+# The helper compiles harness-config-writer (esbuild index.mjs) into the
+# gateway's bundled extensions root and removes its external $CFG/plugins copy
+# so an external candidate cannot shadow the trusted bundled candidate.
+bold "2) Plugin deployment (writer present / removed plugin absent)"
+if [ -d "$BUNDLED_ROOT/$WRITER_PLUGIN" ]; then
+    if [ -s "$BUNDLED_ROOT/$WRITER_PLUGIN/index.mjs" ]; then
+        ok "$WRITER_PLUGIN bundled index.mjs present ($(( $(stat -c%s "$BUNDLED_ROOT/$WRITER_PLUGIN/index.mjs") / 1024 )) KiB)"
     else
-        bad "$plugin deployed nowhere (bundled root AND $DEPLOY_PLUGIN missing)"
+        bad "$WRITER_PLUGIN bundled index.mjs missing/empty in $BUNDLED_ROOT/$WRITER_PLUGIN"
         fail
     fi
-done
+    if python3 -B -c 'import json,sys;json.load(open(sys.argv[1]))' "$BUNDLED_ROOT/$WRITER_PLUGIN/package.json" 2>/dev/null; then
+        ok "$WRITER_PLUGIN bundled package.json valid"
+    else
+        bad "$WRITER_PLUGIN bundled package.json missing/invalid JSON"
+        fail
+    fi
+    if [ -d "$DEPLOY_PLUGIN/$WRITER_PLUGIN" ]; then
+        bad "$WRITER_PLUGIN stale external copy still at $DEPLOY_PLUGIN/$WRITER_PLUGIN (shadows bundled candidate)"
+        fail
+    else
+        ok "$WRITER_PLUGIN no stale external copy"
+    fi
+elif [ -d "$DEPLOY_PLUGIN/$WRITER_PLUGIN" ]; then
+    warn "$WRITER_PLUGIN NOT in bundled root — legacy external deploy at $DEPLOY_PLUGIN/$WRITER_PLUGIN (esbuild fallback active?)"
+else
+    bad "$WRITER_PLUGIN deployed nowhere (bundled root AND $DEPLOY_PLUGIN missing)"
+    fail
+fi
+
+if [ -e "$BUNDLED_ROOT/$REMOVED_PLUGIN" ] || [ -L "$BUNDLED_ROOT/$REMOVED_PLUGIN" ]; then
+    bad "removed $REMOVED_PLUGIN still present in bundled root: $BUNDLED_ROOT/$REMOVED_PLUGIN"
+    fail
+else
+    ok "removed $REMOVED_PLUGIN absent from bundled root"
+fi
+if [ -e "$DEPLOY_PLUGIN/$REMOVED_PLUGIN" ] || [ -L "$DEPLOY_PLUGIN/$REMOVED_PLUGIN" ]; then
+    bad "removed $REMOVED_PLUGIN still has an external payload: $DEPLOY_PLUGIN/$REMOVED_PLUGIN"
+    fail
+else
+    ok "removed $REMOVED_PLUGIN has no external payload"
+fi
 
 # --------------------------------------------------- 3. openclaw.json sanity
 bold "3) openclaw.json plugin config"
-if python3 - "$CONFIG_JSON" <<'PY'
+if python3 -B - "$CONFIG_JSON" <<'PY'
 import json, sys
 try:
-    cfg = json.load(open(sys.argv[1]))
+    with open(sys.argv[1]) as handle:
+        cfg = json.load(handle)
 except Exception as e:
-    print("  FAIL cannot parse openclaw.json:", e); sys.exit(1)
+    print("  FAIL cannot parse openclaw.json:", e)
+    sys.exit(1)
 paths = cfg.get("plugins", {}).get("load", {}).get("paths", [])
 entries = cfg.get("plugins", {}).get("entries", {})
 ok = True
 if "/config/.openclaw/plugins" not in paths:
-    print("  FAIL plugins.load.paths misses /config/.openclaw/plugins:", paths); ok = False
-for p in ("acp-dashboard-binding", "harness-config-writer"):
-    if p not in entries:
-        print(f"  FAIL plugins.entries['{p}'] missing"); ok = False
-    elif not entries[p].get("enabled", True):
-        print(f"  WARN plugins.entries['{p}'] disabled")
+    print("  FAIL plugins.load.paths misses /config/.openclaw/plugins:", paths)
+    ok = False
+writer = "harness-config-writer"
+removed = "acp-dashboard-binding"
+if writer not in entries:
+    print(f"  FAIL plugins.entries['{writer}'] missing")
+    ok = False
+elif not entries[writer].get("enabled", True):
+    print(f"  WARN plugins.entries['{writer}'] disabled")
+if removed in entries:
+    print(f"  FAIL removed plugins.entries['{removed}'] is still registered")
+    ok = False
 sys.exit(0 if ok else 1)
 PY
-then ok "load.paths + plugin entries present"
+then ok "load.paths + writer entry present; removed plugin unregistered"
 else fail
 fi
 
-# --------------------------- 4. conversation bindings + ACP session roster
-bold "4) ACP sessions + binding health"
-# NOTE: current_conversation_bindings being EMPTY is expected here — the
-# plugin's SessionBindingAdapter SHADOWS the host generic store and derives
-# records deterministically (binding-adapter.ts: deriveBindingRecord,
-# boundAt:0). The truth for live ACP targets is the acp_sessions roster.
+# ------------------------------------------------------- 4. ACP session roster
+bold "4) ACP sessions"
 if [ ! -f "$STATE_DB" ]; then
     bad "state DB missing: $STATE_DB"
     fail
@@ -127,26 +142,8 @@ else
         warn "no ACP sessions registered"
     else
         printf '%s\n' "$acp" | while IFS='|' read -r key info; do
-            case "$key" in
-                *acp:binding:webchat*) ok "acp: $info  [$key]" ;;
-                *) ok "acp: $info" ;;
-            esac
+            ok "acp: $info  [$key]"
         done
-    fi
-    hs=$(python3 -c "
-import json,sys
-try:
-    cfg=json.load(open('$CONFIG_JSON'))
-    c=cfg.get('plugins',{}).get('entries',{}).get('acp-dashboard-binding',{}).get('config',{})
-    hs=c.get('harnessSessions') or {}
-    print(json.dumps(hs) if hs else '-')
-except Exception as e:
-    print('-')
-" 2>/dev/null)
-    if [ "$hs" = "-" ]; then
-        echo "       harnessSessions: not configured (adapter derives keys deterministically)"
-    else
-        ok "harnessSessions: $hs"
     fi
 fi
 
@@ -168,7 +165,7 @@ for db in $AGENT_DB; do
         fail
     fi
 done
-[ $found_stuck -eq 0 ] && ok "no stuck running nodes"
+[ "$found_stuck" -eq 0 ] && ok "no stuck running nodes"
 
 # ----------------------------------------------------------- 6. log errors
 bold "6) Log errors since last boot"
@@ -176,7 +173,7 @@ LOG=$(ls -t $LOG_GLOB 2>/dev/null | head -1)
 if [ -z "$LOG" ] || [ ! -f "$LOG" ]; then
     warn "no gateway log found ($LOG_GLOB)"
 else
-    python3 - "$LOG" <<'PY'
+    python3 -B - "$LOG" <<'PY'
 import json, sys
 lines = open(sys.argv[1], errors="replace").readlines()
 first = 0
@@ -205,36 +202,6 @@ else:
 PY
 fi
 
-# -------------------------------------------------- 6b. bundled-channel warns
-bold "6b) 'bundled channel' plugin load warnings (today's log)"
-# Entry-contract skip (Forensik 2026-10-12): the host's bundled-channel load
-# check can also SKIP the plugin ("missing bundled-channel-entry contract")
-# without ever logging "failed to load" — that skip silently suppresses
-# registerFull (no adapter/claim hook/bridge) and kills ALL binding. Catch both.
-if [ -n "$LOG" ] && [ -f "$LOG" ] && grep -q 'missing bundled-channel-entry contract' "$LOG" 2>/dev/null; then
-    warn "$(grep -c 'missing bundled-channel-entry contract' "$LOG")× today: \"bundled channel entry acp-dashboard-binding missing bundled-channel-entry contract; skipping\""
-    echo "       the deployed entry record fails resolveBundledChannelModuleEntry"
-    echo "       (needs kind:\"bundled-channel-entry\" + register + loadChannelPlugin);"
-    echo "       the gateway never instantiates the plugin — binding is dead."
-else
-    ok "no bundled-channel entry-contract skips"
-fi
-if [ -n "$LOG" ] && [ -f "$LOG" ] && grep -q 'failed to load bundled channel acp-dashboard-binding' "$LOG" 2>/dev/null; then
-    n=$(grep -c 'failed to load bundled channel acp-dashboard-binding' "$LOG")
-    if [ -s "$BUNDLED_ROOT/acp-dashboard-binding/index.mjs" ]; then
-        # Only today's entries BEFORE the last gateway start are stale history.
-        warn "$n× today: \"failed to load bundled channel acp-dashboard-binding\" —"
-        echo "       compiled payload present now; if the LAST boot still shows this,"
-        echo "       the bundled copy is not the compiled one or discovery sees .ts."
-    else
-        warn "$n× today: \"failed to load bundled channel …\" and bundled copy has no index.mjs"
-        echo "       cause: openclaw.plugin.json declares channels[] → scanner refuses a TS entry."
-        echo "       Run the helper/redeploy so the compiled payload lands."
-    fi
-else
-    ok "no bundled-channel load warnings"
-fi
-
 # --------------------------------- 7. harness-config-writer env on gateway
 bold "7) Harness env wiring (Ollama)"
 GW_PID=$(pgrep -f 'node.*openclaw' 2>/dev/null | head -1)
@@ -249,5 +216,69 @@ else
     warn "cannot read gateway process env"
 fi
 
-bold "Result: $([ $RC -eq 0 ] && echo 'ALL GREEN' || echo 'ATTENTION NEEDED')"
-exit $RC
+# --------------------------------------- 8. generic plugin load-health check
+bold "8) Plugin load health + removed-plugin runtime assertion"
+if [ -z "$LOG" ] || [ ! -f "$LOG" ]; then
+    warn "cannot inspect current-boot plugin loads without a gateway log"
+elif python3 -B - "$LOG" <<'PY'
+import json
+import re
+import sys
+
+lines = open(sys.argv[1], errors="replace").readlines()
+first = 0
+for i in range(len(lines) - 1, -1, -1):
+    if '"message":"gateway start' in lines[i] or "startup complete" in lines[i]:
+        first = i
+        break
+
+failure_re = re.compile(
+    r"failed to load (?:bundled )?(?:channel|plugin)|"
+    r"(?:could not|cannot|can't) load (?:bundled )?(?:channel|plugin)|"
+    r"plugin (?:load|loading) (?:failed|failure|error)|"
+    r"error loading plugin|"
+    r"missing bundled-channel-entry contract",
+    re.IGNORECASE,
+)
+removed = "acp-dashboard-binding"
+negative_re = re.compile(
+    r"failed|failure|error|skipping|skipped|disabled|removed|absent|not loaded|missing",
+    re.IGNORECASE,
+)
+loaded_re = re.compile(r"\b(?:loaded|registered|activated|started)\b|load complete", re.IGNORECASE)
+failures = []
+removed_loads = []
+for raw in lines[first:]:
+    try:
+        rec = json.loads(raw)
+        message = rec.get("message", "")
+        if not isinstance(message, str):
+            message = json.dumps(message)
+    except Exception:
+        message = raw.strip()
+    if failure_re.search(message):
+        failures.append(message)
+    lower = message.lower()
+    if removed in lower and not negative_re.search(message):
+        if loaded_re.search(message) or f"startup trace: plugin {removed}" in lower or f"channels.{removed}." in lower:
+            removed_loads.append(message)
+
+if failures:
+    print(f"  FAIL {len(failures)} plugin load failure(s) since last boot (last 8):")
+    for message in failures[-8:]:
+        print("   -", message[:200])
+if removed_loads:
+    print(f"  FAIL removed {removed} has load-success entries since last boot:")
+    for message in removed_loads[-8:]:
+        print("   -", message[:200])
+if not failures and not removed_loads:
+    print("  OK   no generic plugin load failures")
+    print(f"  OK   removed {removed} has no load-success entries since last boot")
+sys.exit(1 if failures or removed_loads else 0)
+PY
+then :
+else fail
+fi
+
+bold "Result: $([ "$RC" -eq 0 ] && echo 'ALL GREEN' || echo 'ATTENTION NEEDED')"
+exit "$RC"

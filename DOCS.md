@@ -41,6 +41,32 @@ The Control UI is embedded via HA Ingress rather than opened in a separate tab.
 It is proxied through nginx at `/webui/`, with the gateway token injected server-side
 so you do not need to enter it manually.
 
+### Supervisor API manager role
+
+The manifest explicitly declares `hassio_role: manager` next to
+`hassio_api: true`. Without this declaration, the Supervisor silently uses the
+`default` role, which does not authorize the `/addons` and `/store` collections.
+The official manifest reference lists the allowed roles as `default`,
+`homeassistant`, `backup`, `manager`, and `admin` ([App configuration — API
+access](https://contributors.home-assistant.io/apps/reference/configuration/#api-access)).
+
+For this administration agent, the owner has intentionally authorized the
+`manager` role. Through the [Supervisor API](https://contributors.home-assistant.io/apps/supervisor-api/),
+the agent can list installed add-ons and store entries, inspect their status, and
+perform owner-approved lifecycle operations such as install, update, start,
+stop, restart, and removal. The role also covers additional Supervisor management
+surfaces documented by Home Assistant; it is broader than read-only add-on
+access and lowers the app's security rating. This increased exposure is an
+explicit operator trade-off: the agent is intended to control add-ons, not
+merely observe them.
+
+The Supervisor already supplies `SUPERVISOR_TOKEN` in the container environment,
+so the agent can authenticate to `http://supervisor/` from inside the app. The
+role does **not** by itself grant arbitrary host-filesystem access or Docker
+socket access. Docker access remains disabled unless separately enabled with
+`docker_api`; hardware and host access remain controlled separately by
+`full_access`.
+
 ### Key directories
 
 | Path | Persistent? | Contents |
@@ -48,7 +74,8 @@ so you do not need to enter it manually.
 | `/config/` | Yes | All user data — survives app updates and rebuilds |
 | `/config/.openclaw/` | Yes | OpenClaw configuration (`openclaw.json`), skills, agent data |
 | `/config/clawd/` | Yes | Agent workspace (ClawHub-installed skills, files) |
-| `/config/.node_global/` | Yes | User-installed npm packages (skills installed via dashboard) |
+| `/config/.node_global/` | Yes | User-global npm/pnpm packages (including dashboard-installed skills) |
+| `/config/.openclaw/acpx/.node_project/` | Yes | Pinned ACPX backend and persistent harness CLI packages |
 | `/config/secrets/` | Yes | Tokens (e.g., `homeassistant.token`) |
 | `/config/keys/` | Yes | SSH keys (e.g., router SSH key) |
 | `/config/.linuxbrew/` | Yes | Homebrew install and brew-installed CLI tools |
@@ -82,7 +109,7 @@ so you do not need to enter it manually.
 When the app starts for the first time, it automatically:
 1. Creates persistent directories under `/config/`
 2. Generates a minimal `openclaw.json` with a random gateway auth token
-3. Syncs built-in skills to persistent storage
+3. Keeps bundled skills package-local and preserves the managed skills directory
 4. Starts the gateway, terminal, and nginx
 
 ### Step 1 — Run onboarding
@@ -286,7 +313,7 @@ The app exposes two health endpoints through nginx:
 | `/api/health` | nginx ingress proxy is up (used by the landing page badge) |
 | `/webui/healthz` | OpenClaw gateway `/healthz` proxied for the landing page JS |
 
-Additionally, the Dockerfile `HEALTHCHECK` verifies both `/api/health` and the OpenClaw gateway `/startupz` endpoint so Home Assistant Supervisor waits until the gateway is actually ready before marking the app as started.
+Additionally, the Dockerfile `HEALTHCHECK` verifies both `/api/health` and the OpenClaw gateway `/healthz` endpoint so Home Assistant Supervisor waits until the gateway is actually ready before marking the app as started.
 
 ---
 
@@ -403,29 +430,27 @@ All of these live in the collapsible `harness` section (top-level switches
 `acpx_enabled` / `harness_config_writer_enabled` sit above it). The backend is
 any OpenAI-compatible API — not just Ollama. Old names still coalesce on read.
 
-The three acp(x) switches — `acpx_enabled`, `harness_config_writer_enabled`,
-`acp_dashboard_binding_enabled` — all default OFF (v0.7.13.30).
-`acpx_enabled` is the MASTER gate: with it off, NO writer/binding deploy or
-config transfer happens, whatever their switches say. With it on, the
-writer and the binding act independently of EACH OTHER (the writer neither
-follows nor drives the binding) and the ACPX infrastructure is set up.
+The two ACP switches — `acpx_enabled` and `harness_config_writer_enabled` —
+default OFF. `acpx_enabled` is the MASTER gate: with it off, no writer deploy or
+config transfer happens and the ACPX npm project is not initialized. With it on,
+the writer still requires its own opt-in.
 Without `harness_base_url` every value in
 this group is INERT — only the switches apply.
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `acpx_enabled` | bool | `false` | Top level. MASTER gate for the whole acp(x) surface: `false` = no writer/binding deploy or config transfer (their switches are inert); `true` = installs the managed ACPX npm project and wrapper launchers so OpenClaw can run coding agents (Claude Code, Codex, OpenCode) through the local ACPX backend, and the custom plugin switches become effective. Existing user-configured agents are preserved |
-| `harness_config_writer_enabled` | bool | `false` | Top level. Deploy + register the bundled harness-config-writer plugin. Fine switch within the `acpx_enabled` master gate (only effective while it is on), independent of `acp_dashboard_binding_enabled` (no coupling); needs `harness_base_url` to actually generate anything (empty base URL = complete no-op). Copies but never overwrites: only byte-identical previously generated entries are refreshed — operator hand-edits and entries without the configured base URL are left intact |
+| `acpx_enabled` | bool | `false` | Top level. MASTER gate for the ACP surface: `false` = no writer deploy/config transfer or ACPX initialization; `true` = installs the persistent, pinned ACPX/harness npm project and enables the reference-worker allowlist (`codex`, `claude`, `opencode`, `pi`). Existing operator agents are preserved; no coordinator or `openclaw` entry is generated |
+| `harness_config_writer_enabled` | bool | `false` | Top level. Deploy + register the bundled harness-config-writer plugin. Fine switch within the `acpx_enabled` master gate; needs `harness_base_url` to generate anything (empty base URL = complete no-op). Only byte-identical previously generated entries are refreshed — operator hand-edits and entries without the configured base URL are left intact |
 | `harness_base_url` | string | _(empty)_ | Backend endpoint for all local-provider harnesses (any OpenAI-compatible API, e.g. `http://198.51.100.20:11434`). Used by the ACPX wrappers when no real `ANTHROPIC_API_KEY`/`OPENAI_API_KEY` is set (ignored per provider once real keys exist in `gateway_env_vars`). Doubles as the harness-config-writer ACTIVATOR: empty = nothing generated. Built-in fallback when unset: `http://localhost:11434` |
 | `harness_api_key` | string | _(empty)_ | API key handed to generated harness entries (shared writer default) |
-| `harness_model` | string | _(empty)_ | Shared harness default model; applies to all non-excluded harnesses. Empty = per-harness defaults win |
+| `harness_model` | string | _(empty)_ | Compatibility input for writer-generated entries. Per-harness option > this shared value > gateway default. Canonical model ownership is the HCW harness entry; see the one-release deprecation shim below |
 | `utility_model` | string | _(empty)_ | Override for `agents.defaults.utilityModel` in `openclaw.json` (internal gateway utility callouts, e.g. the session observer). UNSET = no write (operator owns the value) |
-| `harness_opencode_model` | string | *(empty)* | Override the model the OpenCode (forge) harness uses (default `glm-5.3-flash:cloud`). Empty = built-in default |
-| `harness_claude_model` | string | *(empty)* | Override the model the Claude Code harness uses (feeds the ambient `ANTHROPIC_MODEL` fallback and the writer claude default; default `glm-5.3-flash:cloud`). Empty = built-in default |
-| `harness_codex_model` | string | *(empty)* | Override the model the Codex (audit) harness uses (default `kimi-k2.7-code:cloud`). Empty = built-in default |
+| `harness_opencode_model` | string | *(empty)* | Compatibility model override for OpenCode. Empty = shared model, then gateway default; no hidden add-on model default |
+| `harness_claude_model` | string | *(empty)* | Compatibility model override for Claude Code. Feeds the writer and ambient `ANTHROPIC_MODEL` fallback; the ambient no-key fallback remains `glm-5.3-flash:cloud` |
+| `harness_codex_model` | string | *(empty)* | Compatibility model override for Codex. Empty = shared model, then gateway default; no hidden add-on model default |
+| `harness_pi_model` | string | *(empty)* | Compatibility model override for Pi. Empty = shared model, then gateway default; no hidden add-on model default |
 | `harness_excluded_agents` | string | *(empty)* | Comma-separated harness ids excluded from the shared defaults above (e.g. `codex,opencode`) |
-| `additional_agents` | string | *(empty)* | Comma-separated extra ACP harness names to allow besides the bundled `claude`/`codex`/`opencode`/`openclaw` (see [Custom ACP harnesses](#6f-custom-acp-harnesses-advanced)) |
-| `acp_dashboard_binding_enabled` | bool | `false` | Deploy + register the bundled acp-dashboard-binding plugin (resolves dashboard/webchat conversations to ACP harness sessions). Fine switch within the `acpx_enabled` master gate (only effective while it is on), independent of `harness_config_writer_enabled` (no coupling) |
+| `additional_agents` | string | *(empty)* | Comma-separated extra ACP harness names to allow besides the reference workers `claude`/`codex`/`opencode`/`pi` (see [Custom ACP harnesses](#6f-custom-acp-harnesses-advanced)) |
 
 ---
 
@@ -775,25 +800,39 @@ For users who prefer not to host their own models, commercial APIs (like OpenAI)
 
 ### 6f. Custom ACP harnesses (advanced)
 
-The ACP backend ships with four built-in harnesses: `claude`, `codex`, `opencode` and `openclaw`. You can point additional harnesses at your own models through two mechanisms.
+The add-on contributes exactly four reference workers to `acp.allowedAgents`:
+`codex`, `claude`, `opencode` and `pi`. It does not add `openclaw` and never
+creates a coordinator agent. A coordinator created by onboarding remains
+operator-owned; when one already exists, the same four workers are unioned into
+its `subagents.allowAgents` list.
 
-#### Model overrides for the built-in harnesses
+#### Model overrides
 
-By default the Codex harness (audit role) talks to the configured harness backend with `kimi-k2.7-code:cloud` and the OpenCode harness (forge role) with `glm-5.3-flash:cloud`. The app options override these models without touching any config file:
+For writer-generated harness entries, model precedence is:
 
-- **Codex model override:** `harness_codex_model`
-- **OpenCode model override:** `harness_opencode_model`
-- **Claude Code model override:** `harness_claude_model`
+1. the per-harness option (`harness_codex_model`, `harness_claude_model`,
+   `harness_opencode_model` or `harness_pi_model`);
+2. the shared `harness_model`;
+3. `agents.defaults.model.primary` from `openclaw.json`.
 
-Leave them empty to keep the built-in defaults. They only take effect while the harness actually uses the local backend (see `harness_base_url` in the [Configuration Reference](#5-configuration-reference)).
+Codex, OpenCode and Pi have no hidden add-on model default. Claude additionally
+has the ambient `ANTHROPIC_MODEL` compatibility fallback in `run.sh` when no
+real Anthropic credential is configured. Options are used only with a configured
+`harness_base_url`; an existing operator-owned HCW harness entry always wins.
 
 #### Additional allowed agents
 
-`additional_agents` accepts a comma-separated list of additional harness names (e.g. `pi,gemini`). These are unioned into the `acp.allowedAgents` list in `openclaw.json` alongside the four built-ins.
+`additional_agents` accepts a comma-separated list of additional harness names
+(e.g. `gemini,qwen`). These names are unioned into `acp.allowedAgents` and, if
+onboarding already created a coordinator, its `subagents.allowAgents`.
 
-This list is **user-owned**: the app never truncates or rewrites an existing `acp.allowedAgents` value — it only unions in entries that are missing. You can freely add or remove names in `openclaw.json` yourself; the app will restore the built-in four plus your option extras on the next start, and leave everything else untouched.
+Both lists are **operator-owned**: the app appends missing values and never
+truncates an existing list. An operator-created `openclaw` or other entry is
+therefore preserved even though the add-on does not contribute it.
 
-Each allowed agent also needs a matching agent in the OpenClaw roster with `runtime.type: "acp"` in `agents.entries`. The roster is fully dynamic: any `agents.entries.<id>` whose runtime type is `acp` is dispatchable through the harness backend (`main` is never rostered). Set `runtime.acp.agent` to the harness name you allowed, e.g.:
+Each allowed custom agent also needs a matching agent in the OpenClaw roster
+with `runtime.type: "acp"` in `agents.entries`. Set `runtime.acp.agent` to the
+harness name, for example:
 
 ```json
 "agents": {
@@ -805,9 +844,48 @@ Each allowed agent also needs a matching agent in the OpenClaw roster with `runt
 }
 ```
 
-#### Dashboard binding for custom agents
+#### Persistent harness CLI installation
 
-The bundled `acp-dashboard-binding` plugin (deployed to `/config/.openclaw/plugins/` on app start, enabled automatically as `plugins.entries['acp-dashboard-binding']`) binds the dashboard webchat channel to ACP harness sessions. It reads the agent roster dynamically, so agents you add via the mechanism above become dashboard-bindable automatically — no plugin reconfiguration is required.
+With `acpx_enabled` on, the helper maintains the npm project at
+`/config/.openclaw/acpx/.node_project`. Installs are idempotent and the package
+pins are explicit. Verified executables are symlinked into
+`/config/.node_global/bin`, which `run.sh` already places on `PATH`; existing
+operator binaries or symlinks there are never overwritten. In addition to ACPX,
+Codex and OpenCode, the project carries these vendor-verified CLI packages:
+
+| Harness | npm package | Pin |
+|---|---|---|
+| Pi | `@mariozechner/pi-coding-agent` | `0.73.1` |
+| Copilot | `@github/copilot` | `1.0.114` |
+| Kilo | `@kilocode/cli` | `7.8.32` |
+| Qwen | `@qwen-code/qwen-code` | `0.28.3` |
+| Gemini | `@google/gemini-cli` | `0.70.0` |
+| Droid | `@factory/cli` | `1.17.2` |
+| iFlow | `@iflow-ai/iflow-cli` | `0.5.19` |
+
+Kiro is different: ACPX expects the vendor executable `kiro-cli`, but the public
+npm artifact with that name is only a placeholder exposing `kirox`. The helper
+therefore never guesses a Kiro package. It detects `kiro-cli` on `PATH` (or in
+the project bin directory) and logs a loud warning with the required executable
+name when it is absent. Install Kiro only through the vendor-supported channel.
+
+#### One-release model-option deprecation shim (0.7.13.39)
+
+For this compatibility release, the shared and four per-harness model options
+remain readable with the precedence above. `harness_base_url`,
+`harness_api_key`, `harness_excluded_agents` and `additional_agents` retain their
+existing roles. To avoid two competing model authorities, treat
+`plugins.entries['harness-config-writer'].config.harnesses.<id>.model` as the
+canonical model source and migrate model overrides there now.
+
+In this release, the old options are read only when the add-on generates or
+refreshes its own harness writer entry. Operator-owned entries are never
+overwritten, the per-harness > shared > gateway-default precedence is retained,
+and existing allowlist entries are preserved.
+
+The five model options remain available for compatibility. Use the harness
+writer's model settings for new configurations; the legacy options may be
+removed together in a later release.
 
 ---
 
@@ -815,47 +893,48 @@ The bundled `acp-dashboard-binding` plugin (deployed to `/config/.openclaw/plugi
 
 ### What persists across app updates
 
-| Data | Location | Persists? |
-|---|---|---|
-| OpenClaw config | `/config/.openclaw/openclaw.json` | Yes |
-| Built-in skills | `/config/.openclaw/skills/` | Yes |
-| Agent sessions & data | `/config/.openclaw/agents/` | Yes |
-| ClawHub workspace | `/config/clawd/` | Yes |
-| User-installed npm skills | `/config/.node_global/` | Yes |
-| SSH keys | `/config/keys/` | Yes |
-| Tokens | `/config/secrets/` | Yes |
-| Homebrew & brew-installed tools | `/config/.linuxbrew/` | Yes (synced on startup) |
-| gog OAuth credentials | `/config/gogcli/` | Yes |
-| TLS certificates (lan_https) | `/config/certs/` | Yes (CA persists; server cert regenerated if IP changes) |
-| OpenClaw binary | `/usr/lib/node_modules/openclaw/` | **No** — reinstalled from image |
+| Data | Location | Persists across updates | Included in HA app backup |
+|---|---|---|---|
+| OpenClaw config | `/config/.openclaw/openclaw.json` | Yes | Yes |
+| Managed/operator skills | `/config/.openclaw/skills/` | Yes | Yes |
+| Bundled OpenClaw skills | Inside the pinned OpenClaw package | Replaced with the app image | Not a state-directory copy |
+| Agent sessions & data | `/config/.openclaw/agents/` | Yes | Yes |
+| ClawHub workspace | `/config/clawd/` | Yes | Yes |
+| User-global npm/pnpm packages | `/config/.node_global/` | Yes | Yes |
+| Pinned ACPX and harness CLIs | `/config/.openclaw/acpx/.node_project/` | Yes | Yes |
+| Homebrew & brew-installed tools | `/config/.linuxbrew/` | Yes (synced on startup) | Yes |
+| SSH keys | `/config/keys/` | Yes | Yes |
+| Tokens | `/config/secrets/` | Yes | Yes |
+| gog OAuth credentials | `/config/gogcli/` | Yes | Yes |
+| TLS certificates (lan_https) | `/config/certs/` | Yes | Yes (CA persists; server cert regenerated if IP changes) |
+| OpenClaw binary | `/usr/lib/node_modules/openclaw/` | **No** — reinstalled from image | No |
 
-### How built-in skills work
+### How built-in and managed skills work
 
-OpenClaw ships with premade skills (e.g., web search, file management). On each startup, the app:
+Bundled skills stay inside the pinned OpenClaw package and load directly from
+that package. The startup does **not** copy them into the state directory and
+does **not** replace the package skills directory with a symlink. Package-local
+bundles therefore follow the app image and do not shadow later updates.
 
-1. Copies built-in skills from the image to `/config/.openclaw/skills/`
-2. Creates a symlink from the image path back to persistent storage
-3. On subsequent boots, only newer files are synced (existing files are preserved)
-
-This means built-in skills survive image rebuilds, and any customizations you make to skill files are preserved.
+OpenClaw additionally loads managed skills from `/config/.openclaw/skills/` with
+higher precedence. Existing operator-added or operator-edited files there are
+preserved. If an old installation contains a copied bundled skill in that managed
+directory, remove the copy when it should follow the bundled update again.
 
 ### How user-installed skills work
 
-When you install a skill via the OpenClaw dashboard or `npm install -g`, the app redirects global npm installs to `/config/.node_global/`. This directory persists across updates.
+When you install a skill via the OpenClaw dashboard or `npm install -g`, the app
+redirects global npm installs to `/config/.node_global/`. The pnpm global
+directory is `/config/.node_global/pnpm/`. Both persist across updates and are
+included in the HA app backup.
 
-The app also configures `pnpm` global directory to persistent storage at `/config/.node_global/pnpm/`.
+### How Homebrew persistence works
 
-### Homebrew-installed tools
-
-Homebrew (Linuxbrew) and all brew-installed CLI tools (e.g., `gemini`, `aider`, `gh`, `bw`) are now **persisted** across app updates. On each startup, the app:
-
-1. Syncs the image's Homebrew install to `/config/.linuxbrew/`
-2. Creates a symlink from `/home/linuxbrew/.linuxbrew/` to the persistent copy
-3. On subsequent boots, only newer files are synced (user-installed packages are preserved)
-
-This means `brew install` packages survive image rebuilds.
-
----
+The startup syncs the image's Homebrew installation to `/config/.linuxbrew/` and
+links `/home/linuxbrew/.linuxbrew/` to that persistent copy. User-installed brew
+packages therefore survive image rebuilds and are included in the HA app backup.
+Only Homebrew's regenerable caches under the separate `.cache` exclusion are
+omitted.
 
 ## 8. Bundled Tools
 
@@ -943,7 +1022,19 @@ openclaw --version
 
 ### Backup
 
-Home Assistant's built-in backup system automatically includes app configuration data (`/config/`). This covers all persistent data: OpenClaw config, skills, workspace, keys, and tokens.
+Home Assistant's built-in backup system includes the app configuration data
+under `/config/`, subject to the explicit `backup_exclude` list. The backup
+includes OpenClaw configuration, managed skills, workspaces, keys, tokens,
+`/config/.node_global/`, `/config/.linuxbrew/`, and the pinned harness project
+`/config/.openclaw/acpx/.node_project/`. Restoring therefore restores the
+installed harness CLIs as well as their configuration.
+
+The backup does **not** include every byte under `/config/`: regenerable npm and
+compile caches (`.npm`, `.cache`, `.node-compile-cache`), `__pycache__`, and
+`*.jsonl.lock` files are excluded. Package/tool directories can make backups
+large; they are retained intentionally because user-installed tools and the
+harness installation are not treated as disposable caches. `/share` and
+`/media` are separate mounts, not part of the app-config directory.
 
 **To create a backup**: Go to **Settings → System → Backups → Create Backup**
 
@@ -952,7 +1043,9 @@ Home Assistant's built-in backup system automatically includes app configuration
 # Key paths to back up:
 # /config/.openclaw/     - OpenClaw config, skills, agent data
 # /config/clawd/         - ClawHub workspace
-# /config/.node_global/  - User-installed npm skills
+# /config/.node_global/                    - User-global npm/pnpm packages
+# /config/.linuxbrew/                      - Homebrew and brew-installed tools
+# /config/.openclaw/acpx/.node_project/    - Pinned ACPX/harness CLIs
 # /config/keys/          - SSH keys
 # /config/secrets/       - Tokens
 ```
@@ -1138,13 +1231,18 @@ If Telegram is configured but polling fails with network fetch errors:
 
 When proxy is enabled, app startup also applies default bypass ranges via `NO_PROXY`/`no_proxy` for localhost and private network ranges.
 
-### Skills disappearing after update
+### Skills missing or unexpectedly overriding an update
 
-Built-in skills are synced to persistent storage on each startup. If skills are missing:
+Bundled skills remain package-local and follow the app image. If a skill is
+missing, check the startup log for `Bundled skills remain package-local` or the
+warning that the package skills directory was not found. A missing package
+directory can indicate a corrupted OpenClaw installation; reinstall the app if
+restarting does not repair it.
 
-1. Check logs for `INFO: Synced built-in skills to persistent storage` — this confirms the sync ran
-2. If you see `WARN: Built-in skills directory not found`, the OpenClaw installation may be corrupted. Try reinstalling the app.
-3. User-installed skills (via dashboard) are stored in `/config/.node_global/` and should survive updates
+Managed skills in `/config/.openclaw/skills/` have precedence. An old copied
+bundle there can shadow a newer bundled skill; remove that copy when it should
+track the image again. User-global npm/pnpm packages in `/config/.node_global/`
+survive updates and are included in HA app backups.
 
 ### Homebrew errors / CPU compatibility
 
@@ -1265,6 +1363,6 @@ Run `openclaw configure` in the terminal to reconfigure your AI providers, or ed
 Yes. Set `network_mode` to **lan_https** (recommended) or **reverse_proxy**. Any device on your network can connect to `https://<ha-ip>:18789`. Use the gateway token for authentication. This also enables the [Assist pipeline integration](#6c-assist-pipeline-integration-openai-api) from other HA instances or standalone OpenClaw integrations.
 
 **Where is my data stored on the host?**
-The app's `/config/` directory maps to `/addon_configs/<slug>/` on the Home Assistant host. This is included in HA backups automatically.
+The app's `/config/` directory maps to `/addon_configs/<slug>/` on the Home Assistant host. HA app backups include it except for the documented cache and stale-lock exclusions; user-global packages, Homebrew tools and the persistent ACPX harness project are included.
 
 The app also mounts Home Assistant `/share` and `/media` as writable paths inside the container (`/share`, `/media`) for file access workflows. These are separate from OpenClaw's default persistent workspace under `/config`.

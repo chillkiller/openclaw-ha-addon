@@ -194,5 +194,5 @@ or via a managed worktree with base ref `hcw-plugin` (New Session > Checkout >
 Neuer Worktree — all branches are listed by the base-branch picker, verified
 via `worktrees.branches`). Commit discipline: HCW commits touch ONLY
 harness-config-writer files (plus shared release files when shipping); never
-edit or delete foreign plugin directories (acp-dashboard-binding etc.) —
-main is the merge target for multiple branches.
+edit or delete foreign plugin directories (for example, a separately
+maintained plugin) — main is the merge target for multiple branches.

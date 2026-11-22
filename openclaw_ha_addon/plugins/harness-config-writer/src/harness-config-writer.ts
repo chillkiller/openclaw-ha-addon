@@ -250,6 +250,32 @@ const NATIVE_TARGETS_BY_HARNESS: Record<string, readonly string[]> = {
   kiro: ["settings"],
 };
 
+/**
+ * Canonical catalogue of harness ids for which this writer has a deploy
+ * mechanism. This constant is the single source of truth for writer code,
+ * manifest documentation and tests.
+ *
+ * TS sync rule (same convention as the resolveOpenClawStateDir copies): keep
+ * KNOWN_WRITER_HARNESS_IDS in openclaw_ha_addon/oc_acpx_helper.py in sync with
+ * this list, including both Kilo aliases. The helper mirrors this catalogue;
+ * it is not an independent source of supported ids.
+ */
+export const SUPPORTED_WRITER_HARNESS_IDS = [
+  "codex",
+  "opencode",
+  "kilo",
+  "kilocode",
+  "claude",
+  "copilot",
+  "droid",
+  "gemini",
+  "iflow",
+  "kimi",
+  "kiro",
+  "qwen",
+  "pi",
+] as const;
+
 function validateNativeTargets(harnessId: string, entry: HarnessConfigEntry): string[] {
   if (!isNativeRecord(entry.nativeConfig)) return [];
   const supported = NATIVE_TARGETS_BY_HARNESS[harnessId] ?? [];
@@ -3957,6 +3983,7 @@ export function deployHarnessConfigs(
     return { results: [], skipped: true };
   }
   const results: HarnessDeployResult[] = [];
+  const supportedHarnessIds: readonly string[] = SUPPORTED_WRITER_HARNESS_IDS;
   for (const harnessId of Object.keys(harnesses).sort()) {
     // Domain-4-Audit r3: per-Harness fail-soft — ein atomicWrite-Throw
     // (EACCES/ENOSPC/EROFS o. ä.) kollabierte vormals die GESAMTE Loop über
@@ -3970,6 +3997,15 @@ export function deployHarnessConfigs(
         harnessId,
         mechanism: "none",
         warnings: ["invalide Entry (model: non-empty string ist Pflicht) — skipt"],
+        files: [],
+      });
+      continue;
+    }
+    if (!supportedHarnessIds.includes(harnessId)) {
+      results.push({
+        harnessId,
+        mechanism: "none",
+        warnings: validateNativeTargets(harnessId, entry),
         files: [],
       });
       continue;

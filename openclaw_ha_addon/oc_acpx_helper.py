@@ -12,14 +12,13 @@ the local-model ACP harnesses are ready to use:
      .config.harnesses, the 15 design (generalized harness config (HCW phase 3))); deploy_harness_configs/
      prepare_opencode_home are no-ops now.
   2. Creates a small managed npm project in /config/.openclaw/acpx/.node_project
-     with @openclaw/acpx, @openclaw/codex and opencode installed
+     with ACPX and the vendor-verified persistent harness CLIs installed
   3. Patches /config/.openclaw/openclaw.json to enable ACPX (agents preserved)
 
 Custom wrapper launchers are NO longer used (2026-10-09): the acpx plugin
 generates passthrough wrappers for codex/claude at gateway start, and the
-provider env is exported by run.sh (ambient env). All harnesses reach the
-local Ollama backend via config files (codex config.toml inheritance,
-opencode.jsonc) or ambient env (claude ANTHROPIC_*), no wrapper edits.
+provider env is exported by run.sh (ambient env). Native harness config is
+owned by harness-config-writer.
 
 All operations are idempotent and safe to run on every app restart.
 """
@@ -42,8 +41,13 @@ from typing import Any
 # Directories
 CONFIG_DIR = Path("/config/.openclaw")
 ACPX_DIR = CONFIG_DIR / "acpx"
-WRAPPER_SRC_DIR = Path("/openclaw_ha_addon/acpx")
+# The image no longer ships the legacy acpx/ template directory; the plugin
+# payload lives directly under /openclaw_ha_addon/plugins.
+PLUGIN_SRC_DIR = Path("/openclaw_ha_addon/plugins")
 PROJECT_DIR = ACPX_DIR / ".node_project"
+# run.sh puts this directory on PATH. Publish project-local harness entry
+# points here so ACPX can resolve them by their vendor command names.
+PERSISTENT_BIN_DIR = CONFIG_DIR.parent / ".node_global" / "bin"
 # OpenCode's global config dir. Resolution rule (verified 2026-11-05 against
 # the installed opencode binary): `XDG_CONFIG_HOME || homedir()/.config` —
 # XDG FIRST. The add-on exports XDG_CONFIG_HOME=/config and the acpx wrappers
@@ -53,29 +57,24 @@ PROJECT_DIR = ACPX_DIR / ".node_project"
 # resolves identically (resolveOpencodeGlobalDir: XDG first). Do NOT switch
 # this to /config/.config/opencode — that would break writer/reader agreement.
 OPENCODE_GLOBAL_DIR = Path("/config/opencode")
-# Bundled plugin payloads shipped in the add-on image (copied to
+# Bundled plugin payload shipped in the add-on image (copied to
 # CONFIG_DIR/plugins/<name> at start; never copied recursively from the
 # running acpx project dir, which has live node_modules).
-PLUGIN_SRC_DIR = WRAPPER_SRC_DIR.parent / "plugins"
-PLUGIN_NAME = "acp-dashboard-binding"
-# Repo-Split A2 (2026-10-11): the harness-config-writer lives as its OWN
-# plugin (GaRoN's split idea: config-writer independent of the channel
-# plugin). Both are deployed/registered by this helper from the image-baked
-# PLUGIN_SRC_DIR (kept in-sync with openclaw_ha_addon/plugins/).
+PLUGIN_SRC_FALLBACK_DIRS = (
+    Path(__file__).resolve().parent / "plugins",
+)
 HARNESS_CONFIG_WRITER_PLUGIN_NAME = "harness-config-writer"
-BUNDLED_PLUGIN_NAMES = [PLUGIN_NAME, HARNESS_CONFIG_WRITER_PLUGIN_NAME]
+LEGACY_BINDING_PLUGIN_NAME = "acp-dashboard-binding"
+BUNDLED_PLUGIN_NAMES = [HARNESS_CONFIG_WRITER_PLUGIN_NAME]
 # Bundled-Root-Trust-Deploy (Kammerjäger 2026-10-11, Restart-Log v0.7.13.17):
 # the gateway grants the trusted plugin runtime API (api.runtime.state.
 # openKeyedStore etc.) ONLY to plugins whose record is origin "bundled"
 # (physical root under the pinned gateway package's dist/extensions) or an
 # official-catalog install (trustedOfficialInstall — unreachable for path
-# plugins). Deployed at /config/.openclaw/plugins the plugins load with
-# origin "config" and every openKeyedStore call throws PluginTrustRefusal →
-# the dashboard bridge ran "persisted bridge state unavailable; memory-only
-# rows" at every boot. This helper therefore deploys a COMPILED bundle into
-# the gateway's bundled extensions root: bundled plugins load with full
-# trust, and the TS-stripping cost (heavy part of the 64s runtime-post-bind
-# boot block) disappears because the bundle arrives pre-compiled.
+# plugins). A config-origin deploy cannot access that trusted runtime API.
+# This helper therefore deploys a COMPILED bundle into the gateway's bundled
+# extensions root: bundled plugins load with full trust and without the
+# TypeScript-stripping startup cost.
 BUNDLED_EXTENSIONS_DIR = Path("/usr/lib/node_modules/openclaw/dist/extensions")
 # esbuild bundles the TS entry into ONE ESM module (relative imports inlined;
 # "openclaw/plugin-sdk/*" stays a bare specifier resolved by the gateway's
@@ -111,9 +110,38 @@ ADAPTER_PATHS_FILE_NAME = "adapter-paths.json"
 # npm package versions (bump when the app image is rebuilt)
 OPENCLAW_ACPX_VERSION = os.environ.get("OPENCLAW_ACPX_VERSION", "2026.7.1")
 OPENCLAW_CODEX_VERSION = os.environ.get("OPENCLAW_CODEX_VERSION", "2026.7.1-1")
-OPENCODE_VERSION = os.environ.get("OPENCODE_VERSION", "latest")
+OPENCODE_VERSION = os.environ.get("OPENCODE_VERSION", "1.19.6")
 OPENCODE_PACKAGE = os.environ.get("OPENCODE_PACKAGE", "opencode-ai")
-OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+# Vendor package names and versions verified against the packages' own npm
+# metadata on 2026-11-22. Explicit pins keep restored installations repeatable.
+PI_PACKAGE = "@mariozechner/pi-coding-agent"
+PI_VERSION = os.environ.get("PI_VERSION", "0.73.1")
+COPILOT_PACKAGE = "@github/copilot"
+COPILOT_VERSION = os.environ.get("COPILOT_VERSION", "1.0.114")
+KILO_PACKAGE = "@kilocode/cli"
+KILO_VERSION = os.environ.get("KILO_VERSION", "7.8.32")
+QWEN_PACKAGE = "@qwen-code/qwen-code"
+QWEN_VERSION = os.environ.get("QWEN_VERSION", "0.28.3")
+GEMINI_PACKAGE = "@google/gemini-cli"
+GEMINI_VERSION = os.environ.get("GEMINI_VERSION", "0.70.0")
+DROID_PACKAGE = "@factory/cli"
+DROID_VERSION = os.environ.get("DROID_VERSION", "1.17.2")
+IFLOW_PACKAGE = "@iflow-ai/iflow-cli"
+IFLOW_VERSION = os.environ.get("IFLOW_VERSION", "0.5.19")
+REFERENCE_WORKER_AGENTS = frozenset({"codex", "claude", "opencode", "pi"})
+# Executable names verified in the vendor npm `bin` metadata. Kilo deliberately
+# publishes both aliases supplied by @kilocode/cli.
+HARNESS_EXECUTABLES = {
+    "opencode": "opencode",
+    "pi": "pi",
+    "copilot": "copilot",
+    "kilo": "kilo",
+    "kilocode": "kilocode",
+    "qwen": "qwen",
+    "gemini": "gemini",
+    "droid": "droid",
+    "iflow": "iflow",
+}
 # Harness model defaults. Generic app rule (GaRoN 2026-10-10): the add-on must
 # work user-independent — these are only DEFAULTS; real overrides come from
 # add-on options (run.sh forwards them as env; renamed to harness_* in the
@@ -128,36 +156,11 @@ OLLAMA_BASE_URL = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
 #   harness_pi_model       -> OLLAMA_PI_MODEL
 #   harness_model (geteilt) -> HARNESS_WRITER_MODEL
 # Ohne Optionen greift der Gateway-Default (agents.defaults.model.primary).
-OLLAMA_CODEX_MODEL = os.environ.get("OLLAMA_CODEX_MODEL", "").strip()
-OLLAMA_OPENCODE_MODEL = os.environ.get("OLLAMA_OPENCODE_MODEL", "").strip()
-OLLAMA_CLAUDE_MODEL = os.environ.get("OLLAMA_CLAUDE_MODEL", "").strip()
-OLLAMA_PI_MODEL = os.environ.get("OLLAMA_PI_MODEL", "").strip()
-# γ (2026-10-13): the third flagship harness default — claude never had a
-# config.yaml option (historically ambient OLLAMA_ACP_MODEL via run.sh:125ff).
-# Mirror ladder lives in run.sh's ANTHROPIC_MODEL fallback (sync rule).
-OLLAMA_CLAUDE_MODEL_DEFAULT = "glm-5.3:cloud"
 # pi (2026-11-13): der pi-Harness war bisher NICHT in KNOWN_WRITER_HARNESS_IDS —
 # der add-on konnte ihn also nie generieren und ein pi-Entry in der config
 # war immer hand-edited (der Helper schützt hand-edits mit "operator wins").
 # Der pi-Harness nutzt den FILE-Mechanismus (models.json + settings.json) und
 # kennt jetzt den vollen Gateway-Katalog (HCW-Fix: Provider-Key-Vererbung).
-
-# Template tokens that must never be committed as real infra data (AGENTS.md
-# security hygiene: LAN addresses stay out of the repository).
-def _template_substitutions() -> dict[str, str]:
-    """Template-Tokens (lazy: die Modelle werden zur Aufrufzeit aufgeloest)."""
-    return {
-        "__OLLAMA_BASE_URL__": OLLAMA_BASE_URL.rstrip("/"),
-        "__CODEX_MODEL__": _resolved_model_for_template("codex"),
-        "__OPENCODE_MODEL__": _resolved_model_for_template("opencode"),
-    }
-
-
-def render_template(text: str) -> str:
-    for token, value in _template_substitutions().items():
-        text = text.replace(token, value)
-    return text
-
 
 def log(msg: str) -> None:
     print(f"[acpx-init] {msg}", flush=True)
@@ -212,32 +215,30 @@ def prepare_opencode_home() -> None:
     log("INFO: harness config deployment moved to harness-config-writer plugin")
 
 
-def resolve_plugin_src_dir() -> Path | None:
+def resolve_plugin_src_dir(plugin_name: str) -> Path | None:
     """Locate the bundled plugin payload directory (F1, Phase 2.10).
 
     The image COPYs /openclaw_ha_addon/plugins, but older images and bare
     repo checkouts may lack it — so the first candidate that actually
-    contains PLUGIN_NAME/openclaw.plugin.json wins:
+    contains <plugin_name>/openclaw.plugin.json wins:
 
       1. PLUGIN_SRC_DIR (canonical image payload; mocked in tests)
       2. <this helper's dir>/plugins          (repo checkout / dev runs)
-      3. /share/projekte/github/.../plugins   (host-side checkout fallback)
 
     The chosen source is logged so a wrong/missing bundle is visible at
     start instead of failing silently in deploy_plugins().
     """
     candidates = [
         PLUGIN_SRC_DIR,
-        Path(__file__).resolve().parent / "plugins",
-        Path("/share/projekte/github/openclaw-ha-addon/openclaw_ha_addon/plugins"),
+        *PLUGIN_SRC_FALLBACK_DIRS,
     ]
     for candidate in candidates:
-        if (candidate / PLUGIN_NAME / "openclaw.plugin.json").is_file():
+        if (candidate / plugin_name / "openclaw.plugin.json").is_file():
             if candidate != PLUGIN_SRC_DIR:
                 log(f"INFO: plugin source fallback in use: {candidate}")
             return candidate
     log(
-        "WARNING: plugin source not found; probed: "
+        f"WARNING: plugin source for {plugin_name} not found; probed: "
         + ", ".join(str(c) for c in candidates)
     )
     return None
@@ -269,6 +270,19 @@ def _find_esbuild() -> str | None:
     return shutil.which("esbuild")
 
 
+def _image_node_subprocess_env() -> dict[str, str]:
+    """Return an environment whose `/usr/bin/env node` resolves to image Node.
+
+    npm and the OpenClaw-pinned esbuild are commonly Node scripts with an env
+    shebang. run.sh deliberately puts persistent npm/pnpm and Homebrew bins
+    first for ordinary tools, so those subprocesses need the same image-first
+    path guard as gateway children instead of inheriting a restored Node.
+    """
+    env = os.environ.copy()
+    env["PATH"] = f"/usr/bin:/bin:{env.get('PATH', '')}"
+    return env
+
+
 def _compile_bundled_plugin(src_dir: Path, esbuild_bin: str) -> bytes | None:
     """Bundle the plugin entry (index.ts) into ONE self-contained ESM module.
 
@@ -292,7 +306,13 @@ def _compile_bundled_plugin(src_dir: Path, esbuild_bin: str) -> bytes | None:
             f"--outfile={outfile}",
         ]
         try:
-            proc = subprocess.run(cmd, capture_output=True, text=True, timeout=300)
+            proc = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=300,
+                env=_image_node_subprocess_env(),
+            )
         except (OSError, subprocess.SubprocessError) as e:
             log(f"WARN: esbuild invocation failed: {e}")
             return None
@@ -322,7 +342,7 @@ def _write_bytes_and_cache(path: Path, data: bytes, written: list[str]) -> None:
     written.append(str(path))
 
 
-def _deploy_and_register_plugin(plugin_name: str, force_enable: bool = False) -> bool:
+def _deploy_and_register_plugin(plugin_name: str) -> bool:
     """Idempotently deploy ONE bundled plugin, named <plugin_name>.
 
     Bundled-Root-Trust-Deploy (Kammerjäger 2026-10-11): when the pinned
@@ -347,16 +367,15 @@ def _deploy_and_register_plugin(plugin_name: str, force_enable: bool = False) ->
     The copy fires only when the source actually differs from the target
     (sha256 comparison per file), so unchanged restarts stay read-only.
 
-    Repo-Split A2 (2026-10-11): called once per bundled plugin —
-    'acp-dashboard-binding' (channel) and 'harness-config-writer' (standalone
-    feature plugin); option gating lives in deploy_plugins().
+    Repo-Split A2 (2026-10-11): harness-config-writer is deployed by this
+    helper; option gating lives in deploy_plugins().
 
     Phase 2.15 (GaRoN, origin semantics kept): deploying/registering is
     OPT-IN per plugin via the add-on options forwarded by run.sh as env;
     when the option is absent or unset/false the deploy is skipped entirely
     and nothing is written to openclaw.json.
     """
-    src_dir = resolve_plugin_src_dir()
+    src_dir = resolve_plugin_src_dir(plugin_name)
     src = (src_dir / plugin_name) if src_dir else None
 
     if src is None or not (src / "openclaw.plugin.json").exists():
@@ -406,7 +425,7 @@ def _deploy_and_register_plugin(plugin_name: str, force_enable: bool = False) ->
             else:
                 log(f"Plugin {plugin_name} already up to date at {dst} "
                     "(bundled root, byte-identical — read-only boot)")
-            return _register_plugin_entry(plugin_name, force_enable=force_enable)
+            return _register_plugin_entry(plugin_name)
         log(f"WARN: bundled deploy unavailable for {plugin_name} "
             "(esbuild missing or bundle failed) — falling back to external deploy")
 
@@ -462,10 +481,10 @@ def _deploy_and_register_plugin(plugin_name: str, force_enable: bool = False) ->
     # Register the plugin as enabled — but NEVER overwrite an explicit
     # operator opt-out: an entry carrying enabled:false stays false across
     # boots (single-plugin disable without touching ACP/harnesses).
-    return _register_plugin_entry(plugin_name, force_enable=force_enable)
+    return _register_plugin_entry(plugin_name)
 
 
-def _register_plugin_entry(plugin_name: str, force_enable: bool = False) -> bool:
+def _register_plugin_entry(plugin_name: str) -> bool:
     """openclaw.json registration shared by both deploy roots.
 
     entries.enabled: operator opt-out (false) never flipped; load.paths
@@ -488,24 +507,13 @@ def _register_plugin_entry(plugin_name: str, force_enable: bool = False) -> bool
             return True
         changed_entry = False
         if entry.get("enabled") is False:
-            if force_enable:
-                # GaRoN 2026-10-12 (binding plugin ONLY): the HA option is the
-                # master switch — a silently respected enabled:false while the
-                # option shows ON is the UI-lying failure class of the outage
-                # session. The operator toggling the option ON is the newer,
-                # explicit intent channel.
-                entry["enabled"] = True
-                changed_entry = True
-                log(f"plugins.entries.{plugin_name}.enabled set true "
-                    "(HA option master switch = ON; never-flip superseded for this plugin)")
-            else:
-                # Operator opt-out (GaRoN 2026-10-10 finding): an explicit
-                # enabled:false is NEVER flipped back by this helper. The plugin
-                # payload stays deployed (copy above), so re-enabling needs no
-                # rebuild; the early return leaves plugins.load.paths untouched
-                # while the plugin is disabled.
-                log(f"INFO: plugins.entries.{plugin_name}.enabled=false (operator opt-out) respected")
-                return True
+            # Operator opt-out (GaRoN 2026-10-10 finding): an explicit
+            # enabled:false is NEVER flipped back by this helper. The plugin
+            # payload stays deployed (copy above), so re-enabling needs no
+            # rebuild; the early return leaves plugins.load.paths untouched
+            # while the plugin is disabled.
+            log(f"INFO: plugins.entries.{plugin_name}.enabled=false (operator opt-out) respected")
+            return True
         if entry.get("enabled") is not True:
             entry["enabled"] = True
             changed_entry = True
@@ -573,12 +581,9 @@ def migrate_legacy_harnesses_config(enable_fresh_entry: bool = True) -> None:
       - a PRE-EXISTING writer entry keeps its enabled flag untouched: true /
         unset both deploy-legal (the deploy block decides nothing here), an
         explicit enabled:false operator opt-out is NEVER flipped (audit B3,
-        GaRoN invariant 2026-10-10) — the config transport happens regardless,
-        since the legacy key would break the binding manifest schema.
-    A stored 'harnesses' object under the OLD entry would fail the binding
-    plugin manifest schema validation (additionalProperties:false, the
-    property no longer exists) once the rebuilt plugin is deployed — hence
-    the removal (this helper runs BEFORE the gateway reads the config)."""
+        GaRoN invariant 2026-10-10) — config transport is independent of the
+        enable decision.
+    The old plugin is retired; only this data-preserving migration remains."""
     config_path = CONFIG_DIR / "openclaw.json"
     if not config_path.exists():
         return
@@ -587,7 +592,7 @@ def migrate_legacy_harnesses_config(enable_fresh_entry: bool = True) -> None:
         entries = cfg.get("plugins", {}).get("entries", {})
         if not isinstance(entries, dict):
             return
-        legacy_entry = entries.get(PLUGIN_NAME) or {}
+        legacy_entry = entries.get(LEGACY_BINDING_PLUGIN_NAME) or {}
         legacy_cfg = legacy_entry.get("config") if isinstance(legacy_entry, dict) else None
         legacy_harnesses = (
             legacy_cfg.get("harnesses") if isinstance(legacy_cfg, dict) else None
@@ -610,11 +615,8 @@ def migrate_legacy_harnesses_config(enable_fresh_entry: bool = True) -> None:
             log(
                 "WARN: plugins.entries['harness-config-writer'].config.harnesses "
                 "exists alongside the legacy 'acp-dashboard-binding' key — leaving "
-                "BOTH untouched (operator decision required). Consequence: the "
-                "legacy key violates the binding manifest schema "
-                "(additionalProperties:false) and can fail that plugin's load — "
-                "after verifying the new surface, delete the legacy key in "
-                "openclaw.json (or move its content) manually."
+                "BOTH untouched (operator decision required). Verify the new "
+                "surface, then remove the legacy key manually."
             )
             return
         writer_cfg["harnesses"] = legacy_harnesses
@@ -635,6 +637,74 @@ def migrate_legacy_harnesses_config(enable_fresh_entry: bool = True) -> None:
         )
     except Exception as e:
         log(f"WARN: legacy harnesses config migration failed: {e}")
+
+
+def remove_retired_binding_installation() -> bool:
+    """Remove previously deployed binding artifacts after data migration.
+
+    Successful migration removes the legacy harnesses key, so the empty plugin
+    entry can go as well. A divergent legacy/new harness map remains as an
+    explicit, disabled reconciliation record instead of being destroyed.
+    """
+    ok = True
+    for root in (
+        CONFIG_DIR / "plugins" / LEGACY_BINDING_PLUGIN_NAME,
+        BUNDLED_EXTENSIONS_DIR / LEGACY_BINDING_PLUGIN_NAME,
+    ):
+        if not root.exists() and not root.is_symlink():
+            continue
+        try:
+            if root.is_symlink() or root.is_file():
+                root.unlink()
+            else:
+                shutil.rmtree(root)
+            log(f"INFO: removed retired plugin payload {root}")
+        except OSError as e:
+            log(f"ERROR: could not remove retired plugin payload {root}: {e}")
+            ok = False
+
+    config_path = CONFIG_DIR / "openclaw.json"
+    if not config_path.exists():
+        return ok
+    try:
+        cfg = read_json(config_path)
+        changed = False
+        plugins = cfg.get("plugins")
+        entries = plugins.get("entries") if isinstance(plugins, dict) else None
+        if isinstance(entries, dict):
+            legacy = entries.get(LEGACY_BINDING_PLUGIN_NAME)
+            legacy_config = legacy.get("config") if isinstance(legacy, dict) else None
+            unresolved = (
+                isinstance(legacy_config, dict)
+                and isinstance(legacy_config.get("harnesses"), dict)
+                and bool(legacy_config["harnesses"])
+            )
+            if unresolved:
+                if legacy.get("enabled") is not False:
+                    legacy["enabled"] = False
+                    changed = True
+                log("WARN: retired plugin entry kept disabled because its "
+                    "harnesses mapping conflicts with the writer entry")
+            elif LEGACY_BINDING_PLUGIN_NAME in entries:
+                del entries[LEGACY_BINDING_PLUGIN_NAME]
+                changed = True
+        allow = plugins.get("allow") if isinstance(plugins, dict) else None
+        if isinstance(allow, list) and LEGACY_BINDING_PLUGIN_NAME in allow:
+            plugins["allow"] = [
+                item for item in allow if item != LEGACY_BINDING_PLUGIN_NAME
+            ]
+            changed = True
+        channels = cfg.get("channels")
+        if isinstance(channels, dict) and LEGACY_BINDING_PLUGIN_NAME in channels:
+            del channels[LEGACY_BINDING_PLUGIN_NAME]
+            changed = True
+        if changed:
+            write_json(config_path, cfg)
+            log("INFO: removed retired plugin registration/channel configuration")
+    except Exception as e:
+        log(f"ERROR: retired plugin registration cleanup failed: {e}")
+        return False
+    return ok
 
 
 # Backup-Rewrite (GaRoN 2026-10-11): the writer plugin writes into
@@ -1220,12 +1290,6 @@ def _gateway_default_model() -> str:
         return ""
 
 
-def _resolved_model_for_template(harness_id: str) -> str:
-    """Aufgeloestes Modell fuer Template-Tokens (nie leer, sonst ungueltiges Config)."""
-    model = _writer_model_for(harness_id)
-    return model or _gateway_default_model()
-
-
 def _writer_model_for(harness_id: str) -> str:
     """Modell-Aufloesung (2026-11-14, GaRoN-Vorgabe).
 
@@ -1489,153 +1553,42 @@ def merge_utility_model() -> bool:
         return False
 
 
-def _disable_binding_plugin() -> bool:
-    """HA option off = REAL operator opt-out (GaRoN 2026-10-12).
-
-    Outage finding (user report, 8h log forensics until 2026-10-12): the old
-    skip-only semantics left a previously registered
-    plugins.entries['acp-dashboard-binding']={enabled:true} behind, so the
-    option toggle was cosmetic; and with the plugin gate off its manifest no
-    longer declares the channel, so a leftover channels['acp-dashboard-binding']
-    config block became an unknown-keys "Invalid config" and the gateway
-    refused to BOOT — the reported "complete outage" path (the rescue was
-    removing the channels block by hand).
-
-    Semantics (idempotent, fail-soft):
-      - plugins.entries['acp-dashboard-binding'].enabled := false. The HA
-        option is the MASTER switch for this plugin (one truthful toggle,
-        no config surgery); re-enabling via the option flips the entry back
-        (see _register_plugin_entry force_enable) — the binding plugin's
-        never-flip rule is deliberately superseded, because a silent
-        never-flip with the UI showing ON is exactly the UI-lying failure
-        class reported on 2026-10-12.
-      - channels['acp-dashboard-binding'] config block removed when present
-        (undeclared-channel config would refuse boot).
-      - nothing to change -> no-op, no write."""
-    config_path = CONFIG_DIR / "openclaw.json"
-    if not config_path.exists():
-        return True
-    try:
-        cfg = read_json(config_path)
-    except Exception as e:
-        log(f"WARN: binding-disable skipped, config unreadable (fail-soft): {e}")
-        return True
-    changed = False
-    plugins = cfg.get("plugins")
-    if isinstance(plugins, dict):
-        entries = plugins.get("entries")
-        if isinstance(entries, dict):
-            entry = entries.get(PLUGIN_NAME)
-            if isinstance(entry, dict) and entry.get("enabled") is not False:
-                entry["enabled"] = False
-                changed = True
-                log(f"Set plugins.entries.{PLUGIN_NAME}.enabled=false "
-                    "(option acp_dashboard_binding_enabled=off)")
-        channels = cfg.get("channels")
-        if isinstance(channels, dict) and PLUGIN_NAME in channels:
-            del channels[PLUGIN_NAME]
-            changed = True
-            log(f"Stripped channels['{PLUGIN_NAME}'] while the plugin gate is off "
-                "(undeclared channel key would refuse boot)")
-    if changed:
-        try:
-            write_json(config_path, cfg)
-        except Exception as e:
-            log(f"WARN: binding-disable write failed (fail-soft): {e}")
-            return False
-    return True
-
-
-def _binding_option_state() -> bool:
-    """acp_dashboard_binding_enabled option, GaRoN 2026-10-12 semantics:
-
-    Semantics (v0.7.13.30, Owner decision 2026-10-15 — ALL acp(x) switches
-    are independent OPT-IN, default OFF; writer and binding do NOT follow
-    each other because neither needs the other):
-      - true           -> ON: deploy + force-register the channel plugin.
-      - false / unset  -> OFF: real opt-out (helper disables the plugin and
-        keeps the boot config valid — the operator kill switch; unset now
-        means a fresh install simply has the plugin off)."""
-    value = os.environ.get("ACP_DASHBOARD_BINDING_ENABLED", "").strip().lower()
-    return value in ("1", "true", "yes", "on")
-
-
 def deploy_plugins() -> bool:
-    """Deploy + register all bundled plugins, gated by add-on options.
+    """Deploy harness-config-writer when its independent option is enabled.
 
-    Repo-Split A2 (2026-10-11): two plugins instead of one —
-
-      - 'acp-dashboard-binding'  (channel plugin, dashboard key bridge):
-        gated by acp_dashboard_binding_enabled (env
-        ACP_DASHBOARD_BINDING_ENABLED, see _binding_option_state for the
-        v0.7.13.30 semantics: default OFF (opt-in), explicit false = real
-        opt-out that flips the entries gate and strips the channel config
-        block, explicit true = deploy).
-      - 'harness-config-writer'  (standalone feature plugin):
-        gated by harness_config_writer_enabled (env
-        HARNESS_CONFIG_WRITER_ENABLED). Independent switch, default OFF —
-        no coupling with the binding option (neither plugin needs the other;
-        v0.7.13.30, Owner decision 2026-10-15).
-
-    Option gating happens BEFORE any payload or openclaw.json is touched;
-    a skip is success for callers, not a failure.
-
-    Master-gate contract (v0.7.13.30, Owner decision 2026-10-15): the caller
-    only invokes the helper when acpx_enabled=true — acpx_enabled=false means
-    NO writer and NO binding deploy/config transfer, whatever their switches
-    say. Within the master, the two plugin switches are independent of each
-    other.
-
-    Backup-Rewrite (GaRoN 2026-10-11): a writer-enabled boot takes the
-    one-time pre-writer snapshot of all managed harness config surfaces
-    (see backup_harness_writer_targets_once); a writer-disabled boot
-    restores + consumes that snapshot, so enable/disable is fully
-    reversible without touching the TS plugin."""
-    binding_enabled = _binding_option_state()
+    The retired dashboard-binding option, deployment and disable branches are
+    intentionally gone. The legacy harnesses mapping is still transported on
+    every ACPX initialization so existing installs do not lose their settings.
+    """
     ok = True
-    if not binding_enabled:
-        log("INFO: plugin acp-dashboard-binding disabled "
-            "(acp_dashboard_binding_enabled unset/false — not opted in)")
-        # GaRoN 2026-10-12: the off switch is now a REAL opt-out — flip the
-        # entries gate and keep the boot config valid (no undeclared channel
-        # block), instead of skip-only which left the old registration live.
-        if not _disable_binding_plugin():
-            ok = False
-
-    # v0.7.13.30: independent switches. The unset case falls through to
-    # _env_flag == False — default OFF for BOTH plugins, no coupling.
     writer_enabled = _env_flag("HARNESS_CONFIG_WRITER_ENABLED")
     if not writer_enabled:
         log("INFO: plugin harness-config-writer deploy disabled "
-            "(harness_config_writer_enabled unset/false — independent switch)")
+            "(harness_config_writer_enabled unset/false)")
 
-    if binding_enabled:
-        # Master switch ON = the binding plugin's enable decision is the HA
-        # option (see _binding_option_state; force_enable supersedes the
-        # entry's never-flip only for THIS plugin).
-        ok = _deploy_and_register_plugin(PLUGIN_NAME, force_enable=True) and ok
     if writer_enabled:
         ok = _deploy_and_register_plugin(HARNESS_CONFIG_WRITER_PLUGIN_NAME) and ok
-        # Backup-Rewrite (GaRoN 2026-10-11): first-enable snapshot of the
-        # operator pre-writer state, consumed when the gate goes off again.
         ok = backup_harness_writer_targets_once() and ok
     else:
         restore_harness_writer_targets()
-    # Repo-Split A2 legacy migration — v0.7.13.30 DECOUPLED from the writer
-    # gate: the OLD harnesses key under the channel entry breaks the binding
-    # manifest schema (additionalProperties:false) once the channel plugin is
-    # deployed, so the one-time data move must run whenever EITHER switch
-    # actually deploys. A fresh writer entry only gets enabled:true when the
-    # writer switch is on (the deploy gate owns enable decisions).
-    if binding_enabled or writer_enabled:
-        migrate_legacy_harnesses_config(enable_fresh_entry=writer_enabled)
+
+    migrate_legacy_harnesses_config(enable_fresh_entry=writer_enabled)
+    ok = remove_retired_binding_installation() and ok
     if writer_enabled:
-        # Add-on-Level-Harness-Defaults (GaRoN 2026-10-11): HARNESS_WRITER_*
-        # envs (base_url Aktivator, model, api_key, excluded_agents) additiv
-        # in die writer harnesses-Entry mergen — Operator-Handeinträge
-        # unangetastet, stale generierte Entries bereinigt.
         merge_addon_harness_defaults()
     return ok
+
+
+def migrate_retired_binding_installation() -> bool:
+    """Run only the unconditional retired-plugin upgrade maintenance.
+
+    This mode intentionally does not deploy the writer, restore/snapshot its
+    targets, install npm packages, or patch ACP configuration. A fresh writer
+    entry receives the migrated map without an enable decision; the normal
+    ACPX-gated deployment remains responsible for enabling it later.
+    """
+    migrate_legacy_harnesses_config(enable_fresh_entry=False)
+    return remove_retired_binding_installation()
 
 
 def install_acpx_npm_project() -> bool:
@@ -1653,6 +1606,13 @@ def install_acpx_npm_project() -> bool:
         "dependencies": {
             "@openclaw/acpx": OPENCLAW_ACPX_VERSION,
             "@openclaw/codex": OPENCLAW_CODEX_VERSION,
+            PI_PACKAGE: PI_VERSION,
+            COPILOT_PACKAGE: COPILOT_VERSION,
+            KILO_PACKAGE: KILO_VERSION,
+            QWEN_PACKAGE: QWEN_VERSION,
+            GEMINI_PACKAGE: GEMINI_VERSION,
+            DROID_PACKAGE: DROID_VERSION,
+            IFLOW_PACKAGE: IFLOW_VERSION,
         },
     }
 
@@ -1685,6 +1645,12 @@ def install_acpx_npm_project() -> bool:
                 log(f"node_modules incomplete ({dep} missing); reinstalling")
                 need_install = True
                 break
+    if not need_install:
+        for executable in _required_harness_executables().values():
+            if not (PROJECT_DIR / "node_modules" / ".bin" / executable).is_file():
+                log(f"harness executable incomplete ({executable} missing); reinstalling")
+                need_install = True
+                break
 
     if need_install:
         write_json(package_json, desired_pkg)
@@ -1697,13 +1663,24 @@ def install_acpx_npm_project() -> bool:
                 capture_output=True,
                 text=True,
                 timeout=600,
+                env=_image_node_subprocess_env(),
             )
             if result.returncode != 0:
                 log(f"ERROR: npm install failed:\n{result.stderr}")
                 # Do not raise; run.sh surfaces the failure via the exit code
                 return False
-            log("ACPX npm project installed successfully")
-            return True
+            missing = [
+                dep for dep in desired_pkg["dependencies"]
+                if not (PROJECT_DIR / "node_modules" / Path(dep)).is_dir()
+            ]
+            if missing:
+                log("ERROR: npm install completed without all pinned packages: "
+                    + ", ".join(missing))
+                return False
+            log("ACPX npm project and persistent harness CLIs installed successfully")
+            published = _publish_persistent_harness_bins()
+            _detect_unmanaged_harness_clis()
+            return published
         except subprocess.TimeoutExpired:
             log("ERROR: npm install timed out after 10 minutes")
             return False
@@ -1711,23 +1688,88 @@ def install_acpx_npm_project() -> bool:
             log(f"ERROR: npm install raised exception: {e}")
             return False
     else:
-        log("ACPX npm project already up to date")
-        return True
+        log("ACPX npm project and persistent harness CLIs already up to date")
+        published = _publish_persistent_harness_bins()
+        _detect_unmanaged_harness_clis()
+        return published
+
+
+def _required_harness_executables() -> dict[str, str]:
+    required = dict(HARNESS_EXECUTABLES)
+    if OPENCODE_VERSION.lower() in ("none", "false", ""):
+        required.pop("opencode", None)
+    return required
+
+
+def _publish_persistent_harness_bins() -> bool:
+    """Expose verified harness commands on the add-on's persistent PATH.
+
+    Existing operator binaries and symlinks win. Only missing links are
+    created, making this step restart- and restore-safe without taking over a
+    separately installed vendor CLI.
+    """
+    ok = True
+    try:
+        PERSISTENT_BIN_DIR.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        log(f"ERROR: persistent harness bin directory unavailable: {e}")
+        return False
+    project_bin = PROJECT_DIR / "node_modules" / ".bin"
+    for harness_id, executable in _required_harness_executables().items():
+        source = project_bin / executable
+        if not source.is_file():
+            log(f"ERROR: {harness_id} executable missing after npm install: {source}")
+            ok = False
+            continue
+        target = PERSISTENT_BIN_DIR / executable
+        if target.is_symlink() and os.readlink(target) == str(source):
+            continue
+        if target.exists() or target.is_symlink():
+            log(f"INFO: preserving existing operator {harness_id} executable: {target}")
+            continue
+        try:
+            target.symlink_to(source)
+            log(f"Published persistent {harness_id} CLI: {target} -> {source}")
+        except OSError as e:
+            log(f"ERROR: could not publish {harness_id} CLI at {target}: {e}")
+            ok = False
+    return ok
+
+
+def _detect_unmanaged_harness_clis() -> None:
+    """Detect harnesses for which no vendor npm package could be verified.
+
+    ACPX invokes Kiro as `kiro-cli acp`. The public `kiro-cli` npm artifact is
+    only a placeholder with a different executable (`kirox`), so installing it
+    would be an unsafe guess. Detect the vendor executable instead and make a
+    missing installation visible without blocking the other harnesses.
+    """
+    project_bin = PROJECT_DIR / "node_modules" / ".bin" / "kiro-cli"
+    resolved = shutil.which("kiro-cli")
+    if resolved or project_bin.is_file():
+        log(f"INFO: Kiro CLI detected at {resolved or project_bin}")
+        return
+    log("WARNING: Kiro harness unavailable: vendor executable 'kiro-cli' was "
+        "not found on PATH. No verified vendor npm package exists; install "
+        "Kiro CLI through the vendor-supported channel and retry.")
 
 
 def patch_openclaw_config() -> bool:
     """Ensure the top-level acp section exists with a sane backend.
 
-    This function is intentionally minimal. We do NOT create or modify
-    agents.list entries here. User-configured coding agents (with
-    runtime.acp.agent / runtime.acp.backend) are preserved as-is.
+    This function does NOT create agent roster entries. In particular, the
+    coordinator remains an onboarding-owned default. When an operator already
+    has a coordinator entry, only its subagents.allowAgents list is unioned
+    with the reference workers; every other coordinator field is preserved.
 
     The config itself is NOT created here — run.sh is the single bootstrap
     owner (first start only, random per-install token, per-mode port).
     The only edits we make to openclaw.json are:
       - Set acp.enabled = true if it is missing/false.
       - Set acp.backend = 'acpx' if it is missing.
-      - Ensure acp.allowedAgents contains the four required harness names.
+      - Ensure acp.allowedAgents contains the four reference workers.
+      - If agents.entries.coordinator already exists, union the same workers
+        into its subagents.allowAgents without creating the coordinator.
     """
     config_path = CONFIG_DIR / "openclaw.json"
 
@@ -1761,19 +1803,49 @@ def patch_openclaw_config() -> bool:
         acp["backend"] = "acpx"
         changed = True
 
-    allowed = set(acp.get("allowedAgents", []) or [])
-    # Generic app rule (GaRoN 2026-10-10): never overwrite a user-owned
-    # allowedAgents list. We only union in the built-in harness names plus
-    # user extras (add-on option additional_agents — 0.7.13.30 rename of
-    # acp_additional_allowed_agents, forwarded
-    # by run.sh as ACP_ADDITIONAL_ALLOWED_AGENTS env; CSV).
-    base_allowed = {"claude", "codex", "opencode", "openclaw"}
+    raw_allowed = acp.get("allowedAgents", [])
+    if raw_allowed is None:
+        raw_allowed = []
+    if not isinstance(raw_allowed, list):
+        log("WARN: acp.allowedAgents is not a list; leaving config untouched")
+        return False
+    # Union, never replace: operator entries stay in their original order.
+    # The add-on contributes exactly the four reference workers; `openclaw`
+    # and a coordinator are not add-on roster entries.
     extra_raw = os.environ.get("ACP_ADDITIONAL_ALLOWED_AGENTS", "")
     extra_allowed = {a.strip() for a in extra_raw.split(",") if a.strip()}
-    missing = (base_allowed | extra_allowed) - allowed
-    if missing:
-        acp["allowedAgents"] = sorted(allowed | base_allowed | extra_allowed)
+    desired_allowed = REFERENCE_WORKER_AGENTS | extra_allowed
+    allowed = {a for a in raw_allowed if isinstance(a, str)}
+    merged_allowed = [*raw_allowed, *sorted(desired_allowed - allowed)]
+    if merged_allowed != raw_allowed:
+        acp["allowedAgents"] = merged_allowed
         changed = True
+
+    agents = cfg.get("agents")
+    entries = agents.get("entries") if isinstance(agents, dict) else None
+    coordinator = entries.get("coordinator") if isinstance(entries, dict) else None
+    if isinstance(coordinator, dict):
+        subagents = coordinator.get("subagents")
+        if subagents is None:
+            subagents = {}
+            coordinator["subagents"] = subagents
+        if not isinstance(subagents, dict):
+            log("WARN: coordinator.subagents is not an object; leaving config untouched")
+            return False
+        raw_subagent_allowed = subagents.get("allowAgents", [])
+        if raw_subagent_allowed is None:
+            raw_subagent_allowed = []
+        if not isinstance(raw_subagent_allowed, list):
+            log("WARN: coordinator.subagents.allowAgents is not a list; leaving config untouched")
+            return False
+        subagent_allowed = {a for a in raw_subagent_allowed if isinstance(a, str)}
+        merged_subagents = [
+            *raw_subagent_allowed,
+            *sorted(desired_allowed - subagent_allowed),
+        ]
+        if merged_subagents != raw_subagent_allowed:
+            subagents["allowAgents"] = merged_subagents
+            changed = True
 
     if changed:
         try:
@@ -1788,13 +1860,17 @@ def patch_openclaw_config() -> bool:
         return True
 
 def main() -> int:
-    # v0.7.13.30, Owner decision 2026-10-15: run.sh only invokes the helper
-    # when the acpx_enabled MASTER gate is on. Within it, the two plugin
-    # switches (binding, config-writer) are INDEPENDENT of each other — each
-    # deploys only on its own switch. Because the custom plugins do not work
-    # without the ACPX plugin, the infrastructure below (npm project +
-    # openclaw.json acp patch) is always set up whenever the helper runs.
-    log("Initializing acp(x) components (binding / config-writer — self-gated; ACPX infra always on)")
+    if sys.argv[1:] == ["--migrate-retired-binding"]:
+        log("Migrating/removing retired dashboard binding (ACPX-independent upgrade maintenance)")
+        return 0 if migrate_retired_binding_installation() else 1
+    if len(sys.argv) > 1:
+        log(f"ERROR: unknown arguments: {' '.join(sys.argv[1:])}")
+        return 2
+
+    # run.sh invokes this full mode only when the acpx_enabled master gate is on.
+    # ACPX infrastructure is always prepared in that case; HCW remains an
+    # independent opt-in and the retired binding plugin has no branch here.
+    log("Initializing acp(x) components (config-writer self-gated; ACPX infra always on)")
     deploy_harness_configs()  # retired no-op (kept for the stable surface)
     ok = deploy_plugins()
     ok = install_acpx_npm_project() and ok

@@ -38,6 +38,7 @@ import {
   normalizeBaseUrlForMatch,
   overlayCodexCatalog,
   OPENCODE_LEGACY_PLACEHOLDER,
+  SUPPORTED_WRITER_HARNESS_IDS,
   renderEnvFile,
   resolveEntryModels,
   resolveHarnessWriterPaths,
@@ -114,6 +115,15 @@ describe("withV1Suffix / deriveProviderId", () => {
     // Reservierte id "ollama" (codex model_provider) ist ausgeschlossen.
     expect(deriveProviderId("http://ollama:11434")).not.toBe("ollama");
     expect(deriveProviderId("!!!")).toBe("binding_backend");
+  });
+});
+
+describe("supported writer harness catalogue", () => {
+  it("pins the single source of truth mirrored by helper KNOWN_WRITER_HARNESS_IDS", () => {
+    expect([...SUPPORTED_WRITER_HARNESS_IDS]).toEqual([
+      "codex", "opencode", "kilo", "kilocode", "claude", "copilot", "droid",
+      "gemini", "iflow", "kimi", "kiro", "qwen", "pi",
+    ]);
   });
 });
 
@@ -948,7 +958,7 @@ describe("copilot env extended provider variables", () => {
 
   it.each(["openai-completions", "openai-responses", "anthropic-messages"])(
     "copilot without baseUrl never infers BYOK routing from %s catalog metadata",
-    (api) => {
+    (api: string) => {
       const p = paths();
       const catalog = buildModelCatalog(
         {

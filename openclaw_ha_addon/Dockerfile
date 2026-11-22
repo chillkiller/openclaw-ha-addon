@@ -9,7 +9,7 @@ FROM ghcr.io/home-assistant/${BUILD_ARCH}-base-debian:bookworm
 
 # Labels required when not using the official GitHub builder action
 LABEL \
-  io.hass.version="0.7.13.37" \
+  io.hass.version="0.7.13.39" \
   io.hass.type="app" \
   io.hass.arch="aarch64|amd64"
 
@@ -167,6 +167,7 @@ RUN ARCH=$(echo ${TARGETARCH:-$(dpkg --print-architecture)} | sed 's|arm64|aarch
 # =============================================================================
 # Install Node.js 24 LTS from NodeSource
 # =============================================================================
+ARG OPENCLAW_NODE_VERSION=24.22.3
 RUN mkdir -p /etc/apt/keyrings \
     && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
     | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
@@ -174,7 +175,8 @@ RUN mkdir -p /etc/apt/keyrings \
     && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" \
     > /etc/apt/sources.list.d/nodesource.list \
     && apt-get update \
-    && apt-get install -y --no-install-recommends nodejs \
+    && apt-get install -y --no-install-recommends nodejs="${OPENCLAW_NODE_VERSION}-1nodesource1" \
+    && /usr/bin/node -e "if(process.versions.node!=='${OPENCLAW_NODE_VERSION}'){throw new Error('Node pin mismatch: '+process.versions.node)};console.log('NodeSource pin verified: '+process.versions.node)" \
     && rm -f /etc/apt/sources.list.d/nodesource.list /etc/apt/keyrings/nodesource.gpg \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
@@ -295,10 +297,11 @@ ENV NODE_LLAMA_CPP_POSTINSTALL=skip
 # 2026-11-14 bump to 2026.11.3 (npm latest, stable): tarball-verified — the
 # unicode-guard byte anchors and the sanitize anchor are still present, and
 # @homebridge/ciao stays pinned at 1.3.12, so the mDNS patch anchor is unchanged.
-# Node engine requirement stays >=24.16.0 <25 (verified in the package manifest).
-RUN npm install -g openclaw@2026.11.3 \
-    && node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('/usr/lib/node_modules/openclaw/package.json','utf8'));if(p.version!=='2026.11.3'){console.error('ERROR: unexpected OpenClaw version installed: '+p.version);process.exit(1)};console.log('OpenClaw pin verified: '+p.version)" \
-    && node -e "const [maj,min]=process.versions.node.split('.').map(Number);if(!(maj===24&&min>=16)){console.error('ERROR: Node '+process.versions.node+' does not satisfy the OpenClaw engine floor (>=24.16.0 <25)');process.exit(1)};console.log('Node floor verified: '+process.versions.node)" \
+# OpenClaw engine range: node >=24.16.0 <25 || >=26.1.0.
+RUN export PATH="/usr/bin:/bin:${PATH}"; \
+    npm install -g openclaw@2026.11.3 \
+    && /usr/bin/node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('/usr/lib/node_modules/openclaw/package.json','utf8'));if(p.version!=='2026.11.3'){console.error('ERROR: unexpected OpenClaw version installed: '+p.version);process.exit(1)};console.log('OpenClaw pin verified: '+p.version)" \
+    && /usr/bin/node -e "const [maj,min]=process.versions.node.split('.').map(Number);if(!((maj===24&&min>=16)||(maj===26&&min>=1)||maj>=27)){console.error('ERROR: Node '+process.versions.node+' does not satisfy the OpenClaw engine range: >=24.16.0 <25 or >=26.1.0');process.exit(1)};console.log('Node engine range verified: '+process.versions.node)" \
     && npm install -g node-llama-cpp@3.22.3 \
     && npm install -g mcporter@0.17.0 \
     && npm install -g pnpm@12.18.0 \
@@ -322,7 +325,7 @@ RUN npm install -g openclaw@2026.11.3 \
 # build LOUDLY when upstream anchors change (never silently lose a security
 # control). Behavior matrix + tradeoffs: unicode-guard/README.md.
 COPY unicode-guard /openclaw_ha_addon/unicode-guard
-RUN node /openclaw_ha_addon/unicode-guard/apply-unicode-guard-patch.mjs /usr/lib/node_modules/openclaw
+RUN /usr/bin/node /openclaw_ha_addon/unicode-guard/apply-unicode-guard-patch.mjs /usr/lib/node_modules/openclaw
 
 # ciao mDNS self-conflict storm fix (live-verified 2026-10-15, v0.7.13.30):
 # @homebridge/ciao keys its reverseAddressPTRs map with Node's FULL-form IPv6
@@ -335,10 +338,10 @@ RUN node /openclaw_ha_addon/unicode-guard/apply-unicode-guard-patch.mjs /usr/lib
 # the unicode-guard patch; A/B test (restricted vs unrestricted responder):
 # 0 renames after the patch, ~1/s before.
 COPY ciao-mdns-guard /openclaw_ha_addon/ciao-mdns-guard
-RUN node /openclaw_ha_addon/ciao-mdns-guard/apply-ciao-mdns-guard-patch.mjs /usr/lib/node_modules/openclaw
+RUN /usr/bin/node /openclaw_ha_addon/ciao-mdns-guard/apply-ciao-mdns-guard-patch.mjs /usr/lib/node_modules/openclaw
 
 # Patch node-llama-cpp to honor NLC_BUILD_PARALLEL for constrained builds
-RUN node - <<'NODE'
+RUN /usr/bin/node - <<'NODE'
 const fs = require('fs');
 const path = '/usr/lib/node_modules/node-llama-cpp/dist/bindings/utils/compileLLamaCpp.js';
 if (!fs.existsSync(path)) {
@@ -364,7 +367,8 @@ NODE
 # Build node-llama-cpp native bindings with limited parallelism (2 threads)
 # so the RPi5 stays responsive during the Docker image build.
 ENV NODE_LLAMA_CPP_POSTINSTALL=auto NLC_BUILD_PARALLEL=2
-RUN node /usr/lib/node_modules/node-llama-cpp/dist/cli/cli.js postinstall \
+RUN export PATH="/usr/bin:/bin:${PATH}"; \
+    /usr/bin/node /usr/lib/node_modules/node-llama-cpp/dist/cli/cli.js postinstall \
     || (echo "WARN: node-llama-cpp postinstall failed; runtime build may be needed" && exit 0)
 
 # Fix safe.directory
@@ -383,11 +387,9 @@ COPY undefined-rejection-shim.cjs /app/undefined-rejection-shim.cjs
 COPY openclaw-proxy-shim.cjs /usr/local/lib/openclaw-proxy-shim.cjs
 COPY nginx.conf.tpl /etc/nginx/nginx.conf.tpl
 COPY landing.html.tpl /etc/nginx/landing.html.tpl
-COPY acpx /openclaw_ha_addon/acpx
+COPY NOTICE /openclaw_ha_addon/NOTICE
 # Bundled plugin payloads — oc_acpx_helper.py deploy_plugin() reads
-# /openclaw_ha_addon/plugins (F1, Phase 2.10: without this COPY the helper
-# early-returned "plugin source not found" and the binding plugin never
-# deployed). Keep in sync with openclaw_ha_addon/plugins/.
+# /openclaw_ha_addon/plugins. Keep in sync with that directory.
 COPY plugins /openclaw_ha_addon/plugins
 COPY docs/index.html.tpl /openclaw_ha_addon/docs/index.html.tpl
 COPY loading.html /openclaw_ha_addon/loading.html

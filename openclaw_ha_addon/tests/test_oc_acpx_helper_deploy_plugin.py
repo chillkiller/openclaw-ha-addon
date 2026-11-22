@@ -1,16 +1,9 @@
 #!/usr/bin/env python3
-"""Tests for the deploy_plugins option gates (Phase 2.15 + Repo-Split A2).
+"""Regression tests for HCW deployment, persistent harnesses and ACP roster.
 
-Both bundled plugins must be OPT-IN via add-on options (forwarded by run.sh
-as env): acp_dashboard_binding_enabled (channel plugin) and
-harness_config_writer_enabled (Repo-Split A2 standalone feature plugin,
-2026-10-11). v0.7.13.30, Owner decision 2026-10-15: ALL acp(x) switches are
-INDEPENDENT opt-in switches, default OFF — unset or false = no deploy, no
-openclaw.json registration, and no coupling (the writer neither follows nor
-drives the channel option; neither needs acpx_enabled).
-The legacy plugins.entries['acp-dashboard-binding'].config.harnesses key is
-migrated to plugins.entries['harness-config-writer'].config.harnesses once
-the writer deploys. Run with:
+Only harness-config-writer is bundled. The legacy dashboard-binding harnesses
+mapping remains solely as a data-migration source for existing installations.
+Run with:
 
     python3 -m unittest discover -s openclaw_ha_addon/tests -v
 """
@@ -24,6 +17,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest import mock
 
 REPO = Path(__file__).resolve().parents[1]
@@ -33,12 +27,11 @@ import oc_acpx_helper as helper  # noqa: E402
 
 
 def write_minimal_plugin_source(src: Path) -> None:
-    """A manifest + one source file, the minimum _deploy_and_register_plugin needs."""
-    for name in helper.BUNDLED_PLUGIN_NAMES:
-        (src / name / "src").mkdir(parents=True)
-        (src / name / "openclaw.plugin.json").write_text('{"id": "' + name + '"}')
-        (src / name / "package.json").write_text('{"name": "' + name + '"}')
-    (src / helper.PLUGIN_NAME / "src" / "agent-map.ts").write_text("export {};\n")
+    """Create only HCW: this is the plugin-source probe regression fixture."""
+    name = helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME
+    (src / name / "src").mkdir(parents=True)
+    (src / name / "openclaw.plugin.json").write_text('{"id": "' + name + '"}')
+    (src / name / "package.json").write_text('{"name": "' + name + '"}')
 
 
 class DeployPluginsEnabledOptionTest(unittest.TestCase):
@@ -52,23 +45,17 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
         (self.config_dir / "openclaw.json").write_text(json.dumps({"agents": {"entries": {}}}))
         patches = (
             mock.patch.object(helper, "PLUGIN_SRC_DIR", self.src_root),
+            mock.patch.object(helper, "PLUGIN_SRC_FALLBACK_DIRS", (self.src_root,)),
             mock.patch.object(helper, "CONFIG_DIR", self.config_dir),
-            # Backup-Rewrite surfaces (derive from CONFIG_DIR in prod; the
-            # constants are import-time, so patch them explicitly here):
             mock.patch.object(helper, "ACPX_DIR", self.config_dir / "acpx"),
             mock.patch.object(helper, "CODEX_SOURCE_HOME", self.config_dir / ".codex"),
             mock.patch.object(helper, "OPENCODE_GLOBAL_DIR", self.config_dir / "opencode"),
             mock.patch.object(helper, "CLAUDE_SOURCE_HOME", self.config_dir / ".claude"),
             mock.patch.object(helper, "PI_AGENT_DIR", self.config_dir / ".pi" / "agent"),
-            # Dynamic HCW native roots must also stay inside the test tmpdir.
             mock.patch.dict(os.environ, {
                 "HOME": str(self.config_dir),
                 "XDG_CONFIG_HOME": str(self.config_dir),
             }, clear=True),
-            # Bundled-root deploy (Kammerjäger-Trust-Fix): point at a
-            # NON-EXISTENT tmp path by default so tests never touch the
-            # real gateway's /usr/lib package — tests that exercise the
-            # bundled branch create the dir explicitly.
             mock.patch.object(helper, "BUNDLED_EXTENSIONS_DIR",
                               Path(self.tmp.name) / "dist" / "extensions"),
         )
@@ -78,7 +65,6 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
 
     def tearDown(self) -> None:
         for key in (
-            "ACP_DASHBOARD_BINDING_ENABLED",
             "HARNESS_CONFIG_WRITER_ENABLED",
             "HARNESS_WRITER_BASE_URL",
             "HARNESS_WRITER_MODEL",
@@ -94,275 +80,137 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
         return (
             cfg.get("plugins", {})
             .get("entries", {})
-            .get(plugin_name or helper.PLUGIN_NAME, {})
+            .get(plugin_name or helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME, {})
         )
 
     def write_config(self, plugins_cfg: dict) -> None:
         (self.config_dir / "openclaw.json").write_text(json.dumps(plugins_cfg))
 
-    # --- channel plugin (v0.7.13.30: independent switch, default OFF) -------
+    def test_only_hcw_is_bundled(self) -> None:
+        self.assertEqual(
+            helper.BUNDLED_PLUGIN_NAMES,
+            [helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME],
+        )
 
     def test_option_unset_defaults_off_and_deploys_nothing(self) -> None:
-        """v0.7.13.30, Owner decision 2026-10-15: ALL acp(x) switches default
-        OFF — unset env = not opted in. No deploy, no openclaw.json
-        registration, and the writer is NOT pulled along (independent
-        switches)."""
-        os.environ.pop("ACP_DASHBOARD_BINDING_ENABLED", None)
-        self.assertTrue(helper.deploy_plugins())
-        self.assertFalse(
-            (self.config_dir / "plugins" / helper.PLUGIN_NAME).exists()
-        )
-        self.assertNotIn("enabled", self.read_entry())
-        self.assertFalse(
-            (self.config_dir / "plugins"
-             / helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME).exists()
-        )
-
-    def test_option_false_is_real_optout(self) -> None:
-        """GaRoN 2026-10-12 outage finding: explicit false must actually
-        disable a previously registered plugin AND keep the boot config
-        valid (strip the channels block — undeclared channel keys refuse
-        boot)."""
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "true"
-        self.assertTrue(helper.deploy_plugins())
-        path = self.config_dir / "openclaw.json"
-        cfg = json.loads(path.read_text())
-        cfg.setdefault("channels", {})[helper.PLUGIN_NAME] = {"enabled": True}
-        path.write_text(json.dumps(cfg))
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "false"
-        self.assertTrue(helper.deploy_plugins())
-        cfg = json.loads(path.read_text())
-        self.assertIs(cfg["plugins"]["entries"][helper.PLUGIN_NAME]["enabled"], False)
-        self.assertNotIn(
-            helper.PLUGIN_NAME, cfg.get("channels", {}),
-            "channels block of a disabled plugin must be stripped (boot-safe)",
-        )
-        # Payload stays deployed while the gate is OFF (re-enable needs no
-        # rebuild — documented never-flip invariant in _register_plugin_entry);
-        # the entries gate is the authoritative disable for the host.
-        self.assertTrue(
-            (self.config_dir / "plugins" / helper.PLUGIN_NAME / "openclaw.plugin.json").exists()
-        )
-        # Idempotent second boot with no channels block left:
-        self.assertTrue(helper.deploy_plugins())
-        cfg = json.loads(path.read_text())
-        self.assertIs(cfg["plugins"]["entries"][helper.PLUGIN_NAME]["enabled"], False)
-
-    def test_option_false_never_touches_hand_set_false(self) -> None:
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "true"
-        path = self.config_dir / "openclaw.json"
-        cfg = json.loads(path.read_text())
-        cfg.setdefault("plugins", {}).setdefault("entries", {})[helper.PLUGIN_NAME] = {
-            "enabled": False
-        }
-        path.write_text(json.dumps(cfg))
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "false"
-        self.assertTrue(helper.deploy_plugins())
-        cfg = json.loads(path.read_text())
-        self.assertIs(cfg["plugins"]["entries"][helper.PLUGIN_NAME]["enabled"], False)
-        self.assertNotIn(helper.PLUGIN_NAME, cfg.get("channels", {}))
-
-    def test_option_false_strips_hand_edit_channels_block(self) -> None:
-        """Boot-safety: whatever put the channels block there (hand edit or
-        an older helper), gate-off strips it — the config must stay valid
-        while the plugin is disabled."""
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "false"
-        path = self.config_dir / "openclaw.json"
-        cfg = json.loads(path.read_text())
-        cfg.setdefault("plugins", {}).setdefault("entries", {})[helper.PLUGIN_NAME] = {
-            "enabled": True
-        }
-        cfg.setdefault("channels", {})[helper.PLUGIN_NAME] = {"enabled": True}
-        path.write_text(json.dumps(cfg))
-        self.assertTrue(helper.deploy_plugins())
-        cfg = json.loads(path.read_text())
-        self.assertIs(cfg["plugins"]["entries"][helper.PLUGIN_NAME]["enabled"], False)
-        self.assertNotIn(helper.PLUGIN_NAME, cfg.get("channels", {}))
-
-    # --- plugins.allow allowlist (Phase 2.20, GaRoN 2026-10-17) -------------
-
-    def test_allowlist_absent_is_never_created(self) -> None:
-        """Phase 2.20: _register_plugin_entry must NOT create plugins.allow
-        when absent — an allowlist, once created, is an EXCLUSIVE gate that
-        silently blocked every other plugin (config-bug report 2026-10-17:
-        provider plugins blocked after ACP activation pre-onboarding)."""
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "true"
-        self.assertTrue(helper.deploy_plugins())
-        cfg = json.loads((self.config_dir / "openclaw.json").read_text())
-        self.assertIsNone(cfg["plugins"].get("allow"),
-                          "allowlist must not spring into existence")
-        # the plugin is still fully registered (entries + load paths)
-        self.assertTrue(self.read_entry().get("enabled") is True)
-        self.assertIn(str(self.config_dir / "plugins"),
-                      cfg["plugins"]["load"]["paths"])
-
-    def test_allowlist_existing_gets_id_unioned(self) -> None:
-        """Phase 2.19 semantics kept: a PRE-EXISTING allowlist (operator or
-        other tool authored) gets our id unioned, other ids preserved."""
-        self.write_config({"plugins": {"allow": ["ollama", "telegram"]}})
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "true"
-        self.assertTrue(helper.deploy_plugins())
-        cfg = json.loads((self.config_dir / "openclaw.json").read_text())
-        allow = cfg["plugins"]["allow"]
-        self.assertIn(helper.PLUGIN_NAME, allow)
-        self.assertIn("ollama", allow, "other ids preserved")
-        self.assertIn("telegram", allow, "other ids preserved")
-
-    def test_allowlist_idempotent(self) -> None:
-        self.write_config({"plugins": {"allow": ["ollama", helper.PLUGIN_NAME]}})
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "true"
-        self.assertTrue(helper.deploy_plugins())
-        self.assertTrue(helper.deploy_plugins())
-        cfg = json.loads((self.config_dir / "openclaw.json").read_text())
-        self.assertEqual(cfg["plugins"]["allow"].count(helper.PLUGIN_NAME), 1)
-
-    def test_option_true_deploys_and_registers(self) -> None:
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "true"
-        self.assertTrue(helper.deploy_plugins())
-        dst = self.config_dir / "plugins" / helper.PLUGIN_NAME
-        self.assertTrue((dst / "openclaw.plugin.json").is_file())
-        self.assertTrue((dst / "src" / "agent-map.ts").is_file())
-        entry = self.read_entry()
-        self.assertTrue(entry.get("enabled") is True)
-        cfg = json.loads((self.config_dir / "openclaw.json").read_text())
-        plugins_root = str(self.config_dir / "plugins")
-        self.assertIn(
-            plugins_root,
-            cfg["plugins"]["load"]["paths"],
-            "user-plugins root must be registered in plugins.load.paths",
-        )
-
-    def test_option_enabled_is_case_insensitive_and_idempotent(self) -> None:
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "TRUE"
-        self.assertTrue(helper.deploy_plugins())
-        self.assertTrue(helper.deploy_plugins())
-        self.assertTrue(self.read_entry().get("enabled") is True)
-
-    def test_option_on_is_master_switch_for_binding_plugin(self) -> None:
-        """GaRoN 2026-10-12 (outage finding): the HA option is the binding
-        plugin's master switch. A silently respected enabled:false while the
-        option shows ON = UI-lying failure class. Re-enabling flips the
-        entry back; the never-flip rule is superseded for THIS plugin only
-        (the writer plugin keeps it)."""
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "true"
-        path = self.config_dir / "openclaw.json"
-        cfg = json.loads(path.read_text())
-        cfg.setdefault("plugins", {}).setdefault("entries", {})[helper.PLUGIN_NAME] = {
-            "enabled": False
-        }
-        path.write_text(json.dumps(cfg))
-        self.assertTrue(helper.deploy_plugins())
-        cfg = json.loads(path.read_text())
-        self.assertIs(cfg["plugins"]["entries"][helper.PLUGIN_NAME]["enabled"], True)
-
-    # --- Repo-Split A2: harness-config-writer gating ------------------------
-
-    def test_writer_stays_off_when_binding_on_and_writer_unset(self) -> None:
-        """v0.7.13.30, Owner decision 2026-10-15: writer and binding are
-        INDEPENDENT opt-in switches — binding=on does NOT pull the writer
-        in when the writer switch is unset (supersedes the old
-        follow-the-channel default)."""
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "true"
         os.environ.pop("HARNESS_CONFIG_WRITER_ENABLED", None)
         self.assertTrue(helper.deploy_plugins())
-        self.assertTrue(self.read_entry().get("enabled") is True)
         self.assertFalse(
             (self.config_dir / "plugins"
              / helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME).exists()
         )
+        self.assertNotIn("enabled", self.read_entry())
 
-    def test_writer_off_override_wins_when_binding_on(self) -> None:
-        """Explicit writer=false veto beats binding=on (operator veto)."""
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "true"
-        os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "false"
-        self.assertTrue(helper.deploy_plugins())
-        self.assertTrue((self.config_dir / "plugins" / helper.PLUGIN_NAME).exists())
-        self.assertFalse(
-            (self.config_dir / "plugins" / helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME).exists()
-        )
-
-    def test_writer_on_even_when_binding_off(self) -> None:
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "true"
+    def test_option_true_deploys_hcw_with_only_hcw_source_present(self) -> None:
+        """Probe regression: no retired plugin directory exists in the root."""
         os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "true"
+        self.assertEqual(
+            helper.resolve_plugin_src_dir(helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME),
+            self.src_root,
+        )
         self.assertTrue(helper.deploy_plugins())
-        self.assertTrue(
-            self.read_entry(helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME).get("enabled") is True
-        )
-        self.assertTrue(
-            (self.config_dir / "plugins" / helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME
-             / "openclaw.plugin.json").is_file()
-        )
+        dst = self.config_dir / "plugins" / helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME
+        self.assertTrue((dst / "openclaw.plugin.json").is_file())
+        self.assertTrue(self.read_entry().get("enabled") is True)
+        cfg = json.loads((self.config_dir / "openclaw.json").read_text())
+        self.assertIn(str(self.config_dir / "plugins"), cfg["plugins"]["load"]["paths"])
 
-    def test_writer_off_binding_off_deploys_nothing(self) -> None:
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "false"
-        os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "false"
+    def test_missing_hcw_source_fails_loudly_negative_control(self) -> None:
+        shutil.rmtree(self.src_root / helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME)
+        os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "true"
+        with mock.patch.object(helper, "log") as logged:
+            self.assertFalse(helper.deploy_plugins())
+        messages = "\n".join(str(call) for call in logged.call_args_list)
+        self.assertIn("harness-config-writer", messages)
+        self.assertIn("WARNING", messages)
+        self.assertFalse(self.read_entry().get("enabled", False))
+
+    def test_option_enabled_is_case_insensitive_and_idempotent(self) -> None:
+        os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "TRUE"
         self.assertTrue(helper.deploy_plugins())
-        self.assertFalse((self.config_dir / "plugins" / helper.PLUGIN_NAME).exists())
-        self.assertFalse(
-            (self.config_dir / "plugins" / helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME).exists()
-        )
+        self.assertTrue(helper.deploy_plugins())
+        self.assertTrue(self.read_entry().get("enabled") is True)
 
     def test_writer_respects_operator_opt_out_enabled_false(self) -> None:
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "true"
-        path = self.config_dir / "openclaw.json"
-        cfg = json.loads(path.read_text())
-        cfg.setdefault("plugins", {}).setdefault("entries", {})[
-            helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME
-        ] = {"enabled": False}
-        path.write_text(json.dumps(cfg))
+        os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "true"
+        self.write_config({"plugins": {"entries": {
+            helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME: {"enabled": False},
+        }}})
         self.assertTrue(helper.deploy_plugins())
-        cfg = json.loads(path.read_text())
+        cfg = json.loads((self.config_dir / "openclaw.json").read_text())
         self.assertIs(
             cfg["plugins"]["entries"][helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME]["enabled"],
             False,
         )
 
-    # --- Repo-Split A2: legacy harnesses config key migration ---------------
+    def test_allowlist_absent_is_never_created(self) -> None:
+        os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "true"
+        self.assertTrue(helper.deploy_plugins())
+        cfg = json.loads((self.config_dir / "openclaw.json").read_text())
+        self.assertIsNone(cfg["plugins"].get("allow"))
+        self.assertTrue(self.read_entry().get("enabled") is True)
 
-    def test_legacy_harnesses_key_is_migrated(self) -> None:
-        """v0.7.13.30: the migration is DECOUPLED from the writer gate — it
-        runs whenever the binding deploys, because the legacy key breaks the
-        binding manifest schema. The data move lands in the writer entry even
-        with the writer switch off, but WITHOUT an enabled flag: the deploy
-        gate owns enable decisions (independent switches)."""
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "true"
+    def test_allowlist_existing_gets_id_unioned(self) -> None:
+        self.write_config({"plugins": {"allow": ["ollama", "telegram"]}})
+        os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "true"
+        self.assertTrue(helper.deploy_plugins())
+        cfg = json.loads((self.config_dir / "openclaw.json").read_text())
+        allow = cfg["plugins"]["allow"]
+        self.assertIn(helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME, allow)
+        self.assertIn("ollama", allow)
+        self.assertIn("telegram", allow)
+
+    def test_allowlist_idempotent(self) -> None:
+        self.write_config({"plugins": {"allow": [
+            "ollama", helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME,
+        ]}})
+        os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "true"
+        self.assertTrue(helper.deploy_plugins())
+        self.assertTrue(helper.deploy_plugins())
+        cfg = json.loads((self.config_dir / "openclaw.json").read_text())
+        self.assertEqual(
+            cfg["plugins"]["allow"].count(helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME), 1,
+        )
+
+    def test_legacy_harnesses_key_is_migrated_even_when_writer_is_off(self) -> None:
         os.environ.pop("HARNESS_CONFIG_WRITER_ENABLED", None)
         legacy = {"codex": {"model": "m1", "baseUrl": "http://ollama.internal:11434"}}
         path = self.config_dir / "openclaw.json"
         path.write_text(json.dumps({
             "agents": {"entries": {}},
-            "plugins": {"entries": {helper.PLUGIN_NAME: {
-                "enabled": True, "config": {"harnesses": legacy},
-            }}},
+            "plugins": {
+                "allow": ["operator-plugin", helper.LEGACY_BINDING_PLUGIN_NAME],
+                "entries": {helper.LEGACY_BINDING_PLUGIN_NAME: {
+                    "enabled": True, "config": {"harnesses": legacy},
+                }},
+            },
+            "channels": {helper.LEGACY_BINDING_PLUGIN_NAME: {"enabled": True}},
         }))
+        payload = self.config_dir / "plugins" / helper.LEGACY_BINDING_PLUGIN_NAME
+        payload.mkdir(parents=True)
+        (payload / "index.mjs").write_text("retired")
         self.assertTrue(helper.deploy_plugins())
         cfg = json.loads(path.read_text())
         entries = cfg["plugins"]["entries"]
         self.assertEqual(
             entries[helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME]["config"]["harnesses"],
             legacy,
-            "legacy key must be copied to the writer entry (data move, not enable)",
         )
-        self.assertNotIn(
-            "enabled",
-            entries[helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME],
-            "writer switch is OFF — no enable decision by the migration",
-        )
-        self.assertNotIn(
-            "harnesses",
-            entries[helper.PLUGIN_NAME].get("config", {}),
-            "legacy key must be removed from the channel entry (schema strictness)",
-        )
+        self.assertNotIn("enabled", entries[helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME])
+        self.assertNotIn(helper.LEGACY_BINDING_PLUGIN_NAME, entries)
+        self.assertFalse(payload.exists())
+        self.assertNotIn(helper.LEGACY_BINDING_PLUGIN_NAME, cfg["plugins"]["allow"])
+        self.assertIn("operator-plugin", cfg["plugins"]["allow"])
+        self.assertNotIn(helper.LEGACY_BINDING_PLUGIN_NAME, cfg["channels"])
 
     def test_legacy_migration_not_touched_when_authoritative_new_key_exists(self) -> None:
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "true"
         legacy = {"codex": {"model": "old"}}
         newer = {"codex": {"model": "new"}}
         path = self.config_dir / "openclaw.json"
         path.write_text(json.dumps({
             "agents": {"entries": {}},
             "plugins": {"entries": {
-                helper.PLUGIN_NAME: {"enabled": True, "config": {"harnesses": legacy}},
+                helper.LEGACY_BINDING_PLUGIN_NAME: {"enabled": True, "config": {"harnesses": legacy}},
                 helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME: {
                     "enabled": True, "config": {"harnesses": newer},
                 },
@@ -372,15 +220,12 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
         cfg = json.loads(path.read_text())
         entries = cfg["plugins"]["entries"]
         self.assertEqual(
-            entries[helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME]["config"]["harnesses"],
-            newer,
-            "existing writer surface is authoritative; we never guess",
+            entries[helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME]["config"]["harnesses"], newer,
         )
         self.assertEqual(
-            entries[helper.PLUGIN_NAME]["config"]["harnesses"],
-            legacy,
-            "the diverging legacy key stays untouched for the operator to decide",
+            entries[helper.LEGACY_BINDING_PLUGIN_NAME]["config"]["harnesses"], legacy,
         )
+        self.assertIs(entries[helper.LEGACY_BINDING_PLUGIN_NAME]["enabled"], False)
 
     # --- Backup-Rewrite (GaRoN 2026-10-11) ----------------------------------
 
@@ -400,7 +245,6 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
         (env_dir / "claude.env").write_text("ANTHROPIC_MODEL='x'\n")
 
     def test_first_enable_takes_snapshot_of_pre_writer_state(self) -> None:
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "false"
         os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "true"
         self._seed_user_codex_config()
         self.assertTrue(helper.deploy_plugins())
@@ -428,7 +272,6 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
         )
 
     def test_disable_restores_originals_and_consumes_snapshot(self) -> None:
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "false"
         os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "true"
         self._seed_user_codex_config()
         self.assertTrue(helper.deploy_plugins())
@@ -449,7 +292,6 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
                          "snapshot consumed after a successful restore")
 
     def test_re_enable_takes_fresh_snapshot_of_restored_state(self) -> None:
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "false"
         os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "true"
         self._seed_user_codex_config()
         self.assertTrue(helper.deploy_plugins())
@@ -476,7 +318,6 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
     def test_expanded_surface_restores_existing_bytes_modes_and_synthetic_credentials(self) -> None:
         """Every current/legacy target round-trips arbitrary bytes and mode.
         Auth and env fixtures contain synthetic credentials only."""
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "false"
         os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "true"
         managed = helper.harness_writer_managed_files()
         self.assertEqual(len(managed), 42, "inventory must track the complete HCW surface")
@@ -516,7 +357,6 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
             self.assertEqual(path.stat().st_mode & 0o777, mode, str(path))
 
     def test_absent_expanded_targets_are_deleted_on_off_including_sidecars(self) -> None:
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "false"
         os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "true"
         self.assertTrue(helper.deploy_plugins())
         managed = helper.harness_writer_managed_files()
@@ -537,7 +377,6 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
         node = shutil.which("node")
         if not node:
             self.skipTest("Node with TypeScript stripping is required for native dispatch")
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "false"
         os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "true"
         managed = helper.harness_writer_managed_files()
         roots = helper._harness_writer_native_roots()
@@ -659,7 +498,6 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
     def test_legacy_backup_upgrade_never_snapshots_existing_expanded_output(self) -> None:
         """An old backup can gain absent targets, but existing new targets
         have unknowable provenance and must never be captured as originals."""
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "false"
         os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "true"
         roots = helper._harness_writer_native_roots()
         legacy_path = roots["codex"] / "config.toml"
@@ -749,7 +587,6 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
         self.assertEqual(unmanaged.read_bytes(), b"unmanaged-survives\n")
 
     def test_restore_is_noop_without_snapshot(self) -> None:
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "false"
         os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "false"
         self.assertTrue(helper.deploy_plugins())
         self.assertFalse(
@@ -761,7 +598,6 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
         manual rescue), NOTHING restored, NOTHING re-snapshotted, deploy is
         fail-soft. Identical treatment for parse-error and wrong-shape paths
         (audit consistency note) — parse-error case asserted here."""
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "false"
         os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "true"
         self._seed_user_codex_config()
         self.assertTrue(helper.deploy_plugins())
@@ -787,7 +623,6 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
         """Re-audit hint: after a quarantine the corrupt marker blocks a new
         snapshot (writer-generated state must never leak into a fresh
         first-enable backup) until the operator resolves the .corrupt file."""
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "false"
         os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "true"
         self._seed_user_codex_config()
         self.assertTrue(helper.deploy_plugins())
@@ -809,7 +644,6 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
     def test_backup_manifest_and_dir_are_secret_tight(self) -> None:
         """Audit H4: manifest 0600 (holds base64 secrets), backup dir 0700."""
         os.umask(0o022)
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "false"
         os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "true"
         self._seed_user_codex_config()
         self.assertTrue(helper.deploy_plugins())
@@ -822,14 +656,13 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
         """Audit B3: pre-existing writer entry with enabled:false is NEVER
         flipped by the legacy migration — the harnesses CONFIG is still
         transported (data move, not an enable decision) and the legacy key is
-        still removed (binding schema strictness)."""
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "true"
+        still removed."""
         legacy = {"codex": {"model": "m1"}}
         path = self.config_dir / "openclaw.json"
         path.write_text(json.dumps({
             "agents": {"entries": {}},
             "plugins": {"entries": {
-                helper.PLUGIN_NAME: {"enabled": True, "config": {"harnesses": legacy}},
+                helper.LEGACY_BINDING_PLUGIN_NAME: {"enabled": True, "config": {"harnesses": legacy}},
                 helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME: {"enabled": False},
             }},
         }))
@@ -840,8 +673,8 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
         self.assertIs(writer.get("enabled"), False, "operator opt-out respected")
         self.assertEqual(writer["config"]["harnesses"], legacy,
                          "config content still transported (data move)")
-        self.assertNotIn("harnesses", entries[helper.PLUGIN_NAME].get("config", {}),
-                         "legacy key removed (schema strictness)")
+        self.assertNotIn(helper.LEGACY_BINDING_PLUGIN_NAME, entries,
+                         "successfully migrated legacy entry is removed")
 
     def test_legacy_migration_sets_enabled_only_for_fresh_entry(self) -> None:
         """A pre-existing writer entry without an enabled flag keeps that
@@ -854,7 +687,7 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
         path.write_text(json.dumps({
             "agents": {"entries": {}},
             "plugins": {"entries": {
-                helper.PLUGIN_NAME: {"enabled": True, "config": {"harnesses": legacy}},
+                helper.LEGACY_BINDING_PLUGIN_NAME: {"enabled": True, "config": {"harnesses": legacy}},
                 helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME: {"config": {}},
             }},
         }))
@@ -873,7 +706,7 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
         path.write_text(json.dumps({
             "agents": {"entries": {}},
             "plugins": {"entries": {
-                helper.PLUGIN_NAME: {"enabled": True, "config": {"harnesses": legacy}},
+                helper.LEGACY_BINDING_PLUGIN_NAME: {"enabled": True, "config": {"harnesses": legacy}},
             }},
         }))
         helper.migrate_legacy_harnesses_config()
@@ -901,6 +734,7 @@ class AddonHarnessDefaultsTest(unittest.TestCase):
         self.path.write_text(json.dumps({"agents": {"entries": {}}}))
         patches = (
             mock.patch.object(helper, "PLUGIN_SRC_DIR", self.src_root),
+            mock.patch.object(helper, "PLUGIN_SRC_FALLBACK_DIRS", (self.src_root,)),
             mock.patch.object(helper, "CONFIG_DIR", self.config_dir),
             mock.patch.object(helper, "ACPX_DIR", self.config_dir / "acpx"),
             mock.patch.object(helper, "CODEX_SOURCE_HOME", self.config_dir / ".codex"),
@@ -930,7 +764,6 @@ class AddonHarnessDefaultsTest(unittest.TestCase):
         for key in ("HARNESS_WRITER_BASE_URL", "HARNESS_WRITER_MODEL",
                     "HARNESS_WRITER_API_KEY", "HARNESS_WRITER_EXCLUDED_AGENTS"):
             os.environ.pop(key, None)
-        os.environ["ACP_DASHBOARD_BINDING_ENABLED"] = "false"
         os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = writer
         if base_url is not None:
             os.environ["HARNESS_WRITER_BASE_URL"] = base_url
@@ -1173,6 +1006,7 @@ class BundledRootDeployTest(unittest.TestCase):
         self.bundled_dir = Path(self.tmp.name) / "dist" / "extensions"
         patches = (
             mock.patch.object(helper, "PLUGIN_SRC_DIR", self.src_root),
+            mock.patch.object(helper, "PLUGIN_SRC_FALLBACK_DIRS", (self.src_root,)),
             mock.patch.object(helper, "CONFIG_DIR", self.config_dir),
             mock.patch.object(helper, "BUNDLED_EXTENSIONS_DIR", self.bundled_dir),
         )
@@ -1537,6 +1371,316 @@ class AdapterPathsMirrorTest(unittest.TestCase):
             (self.config_dir / "acpx" / "adapter-paths.json").read_text()
         )
         self.assertIn(str(entry), payload["adapterPaths"])
+
+
+@unittest.skipUnless(Path("/usr/bin/node").is_file(), "image Node fixture requires /usr/bin/node")
+class ImageNodeSubprocessTest(unittest.TestCase):
+    """Persistent Homebrew Node is a decoy: helper tools must use image Node."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.persistent_bin = self.root / "config" / ".linuxbrew" / "bin"
+        self.persistent_bin.mkdir(parents=True)
+        self.decoy_marker = self.root / "persistent-node-executed"
+        self.interpreter_log = self.root / "interpreter"
+        decoy = self.persistent_bin / "node"
+        decoy.write_text(
+            "#!/usr/bin/env bash\n"
+            "printf 'node 25.0.0 decoy\\n' > \"$DECOY_MARKER\"\n"
+            "exit 99\n",
+            encoding="utf-8",
+        )
+        decoy.chmod(0o755)
+        self.env = os.environ.copy()
+        self.env.update({
+            "PATH": f"{self.persistent_bin}:{self.env['PATH']}",
+            "DECOY_MARKER": str(self.decoy_marker),
+            "NODE_INTERPRETER_LOG": str(self.interpreter_log),
+            "NODE_OPTIONS": "",
+            "TEST_HARNESSES": ",".join(helper.HARNESS_EXECUTABLES.values()),
+        })
+
+    def write_node_tool(self, name: str, source: str) -> Path:
+        tool = self.persistent_bin / name
+        tool.write_text("#!/usr/bin/env node\n" + source, encoding="utf-8")
+        tool.chmod(0o755)
+        return tool
+
+    def assert_image_node_and_no_decoy(self) -> None:
+        self.assertFalse(self.decoy_marker.exists(), "persistent Node 25 decoy was executed")
+        observed = Path(self.interpreter_log.read_text(encoding="utf-8").strip())
+        self.assertEqual(observed.resolve(), Path("/usr/bin/node").resolve())
+
+    def test_esbuild_env_shebang_uses_image_node_with_negative_control(self) -> None:
+        esbuild = self.write_node_tool("esbuild", r'''
+const fs = require("fs");
+const outputArg = process.argv.slice(2).find((arg) => arg.startsWith("--outfile="));
+if (!outputArg) process.exit(2);
+fs.writeFileSync(process.env.NODE_INTERPRETER_LOG, process.execPath);
+fs.writeFileSync(outputArg.slice("--outfile=".length), "export const bundled = true;\n");
+''')
+        src = self.root / "plugin"
+        src.mkdir()
+        (src / "index.ts").write_text("export const bundled = true;\n", encoding="utf-8")
+        negative_out = self.root / "negative.mjs"
+        negative = subprocess.run(
+            [str(esbuild), str(src / "index.ts"), f"--outfile={negative_out}"],
+            env=self.env,
+            text=True,
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+        self.assertEqual(negative.returncode, 99)
+        self.assertTrue(self.decoy_marker.exists(), "negative control did not select persistent Node")
+        self.decoy_marker.unlink()
+
+        with mock.patch.dict(os.environ, self.env, clear=True):
+            bundle = helper._compile_bundled_plugin(src, str(esbuild))
+        self.assertIsNotNone(bundle)
+        self.assertIn(b"bundled", bundle or b"")
+        self.assert_image_node_and_no_decoy()
+
+    def test_npm_env_shebang_uses_image_node_with_negative_control(self) -> None:
+        npm = self.write_node_tool("npm", r'''
+const fs = require("fs");
+const path = require("path");
+const project = process.cwd();
+const pkg = JSON.parse(fs.readFileSync(path.join(project, "package.json"), "utf8"));
+for (const dependency of Object.keys(pkg.dependencies)) {
+  fs.mkdirSync(path.join(project, "node_modules", dependency), {recursive: true});
+}
+for (const executable of process.env.TEST_HARNESSES.split(",")) {
+  const target = path.join(project, "node_modules", ".bin", executable);
+  fs.mkdirSync(path.dirname(target), {recursive: true});
+  fs.writeFileSync(target, "#!/bin/sh\n");
+  fs.chmodSync(target, 0o755);
+}
+fs.writeFileSync(process.env.NODE_INTERPRETER_LOG, process.execPath);
+''')
+        negative = subprocess.run(
+            [str(npm), "install", "--no-save"],
+            cwd=self.root,
+            env=self.env,
+            text=True,
+            capture_output=True,
+            timeout=15,
+            check=False,
+        )
+        self.assertEqual(negative.returncode, 99)
+        self.assertTrue(self.decoy_marker.exists(), "negative control did not select persistent Node")
+        self.decoy_marker.unlink()
+
+        project = self.root / "state" / "acpx" / ".node_project"
+        persistent_bin = self.root / "state" / ".node_global" / "bin"
+        real_run = subprocess.run
+
+        def run_fake_npm(command, **kwargs):
+            # Production resolves `npm` after applying the image-first PATH;
+            # substitute the fixture at that call boundary without ever
+            # invoking the host's real package installer.
+            self.assertEqual(command, ["npm", "install", "--no-save"])
+            self.assertTrue(kwargs["env"]["PATH"].startswith("/usr/bin:/bin:"))
+            return real_run([str(npm), *command[1:]], **kwargs)
+
+        with mock.patch.object(helper, "PROJECT_DIR", project), \
+             mock.patch.object(helper, "PERSISTENT_BIN_DIR", persistent_bin), \
+             mock.patch.object(helper, "_detect_unmanaged_harness_clis"), \
+             mock.patch.object(helper.subprocess, "run", side_effect=run_fake_npm), \
+             mock.patch.dict(os.environ, self.env, clear=True):
+            self.assertTrue(helper.install_acpx_npm_project())
+        self.assert_image_node_and_no_decoy()
+
+
+class PersistentHarnessInstallTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.project = Path(self.tmp.name) / "acpx" / ".node_project"
+        self.persistent_bin = Path(self.tmp.name) / ".node_global" / "bin"
+        patcher = mock.patch.object(helper, "PROJECT_DIR", self.project)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        bin_patcher = mock.patch.object(helper, "PERSISTENT_BIN_DIR", self.persistent_bin)
+        bin_patcher.start()
+        self.addCleanup(bin_patcher.stop)
+        detect = mock.patch.object(helper, "_detect_unmanaged_harness_clis")
+        detect.start()
+        self.addCleanup(detect.stop)
+
+    def _complete_fake_install(self, command, cwd, **_kwargs):
+        self.assertEqual(command, ["npm", "install", "--no-save"])
+        package = json.loads((Path(cwd) / "package.json").read_text())
+        for dep in package["dependencies"]:
+            (Path(cwd) / "node_modules" / Path(dep)).mkdir(parents=True, exist_ok=True)
+        for executable in helper.HARNESS_EXECUTABLES.values():
+            path = Path(cwd) / "node_modules" / ".bin" / executable
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("#!/bin/sh\n")
+            path.chmod(0o755)
+        return SimpleNamespace(returncode=0, stderr="")
+
+    def test_all_verified_harnesses_are_pinned_and_second_boot_is_noop(self) -> None:
+        with mock.patch.object(helper.subprocess, "run", side_effect=self._complete_fake_install) as run:
+            self.assertTrue(helper.install_acpx_npm_project())
+            package = json.loads((self.project / "package.json").read_text())
+            deps = package["dependencies"]
+            expected = {
+                "@openclaw/acpx": "2026.7.1",
+                "@openclaw/codex": "2026.7.1-1",
+                "opencode-ai": "1.19.6",
+                "@mariozechner/pi-coding-agent": "0.73.1",
+                "@github/copilot": "1.0.114",
+                "@kilocode/cli": "7.8.32",
+                "@qwen-code/qwen-code": "0.28.3",
+                "@google/gemini-cli": "0.70.0",
+                "@factory/cli": "1.17.2",
+                "@iflow-ai/iflow-cli": "0.5.19",
+            }
+            self.assertEqual(deps, expected)
+            self.assertNotIn("kiro-cli", deps)
+            for executable in helper.HARNESS_EXECUTABLES.values():
+                link = self.persistent_bin / executable
+                self.assertTrue(link.is_symlink(), executable)
+                self.assertEqual(
+                    link.resolve(),
+                    (self.project / "node_modules" / ".bin" / executable).resolve(),
+                )
+            first = (self.project / "package.json").read_bytes()
+            self.assertTrue(helper.install_acpx_npm_project())
+            self.assertEqual(run.call_count, 1, "complete persistent install must be idempotent")
+            self.assertEqual((self.project / "package.json").read_bytes(), first)
+
+    def test_success_without_installed_package_fails_loudly(self) -> None:
+        with mock.patch.object(
+            helper.subprocess, "run",
+            return_value=SimpleNamespace(returncode=0, stderr=""),
+        ), mock.patch.object(helper, "log") as logged:
+            self.assertFalse(helper.install_acpx_npm_project())
+        self.assertIn("without all pinned packages", str(logged.call_args_list))
+
+    def test_existing_operator_executable_is_not_overwritten(self) -> None:
+        self.persistent_bin.mkdir(parents=True)
+        operator = self.persistent_bin / "pi"
+        operator.write_text("operator-owned\n")
+        with mock.patch.object(helper.subprocess, "run", side_effect=self._complete_fake_install):
+            self.assertTrue(helper.install_acpx_npm_project())
+        self.assertFalse(operator.is_symlink())
+        self.assertEqual(operator.read_text(), "operator-owned\n")
+
+
+class KiroDetectionTest(unittest.TestCase):
+    def test_missing_vendor_executable_is_a_loud_warning(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, \
+             mock.patch.object(helper, "PROJECT_DIR", Path(tmp)), \
+             mock.patch.object(helper.shutil, "which", return_value=None), \
+             mock.patch.object(helper, "log") as logged:
+            helper._detect_unmanaged_harness_clis()
+        message = str(logged.call_args_list)
+        self.assertIn("WARNING", message)
+        self.assertIn("kiro-cli", message)
+        self.assertIn("No verified vendor npm package", message)
+
+
+class SupervisorManifestTest(unittest.TestCase):
+    def test_manifest_declares_hassio_role_manager(self) -> None:
+        import yaml
+
+        manifest = yaml.safe_load((REPO / "config.yaml").read_text())
+
+        def assert_manager(candidate: dict) -> None:
+            self.assertIs(candidate.get("hassio_api"), True)
+            self.assertEqual(candidate.get("hassio_role"), "manager")
+
+        assert_manager(manifest)
+        # Mutation guards: deleting the key or changing the owner-authorized
+        # role must make this manifest assertion fail, not silently pass.
+        for invalid in (
+            {"hassio_api": True},
+            {"hassio_api": True, "hassio_role": "default"},
+            {"hassio_api": True, "hassio_role": "admin"},
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(AssertionError):
+                assert_manager(invalid)
+
+
+class PersistentBackupSurfaceTest(unittest.TestCase):
+    def test_tool_directories_are_not_excluded_from_ha_backup(self) -> None:
+        config = (REPO / "config.yaml").read_text()
+        excluded = config.split("backup_exclude:", 1)[1].split("\nmap:", 1)[0]
+        self.assertNotIn("- .node_global", excluded)
+        self.assertNotIn("- .linuxbrew", excluded)
+        self.assertIn("- .npm", excluded)
+        self.assertEqual(
+            helper.PERSISTENT_BIN_DIR,
+            helper.CONFIG_DIR.parent / ".node_global" / "bin",
+        )
+        self.assertEqual(helper.PROJECT_DIR, helper.ACPX_DIR / ".node_project")
+
+    def test_interrupted_upgrade_archives_are_excluded_from_ha_backup(self) -> None:
+        import yaml
+
+        excluded = yaml.safe_load((REPO / "config.yaml").read_text())["backup_exclude"]
+        self.assertIn("*.tar.gz.partial", excluded)
+        self.assertNotIn("*.tar.gz", excluded)
+
+
+class ReferenceWorkerRosterTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.config_dir = Path(self.tmp.name)
+        self.path = self.config_dir / "openclaw.json"
+        patcher = mock.patch.object(helper, "CONFIG_DIR", self.config_dir)
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        os.environ.pop("ACP_ADDITIONAL_ALLOWED_AGENTS", None)
+        self.addCleanup(lambda: os.environ.pop("ACP_ADDITIONAL_ALLOWED_AGENTS", None))
+
+    def test_default_is_exactly_four_workers_and_no_coordinator(self) -> None:
+        self.path.write_text(json.dumps({}))
+        self.assertTrue(helper.patch_openclaw_config())
+        cfg = json.loads(self.path.read_text())
+        self.assertEqual(set(cfg["acp"]["allowedAgents"]), {"codex", "claude", "opencode", "pi"})
+        self.assertNotIn("openclaw", cfg["acp"]["allowedAgents"])
+        self.assertNotIn("coordinator", cfg["acp"]["allowedAgents"])
+        self.assertNotIn("agents", cfg, "the add-on must not generate an onboarding coordinator")
+
+    def test_existing_operator_entries_and_coordinator_are_unioned(self) -> None:
+        os.environ["ACP_ADDITIONAL_ALLOWED_AGENTS"] = "custom,pi"
+        self.path.write_text(json.dumps({
+            "acp": {"allowedAgents": ["operator-agent", "openclaw"]},
+            "agents": {"entries": {
+                "coordinator": {
+                    "name": "onboarding-owned",
+                    "subagents": {"allowAgents": ["reviewer"]},
+                },
+                "operator": {"runtime": {"type": "acp"}},
+            }},
+        }))
+        self.assertTrue(helper.patch_openclaw_config())
+        cfg = json.loads(self.path.read_text())
+        self.assertEqual(cfg["acp"]["allowedAgents"][:2], ["operator-agent", "openclaw"])
+        expected = {"codex", "claude", "opencode", "pi", "custom"}
+        self.assertTrue(expected.issubset(set(cfg["acp"]["allowedAgents"])))
+        coordinator = cfg["agents"]["entries"]["coordinator"]
+        self.assertEqual(coordinator["name"], "onboarding-owned")
+        self.assertTrue((expected | {"reviewer"}).issubset(
+            set(coordinator["subagents"]["allowAgents"])
+        ))
+        self.assertEqual(set(cfg["agents"]["entries"]), {"coordinator", "operator"})
+        first = self.path.read_bytes()
+        self.assertTrue(helper.patch_openclaw_config())
+        self.assertEqual(self.path.read_bytes(), first)
+
+    def test_existing_openclaw_is_operator_owned_but_never_added(self) -> None:
+        self.path.write_text(json.dumps({"acp": {"allowedAgents": ["openclaw"]}}))
+        self.assertTrue(helper.patch_openclaw_config())
+        allowed = json.loads(self.path.read_text())["acp"]["allowedAgents"]
+        self.assertEqual(allowed.count("openclaw"), 1)
+        self.assertNotIn("coordinator", allowed)
 
 
 if __name__ == "__main__":

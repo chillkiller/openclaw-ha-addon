@@ -19,10 +19,10 @@
  * Gateway-Boots überleben — ohne Plugin-Gate würde der onStartup-Deploy die
  * soeben restaurierten Surfaces sofort wieder beschreiben (die 4 Discovery-
  * Gates payload/entries/load.paths/allow bleiben absichtlich aktiv, damit
- * ein Re-Enable ohne Rebuild reicht). Gate-Semantik = Helper-Spiegel
- * (_env_flag + "unset folgt dem Channel-Flag"): beim Load inaktiv →
- * INFO-Log, kein Write. Manual-Deploy ohne beide ENVs (außerhalb des
- * Add-on-Boots) bleibt also inaktiv — der Writer braucht den Add-on-Boot.
+ * ein Re-Enable ohne Rebuild reicht). Der Writer ist seit der Entfernung des
+ * Binding-Plugins ausschließlich explizit aktivierbar: ein leeres/unset
+ * HARNESS_CONFIG_WRITER_ENABLED ist OFF und erbt keinen anderen Schalter.
+ * Beim Load inaktiv → INFO-Log, kein Write.
  */
 import { definePluginEntry, type OpenClawPluginApi } from "openclaw/plugin-sdk/core";
 import {
@@ -40,19 +40,14 @@ function truthyFlag(raw: string | undefined): boolean {
 }
 
 /**
- * ENV-Gate (Audit B2): HARNESS_CONFIG_WRITER_ENABLED gesetzt → dieser Wert
- * gewinnt; LEER/UNSET → folgt ACP_DASHBOARD_BINDING_ENABLED (identisch zum
- * Helper deploy_plugins: "" = unset = follow). Inaktiv heißt: KEIN Write,
- * der Helper-Restore bleibt dauerhaft wirksam.
+ * ENV-Gate: nur ein explizit gesetztes Writer-Flag aktiviert den Deploy.
+ * LEER/UNSET ist OFF; es gibt bewusst keinen Fallback auf andere Plugin-
+ * Optionen. Inaktiv heißt: KEIN Write, der Helper-Restore bleibt wirksam.
  */
 export function resolveWriterGate(
   env: Record<string, string | undefined> = process.env,
 ): boolean {
-  const writer = (env.HARNESS_CONFIG_WRITER_ENABLED ?? "").trim();
-  if (writer !== "") {
-    return truthyFlag(writer);
-  }
-  return truthyFlag(env.ACP_DASHBOARD_BINDING_ENABLED);
+  return truthyFlag(env.HARNESS_CONFIG_WRITER_ENABLED);
 }
 
 /** Single-line error text for the message-only host logger. */
@@ -66,10 +61,9 @@ function errorBrief(error: unknown): string {
  * `plugins.entries['harness-config-writer'].config` (der bisherige
  * `api.config.harnesses`-Read war daher ein stiller No-op). Primär gilt
  * `api.pluginConfig` (dist: validatedConfig.value = plugins.entries[id].config);
- * Fallback-Drill über die volle Config (Pattern: acp-dashboard-binding
- * agent-map.ts resolvePluginEntryConfig). Eine Quelle zählt nur, wenn sie
- * eine non-empty `harnesses`-Object trägt — die Decision ist allein am
- * Harnesses-Inhalt ablesbar (Absence = no-op, ADDITIV-GARANTIE).
+ * Fallback-Drill über die volle Config. Eine Quelle zählt nur, wenn sie ein
+ * non-empty `harnesses`-Object trägt — die Decision ist allein am Harnesses-
+ * Inhalt ablesbar (Absence = no-op, ADDITIV-GARANTIE).
  */
 export function resolvePluginConfig(api: OpenClawPluginApi): Record<string, unknown> | null {
   const hasHarnesses = (candidate: unknown): candidate is Record<string, unknown> => {
@@ -104,10 +98,7 @@ export function registerHarnessConfigDeployment(api: OpenClawPluginApi): void {
       // OFF → Originale) bleibt so Gateway-Boot-stabil. Absichtliches INFO,
       // damit "kein Write trotz harnesses config" sichtbar ist statt still.
       const writerEnv = (process.env.HARNESS_CONFIG_WRITER_ENABLED ?? "").trim();
-      const gateSource =
-        writerEnv !== ""
-          ? `HARNESS_CONFIG_WRITER_ENABLED=${writerEnv}`
-          : `unset → follows ACP_DASHBOARD_BINDING_ENABLED (off)`;
+      const gateSource = `HARNESS_CONFIG_WRITER_ENABLED=${writerEnv || "<unset/empty>"} (explicit enable required)`;
       api.logger?.info?.(
         `[${PLUGIN_ID}] inactive by env gate (${gateSource}) — no write, helper restore stays effective`,
       );
@@ -179,6 +170,6 @@ export default definePluginEntry({
   id: PLUGIN_ID,
   name: "Harness Config Writer",
   description:
-    "Deploys harness-native file/env config for configured local-provider harnesses (codex/opencode/claude/gemini/...) on plugin load — see the 15 design (generalized harness config (HCW phase 3)).",
+    "Deploys native file/env config for codex, opencode, kilo, kilocode, claude, copilot, droid, gemini, iflow, kimi, kiro, qwen and pi. Supports explicit providerKey routing and nativeConfig config/settings/models/catalog overlays on plugin load.",
   register: registerHarnessConfigDeployment,
 });

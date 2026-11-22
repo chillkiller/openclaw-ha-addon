@@ -4,6 +4,7 @@
 
 | App Version | OpenClaw Version | Release Date |
 |--------------|------------------|---------------|
+| 0.7.13.39 | 2026.11.3 | 2026-11-22 |
 | 0.7.13.38 | 2026.11.3 | 2026-11-14 |
 | 0.7.13.37 | 2026.11.1 | 2026-11-06 |
 | 0.7.13.36 | 2026.10.10 | 2026-11-05 |
@@ -15,23 +16,18 @@
 | 0.7.13.30 | 2026.10.2 | 2026-10-15 |
 | 0.7.13.29 | 2026.10.2 | 2026-10-14 |
 | 0.7.13.28 | 2026.10.2 | 2026-10-14 |
-> **Note (0.7.13.28):** isolated rollback to the `v0.7.13.25` code state. Image rebuild required.
 | 0.7.13.27 | 2026.10.2 | 2026-10-13 |
 | 0.7.13.26 | 2026.10.2 | 2026-10-13 |
 | 0.7.13.25 | 2026.10.2 | 2026-10-13 |
 | 0.7.13.24 | 2026.10.2 | 2026-10-13 |
-> **Note (0.7.13.24):** live-boot follow-up on 0.7.13.23 — the boot sweep must ride `api.on("gateway_start", …)` (typed hook runner); a registry-named `registerHook` for that event is legal but never dispatched. Image rebuild required as usual.
 | 0.7.13.23 | 2026.10.2 | 2026-10-13 |
-> **Note (0.7.13.23):** roll-forward repair of the 0.7.13.22 register crash ("hook registration missing name"). The interim .23/.24 hotfix chain was rolled back and re-landed as this fully audited fix; requires an add-on image rebuild to reach the container.
 | 0.7.13.22 | 2026.10.2 | 2026-10-13 |
 | 0.7.13.21 | 2026.10.2 | 2026-10-12 |
 | 0.7.13.8 | 2026.9.9 | 2026-10-10 |
-> **Note (0.7.13.8):** the helper's plugin registration respects an explicit operator opt-out: with `plugins.entries["acp-dashboard-binding"].enabled=false`, the flag is never flipped back across boots, the plugin payload stays deployed (re-enable needs no rebuild), and no `plugins.load.paths` entry is written while disabled.
 | 0.7.13.7 | 2026.9.9 | 2026-10-10 |
 | 0.7.13.6 | 2026.9.9 | 2026-10-10 |
 | 0.7.13.5 | 2026.9.9 | 2026-10-10 |
 | 0.7.13.4 | 2026.9.9 | 2026-10-10 |
-
 | 0.7.13.3 | 2026.9.9 | 2026-10-09 |
 | 0.7.13.2 | 2026.9.9 | 2026-10-09 |
 | 0.7.13.1 | 2026.9.9 | 2026-10-09 |
@@ -54,6 +50,18 @@
 | 0.7.5.3 | 2026.4.21 | 2026-04-24 |
 | 0.7.5.2 | 2026.4.21 | 2026-04-23 |
 | 0.7.5.1 | 2026.4.15 | 2026-04-20 |
+
+### Version notes
+
+> **Note (0.7.13.39):** image rebuild required. The Supervisor manager role applies after the first start; existing harness configuration is migrated once and operator edits are preserved.
+
+> **Note (0.7.13.28):** isolated rollback to the `v0.7.13.25` code state. Image rebuild required.
+
+> **Note (0.7.13.24):** live-boot follow-up on 0.7.13.23 — the boot sweep must ride `api.on("gateway_start", …)` (typed hook runner); a registry-named `registerHook` for that event is legal but never dispatched. Image rebuild required as usual.
+
+> **Note (0.7.13.23):** roll-forward repair of the 0.7.13.22 register crash ("hook registration missing name"). The interim .23/.24 hotfix chain was rolled back and re-landed as this fully audited fix; requires an add-on image rebuild to reach the container.
+
+> **Plugin removal note:** `acp-dashboard-binding` is no longer included in this add-on, so its former enable/disable and deployment behavior no longer applies. For existing installs, the legacy `plugins.entries["acp-dashboard-binding"].config.harnesses` key is still migrated once into `plugins.entries["harness-config-writer"].config.harnesses`.
 
 ## RAM Configuration
 

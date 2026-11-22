@@ -8,6 +8,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Each entry summarizes user-visible changes. Full engineering notes:
 [openclaw_ha_addon/CHANGELOG.md](openclaw_ha_addon/CHANGELOG.md).
 
+## [0.7.13.39] — 2026-11-22
+
+The agent harnesses now receive their complete native configuration from the add-on, and the add-on itself cleans up the parts that made upgrades and restarts unreliable.
+
+### Changed
+
+- **Every supported coding agent is configured natively, without its own setup wizard.** Codex, Claude Code, OpenCode, Pi, Kilo Code, Qwen Code, Gemini, Copilot CLI, Droid, Kimi, Kiro and iFlow receive their model, their role models (review, subagent, memory), tool and agent settings and compaction thresholds directly from the add-on; context and output limits and other model metadata are propagated whenever the gateway catalog provides them. Provider selection now follows the configured gateway provider instead of the machine address, so a route change no longer leaves stale entries behind.
+- **The add-on now asks Home Assistant for the Supervisor manager role.** The agent can list installed add-ons and store entries, read their status and perform owner-approved lifecycle operations. This grants no host file system or Docker access by itself; those remain separate decisions.
+- **The Node.js runtime is pinned and verified on every start.** The version that actually serves the gateway is now the one built into the image (24.22.3) and is checked against the runtime's supported range. Previously a persisted runtime copy could silently drift and block an upgrade.
+- **The add-on manages the default ACP allowlist for four coding agents** (Codex, Claude Code, OpenCode, Pi). Existing allowlist entries are preserved, and an existing coordinator entry is extended without being replaced; the add-on does not create the coordinator or worker agent entries.
+
+### Fixed
+
+- **Interrupted upgrade archives are cleaned up automatically and kept out of backups.** A hard power cut during an upgrade could leave archive fragments behind indefinitely; they are now removed on the next start and are excluded from Home Assistant backups.
+- **The outbound proxy helper is only loaded when a proxy is configured.** Previously every installation loaded an additional code path that was not needed.
+- **The supervisor can no longer mistake an unrelated long-running process for the gateway.** The gateway process is matched exactly and confirmed by the listening port before it is supervised.
+- **Two Home Assistant options are no longer silently ignored.** The repair timeout and the number of retained repair snapshots now reach the code that uses them, also when they are set through the sectioned options layout.
+- **Images built from a working copy are reproducible.** A local dependency tree of a removed integration no longer ends up in the image, and the build context is smaller.
+- **The smoke check matches the current add-on** and verifies that the removed integration is really gone instead of expecting it to be present.
+
+### Removed
+
+- **The dashboard binding integration was removed.** Only its harness configuration map is migrated, once, into the harness configuration writer. Its dashboard session bindings, bound and excluded agent selections, dispatch mode, workspace mappings, session provisioning, reply mirroring, and binding lifecycle are not migrated and have no replacement in this release. Existing dashboard conversations that relied on this integration lose that routing and fall back to the host's generic dispatch. The Home Assistant Assist and OpenAI-compatible API integration is unaffected.
+
+### Upgrade notes
+
+- This release needs an add-on image rebuild, like every release that changes the image.
+- The Supervisor manager role applies after the first start with the new image.
+- Existing harness configuration is migrated once; operator edits are preserved.
+
 ---
 
 ## [0.7.13.38] — 2026-11-14

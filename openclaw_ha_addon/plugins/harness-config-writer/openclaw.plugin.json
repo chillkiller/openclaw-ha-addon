@@ -1,7 +1,7 @@
 {
   "id": "harness-config-writer",
   "name": "Harness Config Writer",
-  "description": "Deploys harness-native file and env config for Codex, Claude Code, OpenCode, Pi, Kilo Code, Qwen Code, Gemini, Copilot CLI, Droid, Kimi, Kiro and iFlow. Writes primary models plus native role, tool, review, memory and compaction fields without CLI onboarding. Additive to bundled acpx: absence of a harness id writes NOTHING — vendor auth runs unchanged.",
+  "description": "Deploys harness-native file and env config for codex, opencode, kilo, kilocode, claude, copilot, droid, gemini, iflow, kimi, kiro, qwen and pi. Supports providerKey routing and nativeConfig config/settings/models/catalog overlays for primary models plus native role, tool, review, memory and compaction fields without CLI onboarding. Additive to bundled acpx: absence of a harness id writes NOTHING — vendor auth runs unchanged.",
   "categories": ["developer-tools"],
   "activation": {
     "onStartup": true
@@ -18,21 +18,21 @@
       },
       "harnesses": {
         "type": "object",
-        "description": "Normalized per-harness config. HCW generates native config files and the harness-env/<id>.env sourced by the plugins.entries.acpx.config.agents.<id>.command/args override. Native files: Codex config.toml + model-catalog.json; Claude/OpenCode/Pi/Kilo/Qwen/Gemini/Copilot/Droid/Kiro/iFlow native JSON settings; Kimi config.toml. ABSENCE of a harness id (or this whole section) = plugin writes NOTHING for it: native subscriptions and vendor OAuth run unchanged via bundled acpx. Changes apply on next boot.",
+        "description": "Normalized per-harness config for the supported ids codex, opencode, kilo, kilocode, claude, copilot, droid, gemini, iflow, kimi, kiro, qwen and pi. HCW generates native config files and harness-env/<id>.env sourced by the plugins.entries.acpx.config.agents.<id>.command/args override. providerKey selects an explicit gateway provider; nativeConfig config/settings/models/catalog objects deep-merge native overlays. Native files include Codex config.toml + model-catalog.json, Pi models.json + settings.json, Kilo kilo.json, Kimi config.toml and the other harnesses' native JSON settings. ABSENCE of a harness id (or this whole section) = plugin writes NOTHING for it: native subscriptions and vendor OAuth run unchanged via bundled acpx. Changes apply on next boot.",
         "additionalProperties": {
           "type": "object",
           "properties": {
             "model": { "type": "string", "description": "Required, non-empty: the model id to claim for this harness." },
-            "baseUrl": { "type": "string", "description": "Backend base URL (Ollama/vLLM/LocalAI/llama.cpp or a compatible remote route). Required for Codex/OpenCode/Kilo file routing; appended with /v1 exactly once where the harness expects it. Other harnesses use their native settings file and/or documented env variables." },
+            "baseUrl": { "type": "string", "description": "Backend base URL (Ollama/vLLM/LocalAI/llama.cpp or a compatible remote route). Required for Codex/OpenCode/Kilo/Pi file routing; appended with /v1 exactly once where the harness expects it. Other harnesses use their native settings file and/or documented env variables." },
             "apiKey": { "type": "string", "description": "API key/token the harness backend expects (auth.json OPENAI_API_KEY for codex, apiKey option for opencode, ANTHROPIC_AUTH_TOKEN/KIRO_API_KEY/... for env harnesses). Placeholder 'ollama' when omitted." },
             "thinking": { "type": "string", "description": "Primary reasoning/effort level where the native harness schema supports it (Codex, Claude, Pi, Qwen, Droid and Kimi). Unsupported levels are warned about and omitted." },
             "smallModel": { "type": "string", "description": "OpenCode/Kilo small_model and Claude ANTHROPIC_SMALL_FAST_MODEL. This is not a utility_model alias; other role models use their explicit nativeConfig fields." },
             "trustProjects": { "type": "array", "items": { "type": "string" }, "description": "Codex only: [projects.\"<path>\"] trust_level=trusted entries (deduped, sorted)." },
             "models": { "type": "array", "items": { "type": "string" }, "description": "Optional available model ids; the required 'model' stays the default. A non-empty explicit list wins over gateway auto-matching; an explicit empty list opts out; an absent list auto-matches all models of the provider whose baseUrl matches (deduped, capped at 200, fail-soft). Written to each harness's native model/catalog surface where one exists." },
-            "providerKey": { "type": "string", "description": "Optional explicit gateway models.providers key. If omitted, HCW uses a unique baseUrl match or a unique model + wire-API route match; URL-derived binding_* IDs remain only a warned fallback for ambiguous routes." },
+            "providerKey": { "type": "string", "description": "Optional explicit gateway models.providers key. If omitted, HCW uses a unique baseUrl match or a unique model + wire-API route match; URL-derived fallback IDs are used only with a warning for ambiguous routes." },
             "nativeConfig": {
               "type": "object",
-              "description": "Explicit native overlay with separate target objects: config (Codex/OpenCode/Kilo/Kimi primary config), settings (Claude/Pi/Qwen/Gemini/Copilot/Droid/Kiro/iFlow settings), models (Pi models.json) and catalog (Codex model catalog). Objects are deep-merged after generated defaults. Use native fields directly for review_model, default_subagent_model, subagent_model, memory_model, fastModel, defaultTools, tools, agents, compaction and other harness functions; no utility_model aliasing. Unsupported target/harness combinations produce warnings.",
+              "description": "Explicit native overlay with separate target objects: config (Codex/OpenCode/kilo/kilocode/Claude/Kimi primary config), settings (Claude/Pi/Qwen/Gemini/Copilot/Droid/Kiro/iFlow settings), models (Pi models.json) and catalog (Codex model catalog). Objects are deep-merged after generated defaults. Use native fields directly for review_model, default_subagent_model, subagent_model, memory_model, fastModel, defaultTools, tools, agents, compaction and other harness functions; no utility_model aliasing. Unsupported target/harness combinations produce warnings; unknown target names are rejected by the strict schema.",
               "properties": {
                 "config": { "type": "object" },
                 "settings": { "type": "object" },

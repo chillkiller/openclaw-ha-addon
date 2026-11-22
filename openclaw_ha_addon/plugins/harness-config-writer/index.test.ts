@@ -11,10 +11,13 @@
  * (api.config.models.providers → claude.env CLAUDE_MODEL_CONFIG).
  */
 
-import { existsSync, mkdtempSync, readFileSync, mkdirSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdtempSync, readFileSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, relative, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import * as ts from "typescript";
 
 // SDK-Mock VOR dem import (hoisted): index.ts bindet den Entry-Spec nur ein.
 vi.mock("openclaw/plugin-sdk/core", () => ({
@@ -93,22 +96,24 @@ describe("resolveWriterGate (ENV-Gate, Audit B2)", () => {
     env = {};
   });
 
-  it("explicit writer=on wins over binding", () => {
+  it("explicit writer=on enables the writer independently of other plugin flags", () => {
     env.HARNESS_CONFIG_WRITER_ENABLED = "true";
     env.ACP_DASHBOARD_BINDING_ENABLED = "false";
     expect(resolveWriterGate(env)).toBe(true);
   });
 
-  it("explicit writer=false wins over binding=on (operator veto)", () => {
+  it("explicit writer=false is the negative control even when the obsolete binding flag is on", () => {
     env.HARNESS_CONFIG_WRITER_ENABLED = "false";
     env.ACP_DASHBOARD_BINDING_ENABLED = "true";
     expect(resolveWriterGate(env)).toBe(false);
   });
 
-  it("unset writer follows binding=on (run.sh exports empty string)", () => {
+  it("unset/empty writer stays off when the obsolete binding flag is on (no fallback)", () => {
     env.HARNESS_CONFIG_WRITER_ENABLED = "";
     env.ACP_DASHBOARD_BINDING_ENABLED = "true";
-    expect(resolveWriterGate(env)).toBe(true);
+    expect(resolveWriterGate(env)).toBe(false);
+    delete env.HARNESS_CONFIG_WRITER_ENABLED;
+    expect(resolveWriterGate(env)).toBe(false);
   });
 
   it("both empty/unset = off (Phase-2.15-Default)", () => {
@@ -168,11 +173,13 @@ describe("registerHarnessConfigDeployment — ENV-Gate-Verdrahtung am Entry", ()
     expect(logs.join("\n")).toContain("inactive by env gate");
   });
 
-  it("writer empty (run.sh unset) + binding=on → follows binding, write", () => {
+  it("writer empty + obsolete binding=on → NO write (explicit-enable negative control)", () => {
     boot({ HARNESS_CONFIG_WRITER_ENABLED: "", ACP_DASHBOARD_BINDING_ENABLED: "true" });
-    const { api } = makeApi({ harnesses: { codex: CODEX_ENTRY } });
+    const { api, logs } = makeApi({ harnesses: { codex: CODEX_ENTRY } });
     registerHarnessConfigDeployment(api as never);
-    expect(existsSync(codexTomlPath(root))).toBe(true);
+    expect(existsSync(codexTomlPath(root))).toBe(false);
+    expect(logs.join("\n")).toContain("explicit enable required");
+    expect(logs.join("\n")).not.toContain("follows ACP_DASHBOARD_BINDING_ENABLED");
   });
 
   it("writer empty + binding empty/unset → off, NO write despite harnesses config", () => {
@@ -188,6 +195,85 @@ describe("registerHarnessConfigDeployment — ENV-Gate-Verdrahtung am Entry", ()
     const { api } = makeApi();
     registerHarnessConfigDeployment(api as never);
     expect(existsSync(codexTomlPath(root))).toBe(false);
+  });
+
+  it("loads and deploys from a tree containing only harness-config-writer", () => {
+    const sourceRoot = fileURLToPath(new URL(".", import.meta.url));
+    const pluginsRoot = join(root, "standalone", "plugins");
+    const isolatedPlugin = join(pluginsRoot, "harness-config-writer");
+    const topLevelRuntimeFiles = new Set(["index.ts", "openclaw.plugin.json", "package.json"]);
+    cpSync(sourceRoot, isolatedPlugin, {
+      recursive: true,
+      filter: (source) => {
+        const rel = relative(sourceRoot, source);
+        return rel === "" || topLevelRuntimeFiles.has(rel) || rel === "src" ||
+          (rel.startsWith(`src${sep}`) && !rel.endsWith(".test.ts"));
+      },
+    });
+
+    // The old plugin directory and its manifest do not exist in this tree.
+    expect(readdirSync(pluginsRoot)).toEqual(["harness-config-writer"]);
+    expect(existsSync(join(pluginsRoot, "acp-dashboard-binding"))).toBe(false);
+
+    // Static guard in addition to the runtime absence proof: no runtime module
+    // may import the removed plugin or read its manifest.
+    const runtimeFiles = [
+      join(isolatedPlugin, "index.ts"),
+      ...readdirSync(join(isolatedPlugin, "src"))
+        .filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"))
+        .map((name) => join(isolatedPlugin, "src", name)),
+    ];
+    for (const file of runtimeFiles) {
+      const source = readFileSync(file, "utf-8");
+      expect(source).not.toMatch(/from\s+["'][^"']*acp-dashboard-binding/);
+      expect(source).not.toMatch(/(?:import|require)\s*\(\s*["'][^"']*acp-dashboard-binding/);
+      expect(source.includes("acp-dashboard-binding") && source.includes("openclaw.plugin.json")).toBe(false);
+      const transpiled = ts.transpileModule(source, {
+        compilerOptions: { module: ts.ModuleKind.ESNext, target: ts.ScriptTarget.ES2023 },
+        fileName: file,
+      });
+      writeFileSync(file.replace(/\.ts$/, ".js"), transpiled.outputText, "utf-8");
+    }
+
+    // Run the real entry in a fresh Node process. The only host stub is the
+    // definePluginEntry SDK surface; it lives outside the plugin catalogue.
+    const sdkRoot = join(root, "standalone", "node_modules", "openclaw");
+    mkdirSync(join(sdkRoot, "plugin-sdk"), { recursive: true });
+    writeFileSync(join(sdkRoot, "package.json"), JSON.stringify({
+      name: "openclaw",
+      type: "module",
+      exports: { "./plugin-sdk/core": "./plugin-sdk/core.js" },
+    }), "utf-8");
+    writeFileSync(
+      join(sdkRoot, "plugin-sdk", "core.js"),
+      "export const definePluginEntry = (spec) => spec;\n",
+      "utf-8",
+    );
+    const runner = join(root, "standalone", "run.mjs");
+    writeFileSync(runner, `
+import entry from "./plugins/harness-config-writer/index.js";
+const api = {
+  config: {},
+  pluginConfig: { harnesses: { codex: ${JSON.stringify(CODEX_ENTRY)} } },
+  logger: {
+    debug() {}, info() {}, warn() {},
+    error(message) { throw new Error(message); },
+  },
+};
+entry.register(api);
+`, "utf-8");
+    const child = spawnSync(process.execPath, [runner], {
+      env: {
+        ...process.env,
+        OPENCLAW_STATE_DIR: join(root, "state"),
+        HARNESS_CONFIG_WRITER_ENABLED: "true",
+        ACP_DASHBOARD_BINDING_ENABLED: "true",
+      },
+      encoding: "utf-8",
+      timeout: 20_000,
+    });
+    expect(child.status, `${child.stdout}\n${child.stderr}\n${child.error?.message ?? ""}`).toBe(0);
+    expect(readFileSync(codexTomlPath(root), "utf-8")).toContain("[model_providers.");
   });
 });
 

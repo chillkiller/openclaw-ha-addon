@@ -55,23 +55,13 @@ configuration:
           HA via Model Context Protocol. Desative apenas se você gerencia a configuração do mcporter manualmente.
   acpx_enabled:
     name: Infraestrutura ACPX
-    description: Instalar launchers de wrapper ACPX (Claude Code, Codex, OpenCode) para que o OpenClaw execute agentes de código via
-      backend ACPX local. Agentes de código configurados pelo usuário são preservados como estão. Interruptor mestre de
-      toda a superfície acp(x) — DESLIGADO (padrão) = sem transferência de configuração de Writer/Binding, seus
-      interruptores ficam inertes; LIGADO = liberação — os interruptores de Writer/Binding decidem então
-      independentemente.
+    description: "Instala o projeto ACPX persistente (workers de referência: Claude Code, Codex, OpenCode e Pi). Preserva os agentes configurados pelo operador. Interruptor mestre: DESLIGADO (padrão) desativa a inicialização ACPX e a implantação do harness-config-writer."
   harness_config_writer_enabled:
     name: Harness Config Writer
-    description: Opcional (Repo-Split A2) - Implantar + registrar o plugin harness-config-writer incluído (gera a configuração nativa
-      de arquivos/env dos harnesses a partir de config.harnesses). Interruptor independente de opt-in, DESLIGADO por
-      padrão — não segue nem controla o ACP Dashboard Binding; só tem efeito com acpx_enabled ativado (mestre); é
-      necessária uma harness_base_url para gerar qualquer coisa (vazio = no-op completo). Copia mas nunca sobrescreve —
-      apenas entradas GERADAS anteriormente e idênticas byte a byte são atualizadas; edições manuais do operador e
-      entradas sem a URL base configurada permanecem intactas. A primeira sessão ativada faz um snapshot dos arquivos
-      gerenciados — desligar novamente restaura os originais automaticamente.
+    description: "Implanta o plugin harness-config-writer incluído. Opt-in independente, DESLIGADO por padrão; só funciona com acpx_enabled ativado. harness_base_url ativa a geração (vazio = no-op). Só atualiza entradas geradas anteriormente que permaneçam inalteradas; preserva edições do operador. A primeira ativação cria um snapshot; ao desativar, restaura os originais."
   harness:
     name: Harness (backends de código)
-    description: Padrões compartilhados de provedor/modelo para os harnesses acpx incluídos (Claude Code, Codex, OpenCode) e o
+    description: Padrões compartilhados de provedor/modelo para os harnesses acpx incluídos (Claude Code, Codex, OpenCode, Pi) e o
       harness-config-writer. O endpoint é qualquer API compatível com OpenAI — não apenas Ollama. Sem uma harness_base_url
       configurada, todos os valores deste grupo ficam INERTES — apenas os interruptores valem (modelos, agentes e
       utility_model só têm efeito com a URL base definida).
@@ -87,8 +77,7 @@ configuration:
           (ex. Ollama local).
       harness_model:
         name: Modelo padrão (todos os harnesses)
-        description: Modelo padrão compartilhado dos harnesses. Aplica-se a todos os harnesses NÃO excluídos (codex/opencode/claude
-          mantêm seus modelos individuais abaixo), quando definido. Vazio = os padrões individuais vencem.
+        description: "Modelo compartilhado de compatibilidade. Opção por harness > este valor > padrão do gateway. Os modelos canônicos ficam nas entradas HCW."
       utility_model:
         name: Modelo utility
         description: Opcional - Override para agents.defaults.utilityModel no openclaw.json (o modelo por trás dos callouts
@@ -96,14 +85,16 @@ configuration:
           value); defina apenas um modelo com saída strict-JSON limpa.
       harness_opencode_model:
         name: Modelo OpenCode (forge)
-        description: Opcional - Modelo do harness OpenCode (forge). Padrão - glm-5.3-flash:cloud
+        description: "Modelo de compatibilidade para OpenCode. Vazio = harness_model compartilhado e depois o padrão do gateway; sem padrão oculto do add-on."
       harness_claude_model:
         name: Modelo Claude Code
-        description: Opcional - Modelo do harness Claude Code (também alimenta o fallback ANTHROPIC_MODEL ambient). Padrão
-          - glm-5.3-flash:cloud
+        description: "Modelo de compatibilidade para Claude Code. Também alimenta o fallback ambient ANTHROPIC_MODEL (glm-5.3-flash:cloud sem chave do fornecedor)."
       harness_codex_model:
         name: Modelo Codex (audit)
-        description: Opcional - Modelo do harness Codex (audit). Padrão - kimi-k2.7-code:cloud
+        description: "Modelo de compatibilidade para Codex. Vazio = harness_model compartilhado e depois o padrão do gateway; sem padrão oculto do add-on."
+      harness_pi_model:
+        name: Pi
+        description: "Modelo de compatibilidade para Pi. Vazio = harness_model compartilhado e depois o padrão do gateway; sem padrão oculto do add-on."
       harness_excluded_agents:
         name: Harnesses excluídos
         description: Opcional - Lista de IDs de harness (separados por vírgula) EXCLUÍDOS dos padrões compartilhados acima
@@ -111,14 +102,8 @@ configuration:
       additional_agents:
         name: Agentes adicionais
         description: Opcional - Lista de nomes ADICIONAIS de agentes/harnesses (separados por vírgula) para acp.allowedAgents
-          além dos inclusos claude/codex/opencode/openclaw (ex. "pi,colibri,gemini"). Agentes personalizados também devem existir
+          além dos inclusos claude/codex/opencode/pi (ex. "colibri,gemini"). Agentes personalizados também devem existir
           no roster do OpenClaw com runtime.type=acp; a lista é apenas unida, nunca sobrescrita.
-      acp_dashboard_binding_enabled:
-        name: ACP Dashboard Binding
-        description: Opcional (Fase 2.15) - Implantar + registrar o plugin acp-dashboard-binding incluído (resolve conversas de
-          dashboard/webchat em sessões de harness ACP). Interruptor independente de opt-in, DESLIGADO por padrão (v0.7.13.30)
-          — não segue nem controla o Harness Config Writer; só tem efeito enquanto acpx_enabled=true (interruptor mestre);
-          caso contrário, a transferência de configuração permanece desativada.
   gateway_ext:
     name: Gateway (external)
     description: URLs, trusted proxies and allowed origins for gateway access

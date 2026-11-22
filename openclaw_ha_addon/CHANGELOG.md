@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For a release-facing summary, see the root [CHANGELOG.md](../CHANGELOG.md).
 
+## [0.7.13.39] — 2026-11-22
+
+### Changed
+
+- **Native harness configuration (`plugins/harness-config-writer`):** the writer now covers every catalogued harness id (`codex`, `opencode`, `kilo`, `kilocode`, `claude`, `copilot`, `droid`, `gemini`, `iflow`, `kimi`, `kiro`, `qwen`, `pi`) and exposes `nativeConfig.config|settings|models|catalog` overlays that are deep-merged after the generated defaults. Provider selection prefers an explicit `providerKey`, then a unique base-URL match, then a unique model plus harness-compatible wire-API match; only an ambiguous route falls back to the address-derived id and warns. The Codex provider id `ollama` stays reserved and provider table keys are TOML-quoted. Model metadata such as context and output limits is propagated whenever the gateway catalog provides it; a model without catalog metadata keeps the harness default instead of receiving an invented limit.
+- **Ownership-aware managed state:** the sidecar next to each generated file records the harness id and the managed paths only (no values, no credentials), so a second deployment removes what the writer owns and keeps what the operator added. Legacy sidecars without an ownership marker migrate conservatively to the augmented scope.
+- **Writer gate (`plugins/harness-config-writer/index.ts`):** `resolveWriterGate` now reads `HARNESS_CONFIG_WRITER_ENABLED` only. The previous fallback to the removed binding option is gone, and the plugin loads and deploys from a tree that contains only `harness-config-writer`.
+- **Supervisor role (`config.yaml`):** `hassio_role: manager` is declared next to `hassio_api`, with the operator trade-off documented in `DOCS.md`. `openclaw_ha_addon/tests/test_oc_acpx_helper_deploy_plugin.py` fails if the key is removed or changed.
+- **Default ACP allowlist (`oc_acpx_helper.py`):** the add-on adds `codex`, `claude`, `opencode` and `pi` to `acp.allowedAgents`. An existing coordinator entry is preserved and only its `subagents.allowAgents` list is extended; the add-on creates neither the coordinator nor the four worker agent entries.
+
+### Fixed
+
+- **Plugin-source probe:** `resolve_plugin_src_dir(plugin_name)` now probes for the requested plugin instead of a hard-coded name, so harness configuration deploys independently of the removed integration.
+- **Runtime Node determinism (`Dockerfile`, `run.sh`):** NodeSource is pinned to `24.22.3` with an exact package version and a build-time equality check; start-up validates the executed `/usr/bin/node` against `>=24.16.0 <25 || >=26.1.0` and logs `process.versions.node`; gateway children inherit the image-owned runtime instead of a persisted copy that could drift.
+- **Interrupted upgrade archives (`run.sh`, `config.yaml`):** archive fragments matching `openclaw-state-*.tar.gz.partial` are removed before the gate returns, completed archives and the version marker are kept, and the fragments are excluded from Home Assistant backups.
+- **Conditional proxy preload (`run.sh`):** the outbound proxy helper is preloaded only when `HTTP_PROXY`, `HTTPS_PROXY`, `http_proxy` or `https_proxy` is set; the heap and rejection shim options are preserved.
+- **Gateway process adoption (`run.sh`):** the supervisor matches the gateway by exact process title, skips rejected pids, confirms the port owner against `GATEWAY_INTERNAL_PORT` within a deadline and switches to the real port owner. Remote mode, doctor budget and the maintenance latch are unchanged.
+- **Doctor option propagation (`run.sh`):** `gateway_doctor_repair_timeout` and `gateway_doctor_capture_keep` now reach their consumers also when they are configured through the sectioned options layout, instead of silently falling back to the defaults.
+- **Home Assistant Core proxy credential (`run.sh`):** the Core MCP route is registered with the Supervisor token when present, with the direct Home Assistant token and the loopback fallback unchanged.
+- **Build context (`.dockerignore`):** vendored dependency payloads that are not part of the tracked source no longer enter the image.
+
+### Removed
+
+- **The dashboard binding integration** (`plugins/acp-dashboard-binding/`, its option, its environment variable and its deployment, opt-out and smoke-check logic). Only the legacy `plugins.entries["acp-dashboard-binding"].config.harnesses` map is migrated, once, into `plugins.entries["harness-config-writer"].config.harnesses`. Its dashboard session bindings, bound and excluded agent selections, dispatch mode, workspace mappings, session provisioning, reply mirroring, and binding lifecycle are not migrated and have no replacement in this release. Existing dashboard conversations that relied on this integration lose that routing and fall back to the host's generic dispatch. The Home Assistant Assist and OpenAI-compatible API integration is unaffected.
+- **The legacy template payloads** (`acpx/opencode.jsonc`, `acpx/.codex-source/config.toml`) and their placeholder substitution code.
+
+### Attribution
+
+Parts of this add-on were originally derived from the MIT-licensed `techartdev/OpenClawHomeAssistant` project; see `NOTICE`. The behaviours adopted from its pull requests (interrupted-archive cleanup, conditional proxy preload, exact gateway-process adoption) are implemented independently in this branch.
+
 ---
 
 ## [0.7.13.38] — 2026-11-14

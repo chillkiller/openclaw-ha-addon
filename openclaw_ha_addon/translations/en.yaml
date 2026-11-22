@@ -57,22 +57,13 @@ configuration:
           only if you manage mcporter configuration manually.
   acpx_enabled:
     name: ACPX harness infrastructure
-    description: Install ACPX wrapper launchers (Claude Code, Codex, OpenCode) so OpenClaw can run coding agents via the local ACPX
-      backend. Existing user-configured coding agents are preserved as-is. Master switch of the whole acp(x) surface — OFF
-      (default) = no writer/binding config transfer, their switches are inert; ON = the unlock, the writer/binding
-      switches then decide independently.
+    description: "Install the persistent ACPX harness project (reference workers: Claude Code, Codex, OpenCode and Pi). Existing operator-configured agents are preserved. Master switch: OFF (default) disables ACPX initialization and harness-config-writer deployment."
   harness_config_writer_enabled:
     name: Harness Config Writer
-    description: Optional (Repo-Split A2) - Deploy + register the bundled harness-config-writer plugin (generates the harness-native
-      file/env configuration from config.harnesses). Independent opt-in switch, default OFF — it neither follows nor
-      drives the ACP Dashboard Binding; only effective while acpx_enabled is on (master); a harness_base_url is required
-      to actually generate anything (empty = complete no-op). Copies but never overwrites — only byte-identical previously
-      GENERATED entries are refreshed; operator hand-edits and entries without the configured base URL are left intact.
-      The first enabled session snapshots the managed harness files — switching it back off restores the originals
-      automatically.
+    description: "Deploy the bundled harness-config-writer plugin. Independent opt-in, default OFF; effective only while acpx_enabled is on. harness_base_url activates generation (empty = no-op). Only unchanged previously generated entries are refreshed; operator edits stay untouched. First enable snapshots managed files; turning the option off restores the originals."
   harness:
     name: Harness (coding backends)
-    description: Shared provider/model defaults for the bundled acpx harnesses (Claude Code, Codex, OpenCode) and the
+    description: Shared provider/model defaults for the bundled acpx harnesses (Claude Code, Codex, OpenCode, Pi) and the
       harness-config-writer. The endpoint is any OpenAI-compatible API — not just Ollama. Without a configured
       harness_base_url every value in this group is INERT — only the switches apply (models, agents and utility_model take
       effect once a base URL is set).
@@ -87,8 +78,7 @@ configuration:
         description: API key used by generated harness entries (shared writer default). Empty = no key (e.g. local Ollama).
       harness_model:
         name: Default model (all harnesses)
-        description: Shared harness default model. Applies to all NON-excluded harnesses (codex/opencode/claude keep their
-          per-harness models below), when set. Empty = per-harness defaults win.
+        description: "Compatibility shared model. Per-harness option > this value > gateway default. Canonical models live in HCW harness entries."
       utility_model:
         name: Utility model
         description: Optional - Override for agents.defaults.utilityModel in openclaw.json (the model behind internal gateway
@@ -96,28 +86,24 @@ configuration:
           with clean strict-JSON output.
       harness_opencode_model:
         name: OpenCode (forge) model
-        description: Optional - Model for the OpenCode harness (forge). Default - glm-5.3-flash:cloud
+        description: "Compatibility model override for OpenCode. Empty = shared harness_model, then the gateway default; no hidden add-on model default."
       harness_claude_model:
         name: Claude Code model
-        description: Optional - Model for the Claude Code harness (also feeds the ambient ANTHROPIC_MODEL fallback). Default
-          - glm-5.3-flash:cloud
+        description: "Compatibility model override for Claude Code. Also feeds the ambient ANTHROPIC_MODEL fallback (glm-5.3-flash:cloud when no vendor key is configured)."
       harness_codex_model:
         name: Codex (audit) model
-        description: Optional - Model for the Codex harness (audit). Default - kimi-k2.7-code:cloud
+        description: "Compatibility model override for Codex. Empty = shared harness_model, then the gateway default; no hidden add-on model default."
+      harness_pi_model:
+        name: Pi
+        description: "Compatibility model override for Pi. Empty = shared harness_model, then the gateway default; no hidden add-on model default."
       harness_excluded_agents:
         name: Excluded harnesses
         description: Optional - Comma-separated harness ids EXCLUDED from the shared defaults above (e.g. "codex,opencode").
       additional_agents:
         name: Additional agents
         description: Optional - Comma-separated ADDITIONAL agent/harness names for acp.allowedAgents besides the bundled
-          claude/codex/opencode/openclaw (e.g. "pi,colibri,gemini"). Custom agents must also exist in the OpenClaw agent
+          claude/codex/opencode/pi (e.g. "colibri,gemini"). Custom agents must also exist in the OpenClaw agent
           roster with runtime.type=acp; the list is only unioned, never overwritten.
-      acp_dashboard_binding_enabled:
-        name: ACP Dashboard Binding
-        description: Optional (Phase 2.15) - Deploy + register the bundled acp-dashboard-binding plugin (resolves dashboard/webchat
-          conversations to ACP harness sessions). Independent opt-in switch, default OFF (v0.7.13.30) — it neither follows nor
-          drives the Harness Config Writer; only effective while acpx_enabled=true (master switch); otherwise the config
-          transfer stays off.
   gateway_ext:
     name: Gateway (external)
     description: URLs, trusted proxies and allowed origins for gateway access

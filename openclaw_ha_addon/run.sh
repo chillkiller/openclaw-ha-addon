@@ -4,6 +4,7 @@ set -euo pipefail
 # Ensure Homebrew and brew-installed binaries are in PATH
 # This is needed for OpenClaw skills that depend on CLI tools (gemini, aider, etc.)
 export PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}"
+OPENCLAW_NODE_BIN="/usr/bin/node"
 
 # Home Assistant app options are usually rendered to /data/options.json
 OPTIONS_FILE="/data/options.json"
@@ -60,7 +61,6 @@ if jq -e 'has("harness") or has("ha_integration")' "$OPTIONS_FILE" >/dev/null 2>
       harness_pi_model: .harness.harness_pi_model,
       harness_excluded_agents: .harness.harness_excluded_agents,
       additional_agents: .harness.additional_agents,
-      acp_dashboard_binding_enabled: .harness.acp_dashboard_binding_enabled,
       gateway_public_url: .gateway_ext.gateway_public_url,
       gateway_remote_url: .gateway_ext.gateway_remote_url,
       gateway_trusted_proxies: .gateway_ext.gateway_trusted_proxies,
@@ -76,6 +76,8 @@ if jq -e 'has("harness") or has("ha_integration")' "$OPTIONS_FILE" >/dev/null 2>
       abort_on_upgrade_backup_failure: .safety_nets.abort_on_upgrade_backup_failure,
       upgrade_backup_keep: .safety_nets.upgrade_backup_keep,
       gateway_doctor_repair_max: .safety_nets.gateway_doctor_repair_max,
+      gateway_doctor_repair_timeout: .safety_nets.gateway_doctor_repair_timeout,
+      gateway_doctor_capture_keep: .safety_nets.gateway_doctor_capture_keep,
       runtime_apt_packages: .runtime.runtime_apt_packages,
       custom_init_script: .runtime.custom_init_script,
       blocked_hostnames: .runtime.blocked_hostnames,
@@ -189,15 +191,8 @@ if [ -n "$HARNESS_BASE_URL" ]; then
 else
   echo "INFO: harness_base_url not configured — harness-group values (models, utility_model, additional_agents) are IGNORED; only the switches apply"
 fi
-# Phase 2.15 (GaRoN): plugin deploy gating — v0.7.13.30: INDEPENDENT switches,
-# all default OFF (unset/false = not opted in; no coupling between writer and
-# binding — neither needs the other). Explicit true deploys; explicit false =
-# real opt-out (the binding helper flips the entries gate and strips the
-# channel config block so the boot config stays valid).
-export ACP_DASHBOARD_BINDING_ENABLED=$(jq -r '.acp_dashboard_binding_enabled // empty' "$OPTIONS_FILE" 2>/dev/null)
 # Repo-Split A2 (2026-10-11): the harness-config-writer is its own plugin.
-# v0.7.13.30: INDEPENDENT switch, default false (was: UNSET followed
-# acp_dashboard_binding_enabled). It only runs when explicitly true AND does
+# v0.7.13.30: INDEPENDENT switch, default false. It only runs when explicitly true AND does
 # nothing without HARNESS_WRITER_BASE_URL below (base_url = activator).
 export HARNESS_CONFIG_WRITER_ENABLED=$(jq -r '.harness_config_writer_enabled // empty' "$OPTIONS_FILE" 2>/dev/null)
 
@@ -271,8 +266,7 @@ if [ "$GW_DOCTOR_CAPTURE_KEEP" -lt 1 ]; then GW_DOCTOR_CAPTURE_KEEP=1; fi
 if [ "$GW_DOCTOR_CAPTURE_KEEP" -gt 10 ]; then GW_DOCTOR_CAPTURE_KEEP=10; fi
 
 # ACPX harnesses (Claude Code, Codex, OpenCode). Default OFF (v0.7.13.30):
-# all acp(x) switches are opt-in (acpx_enabled / harness_config_writer_enabled /
-# acp_dashboard_binding_enabled, each independent).
+# acpx_enabled and harness_config_writer_enabled are independent opt-ins.
 ACPX_ENABLED=$(jq -r 'if has("acpx_enabled") then (.acpx_enabled|tostring) else "false" end' "$OPTIONS_FILE")
 
 export TZ="$TZNAME"
@@ -695,6 +689,40 @@ else
   echo "INFO: Homebrew not available (install may have failed during image build)"
 fi
 
+# The package-manager Node belongs to the image, unlike the Homebrew tree
+# above which may have been restored from /config. Check that exact binary
+# before any gateway process is launched.
+verify_openclaw_node() {
+  local node_bin="${1:-$OPENCLAW_NODE_BIN}" version
+  if [ ! -x "$node_bin" ]; then
+    echo "ERROR: OpenClaw Node runtime is missing or not executable: ${node_bin}"
+    return 1
+  fi
+  if ! version="$("$node_bin" -e '
+const [major, minor] = process.versions.node.split(".").map(Number);
+const supported = (major === 24 && minor >= 16) ||
+  (major === 26 && minor >= 1) || major >= 27;
+if (!supported) {
+  console.error(`unsupported Node ${process.versions.node}; require >=24.16.0 <25 or >=26.1.0`);
+  process.exit(1);
+  }
+process.stdout.write(process.versions.node);
+' 2>&1)"; then
+    echo "ERROR: OpenClaw Node runtime ${node_bin} failed its engine check: ${version}"
+    return 1
+  fi
+  echo "INFO: OpenClaw Node runtime: ${node_bin} (process.versions.node=${version})"
+}
+
+# OpenClaw and every child it spawns inherit this path. /usr/bin therefore
+# wins over both persistent npm/pnpm bins and the persistent Homebrew Node,
+# without hiding any of those tools from the rest of the add-on.
+openclaw_exec_with_image_node() {
+  PATH="/usr/bin:/bin:${PATH}" exec "$@"
+}
+
+verify_openclaw_node
+
 # Back-compat: some docs/scripts assume /data; point it at /config.
 if [ ! -e /data ]; then
   ln -s /config /data || true
@@ -719,8 +747,58 @@ fi
 # Session lock cleanup helpers
 # ------------------------------------------------------------------------------
 
+# A gateway candidate must have a complete daemon argv, not merely a familiar
+# substring. Read the kernel's NUL-separated argv and require one of our two
+# supported launch shapes (CLI wrapper or long-running dist entrypoint).
+oc_gateway_pid_is_daemon() {
+  local pid="$1" item program entry command action
+  local cursor=0
+  local -a raw=() argv=()
+
+  [ -r "/proc/${pid}/cmdline" ] || return 1
+  mapfile -d '' -t raw < "/proc/${pid}/cmdline" 2>/dev/null || true
+  for item in "${raw[@]}"; do
+    [ -n "$item" ] && argv+=("$item")
+  done
+  [ "${#argv[@]}" -gt 0 ] || return 1
+
+  if [ "${#argv[@]}" -eq 1 ] && [ "${argv[0]}" = "openclaw-gateway" ]; then
+    return 0
+  fi
+
+  program="${argv[0]##*/}"
+  if [ "$program" = "node" ] || [ "$program" = "nodejs" ]; then
+    cursor=1
+  fi
+  [ "${#argv[@]}" -ge $((cursor + 3)) ] || return 1
+  entry="${argv[$cursor]}"
+  command="${argv[$((cursor + 1))]}"
+  action="${argv[$((cursor + 2))]}"
+  [ "$command" = "gateway" ] || return 1
+  case "$action" in
+    run|-*) ;;
+    *) return 1 ;;
+  esac
+
+  case "${entry##*/}" in
+    openclaw|openclaw.mjs|openclaw.js) return 0 ;;
+    index.js)
+      [[ "$entry" == */openclaw/dist/index.js ]] && return 0
+      ;;
+  esac
+  return 1
+}
+
 gateway_running() {
-  pgrep -f "openclaw-gateway" >/dev/null 2>&1
+  local f pid
+  for f in /proc/[0-9]*/cmdline; do
+    pid="${f#/proc/}"
+    pid="${pid%%/*}"
+    if oc_gateway_pid_is_daemon "$pid"; then
+      return 0
+    fi
+  done
+  return 1
 }
 
 cleanup_session_locks() {
@@ -1158,7 +1236,7 @@ export SHOW_DOCS="$ENABLE_DOCS"
 #   "OpenClaw 2026.8.2 (xxxxxxxx)"
 # The plugin loader expects a plain semver string, so we take the
 # second whitespace-delimited field which is already the version.
-export OPENCLAW_VERSION="$(openclaw --version 2>/dev/null | head -1 | awk '/^OpenClaw / { print $2; exit }' || echo 'unknown')"
+export OPENCLAW_VERSION="$(openclaw_exec_with_image_node openclaw --version 2>/dev/null | head -1 | awk '/^OpenClaw / { print $2; exit }' || echo 'unknown')"
 echo "INFO: OpenClaw version detected: ${OPENCLAW_VERSION}"
 
 # -----------------------------------------------------------------------------
@@ -1178,6 +1256,20 @@ echo "INFO: OpenClaw version detected: ${OPENCLAW_VERSION}"
 # transient locks and *.corrupt.* quarantine artifacts are excluded.
 # -----------------------------------------------------------------------------
 UPGRADE_BACKUP_DIR="${OPENCLAW_CONFIG_DIR}/upgrade-backups"
+
+remove_interrupted_upgrade_backups() {
+  local candidate
+  # The glob cannot descend into subdirectories. An unmatched glob fails the
+  # regular-file test; symlinks and directories are deliberately left alone.
+  for candidate in "${UPGRADE_BACKUP_DIR}"/openclaw-state-*.tar.gz.partial; do
+    if [ ! -f "$candidate" ] || [ -L "$candidate" ]; then
+      continue
+    fi
+    if ! rm -f -- "$candidate" 2>/dev/null; then
+      echo "WARN: Could not remove interrupted upgrade backup ${candidate}."
+    fi
+  done
+}
 
 backup_upgrade_state() {
   # args: <version> -> archive upgrade-sensitive state once; caller updates state.
@@ -1233,6 +1325,8 @@ upgrade_backup_gate() {
   local version="$1" prev
   [ -f "${OPENCLAW_CONFIG_DIR}/openclaw.json" ] || return 0
   mkdir -p "$UPGRADE_BACKUP_DIR"
+  # A SIGKILL can strand a partial archive; sweep it before every gate outcome.
+  remove_interrupted_upgrade_backups
   prev="$(cat "${UPGRADE_BACKUP_DIR}/.last-version" 2>/dev/null || echo '')"
   if [ -z "$prev" ]; then
     # Self-heal (audit P2-6b): an empty/truncated marker after power loss must
@@ -1333,15 +1427,25 @@ fi
 # Proxy shim for undici/OpenClaw startup
 # Keep official OpenClaw npm release while enabling HTTP(S)_PROXY support.
 # ------------------------------------------------------------------------------
-OPENCLAW_GLOBAL_NODE_MODULES="$(HOME=/root npm root -g 2>/dev/null || true)"
-if [ -f /usr/local/lib/openclaw-proxy-shim.cjs ]; then
-  if [ -n "${NODE_OPTIONS:-}" ]; then
-    export NODE_OPTIONS="--require /usr/local/lib/openclaw-proxy-shim.cjs ${NODE_OPTIONS}"
-  else
-    export NODE_OPTIONS="--require /usr/local/lib/openclaw-proxy-shim.cjs"
+configure_openclaw_proxy_shim() {
+  local shim_path="${1:-/usr/local/lib/openclaw-proxy-shim.cjs}"
+  # Match the shim's four activation variables exactly. ALL_PROXY alone must
+  # not inject code (verified Codex inference rejects even a no-op --require).
+  if [ -f "$shim_path" ] && {
+    [ -n "${HTTPS_PROXY:-}" ] || [ -n "${HTTP_PROXY:-}" ] ||
+    [ -n "${https_proxy:-}" ] || [ -n "${http_proxy:-}" ];
+  }; then
+    # Keep this lookup lazy: npm is not needed when no proxy is configured.
+    OPENCLAW_GLOBAL_NODE_MODULES="$(HOME=/root npm root -g 2>/dev/null || true)"
+    if [ -n "${NODE_OPTIONS:-}" ]; then
+      export NODE_OPTIONS="--require ${shim_path} ${NODE_OPTIONS}"
+    else
+      export NODE_OPTIONS="--require ${shim_path}"
+    fi
+    export OPENCLAW_GLOBAL_NODE_MODULES
   fi
-  export OPENCLAW_GLOBAL_NODE_MODULES
-fi
+}
+configure_openclaw_proxy_shim
 
 # ------------------------------------------------------------------------------
 # Runtime APT packages (Audit R5 — was defined but never implemented)
@@ -1404,17 +1508,22 @@ fi
 # Runs once; re-runs when the token changes.
 # Auto-detects HA API URL: supervisor proxy if available, else localhost:8123.
 # ------------------------------------------------------------------------------
-if [ "$AUTO_CONFIGURE_MCP" = "true" ] && [ -n "$HA_TOKEN" ]; then
+configure_ha_mcp() {
+if [ "$AUTO_CONFIGURE_MCP" = "true" ] && { [ -n "$HA_TOKEN" ] || [ -n "${SUPERVISOR_TOKEN:-}" ]; }; then
   if command -v mcporter >/dev/null 2>&1; then
     # Detect HA API URL: prefer supervisor proxy (works in all app network modes),
     # fall back to localhost:8123 (works with host_network: true).
+    # HA documents SUPERVISOR_TOKEN for /core/api/ proxy routes. The configured
+    # long-lived HA token is only for the direct localhost Core API fallback.
     if [ -n "${SUPERVISOR_TOKEN:-}" ]; then
       MCP_HA_URL="http://supervisor/core/api/mcp"
+      MCP_HA_TOKEN="$SUPERVISOR_TOKEN"
     else
       MCP_HA_URL="http://localhost:8123/api/mcp"
+      MCP_HA_TOKEN="$HA_TOKEN"
     fi
-    MCP_FLAG="/config/.openclaw/.mcp_ha_configured"
-    MCP_TOKEN_HASH=$(printf '%s' "$HA_TOKEN" | sha256sum | cut -d' ' -f1)
+    MCP_FLAG="${OPENCLAW_CONFIG_DIR}/.mcp_ha_configured"
+    MCP_TOKEN_HASH=$(printf '%s\n%s' "$MCP_HA_URL" "$MCP_HA_TOKEN" | sha256sum | cut -d' ' -f1)
 
     if [ -f "$MCP_FLAG" ] && [ "$(cat "$MCP_FLAG" 2>/dev/null)" = "$MCP_TOKEN_HASH" ]; then
       echo "INFO: MCP Home Assistant server already configured (token unchanged)"
@@ -1424,7 +1533,7 @@ if [ "$AUTO_CONFIGURE_MCP" = "true" ] && [ -n "$HA_TOKEN" ]; then
       mcporter config remove HA 2>/dev/null || true
 
       if mcporter config add HA "$MCP_HA_URL" \
-          --header "Authorization=Bearer $HA_TOKEN" \
+          --header "Authorization=Bearer $MCP_HA_TOKEN" \
           --scope home 2>&1; then
         printf '%s' "$MCP_TOKEN_HASH" > "$MCP_FLAG"
         echo "INFO: MCP server 'HA' registered — OpenClaw can now control Home Assistant"
@@ -1436,17 +1545,19 @@ if [ "$AUTO_CONFIGURE_MCP" = "true" ] && [ -n "$HA_TOKEN" ]; then
   else
     echo "INFO: mcporter not available; skipping MCP auto-configuration (run 'openclaw onboard' first)"
   fi
-elif [ "$AUTO_CONFIGURE_MCP" = "true" ] && [ -z "$HA_TOKEN" ]; then
-  echo "INFO: MCP auto-configure enabled but homeassistant_token not set — skipping"
-  echo "INFO: To auto-configure, set homeassistant_token in app Configuration, then restart"
+elif [ "$AUTO_CONFIGURE_MCP" = "true" ]; then
+  echo "INFO: MCP auto-configure enabled but no Supervisor or Home Assistant token is available — skipping"
+  echo "INFO: For the localhost fallback, set homeassistant_token in app Configuration, then restart"
 fi
+}
+configure_ha_mcp
 
 # ------------------------------------------------------------------------------
 # Initialize acp(x) components (ACPX infra + custom plugins)
 # v0.7.13.30: acpx_enabled is the MASTER gate. acpx_enabled=false means NO
-# writer and NO binding deploy / config transfer, whatever their own switches
-# say. With the master on, the two plugin switches act independently of each
-# other (writer neither follows nor drives binding); the ACPX infrastructure
+# writer deploy / config transfer. Retired-plugin data migration and payload
+# removal are upgrade maintenance, not ACP deployment: they run for every
+# install before the master-gate branch. With the master on, the ACPX infrastructure
 # (managed npm project + openclaw.json acp patch) is always set up when the
 # helper runs. Agent definitions are NOT modified here; existing
 # user-configured coding agents are preserved.
@@ -1455,9 +1566,16 @@ ACPX_HELPER_PATH="/oc_acpx_helper.py"
 if [ ! -f "$ACPX_HELPER_PATH" ] && [ -f "$(dirname "$0")/oc_acpx_helper.py" ]; then
   ACPX_HELPER_PATH="$(dirname "$0")/oc_acpx_helper.py"
 fi
+if [ -f "$ACPX_HELPER_PATH" ]; then
+  echo "INFO: Migrating/removing retired dashboard-binding installation (independent of acpx_enabled)..."
+  python3 "$ACPX_HELPER_PATH" --migrate-retired-binding || \
+    echo "ERROR: retired dashboard-binding migration/cleanup failed (exit $?) — see WARN/ERROR lines above"
+else
+  echo "WARN: ACPX helper not found; skipping retired dashboard-binding migration/cleanup"
+fi
 if [ "$ACPX_ENABLED" = "true" ] || [ "$ACPX_ENABLED" = "1" ]; then
   if [ -f "$ACPX_HELPER_PATH" ]; then
-    echo "INFO: Initializing acp(x) components (acpx master on; binding/writer per their own switches)..."
+    echo "INFO: Initializing acp(x) components (acpx master on; writer per its own switch)..."
     # GATEWAY_INTERNAL_PORT is exported above (run.sh owns the config
     # bootstrap; the helper only patches the acp section).
     python3 "$ACPX_HELPER_PATH" || \
@@ -1466,9 +1584,9 @@ if [ "$ACPX_ENABLED" = "true" ] || [ "$ACPX_ENABLED" = "1" ]; then
     echo "WARN: ACPX helper not found; skipping acp(x) initialization"
   fi
 else
-  echo "INFO: acpx_enabled off — no ACP initialization; writer/binding config transfer stays OFF (master gate)"
-  case "$ACP_DASHBOARD_BINDING_ENABLED$HARNESS_CONFIG_WRITER_ENABLED" in
-    *true*|*True*|*1*) echo "INFO: acp_dashboard_binding_enabled/harness_config_writer_enabled set, but acpx_enabled=false — plugin config transfer remains OFF (set acpx_enabled=true to enable)" ;;
+  echo "INFO: acpx_enabled off — no ACP initialization; writer config transfer stays OFF (master gate)"
+  case "$HARNESS_CONFIG_WRITER_ENABLED" in
+    true|True|1) echo "INFO: harness_config_writer_enabled set, but acpx_enabled=false — writer config transfer remains OFF (set acpx_enabled=true to enable)" ;;
   esac
 fi
 
@@ -1536,9 +1654,9 @@ PY
 
     echo "INFO: gateway_mode=remote detected; starting node host to $NODE_HOST:$NODE_PORT ${NODE_TLS_FLAG}"
     # shellcheck disable=SC2086
-    openclaw node run --host "$NODE_HOST" --port "$NODE_PORT" $NODE_TLS_FLAG &
+    openclaw_exec_with_image_node openclaw node run --host "$NODE_HOST" --port "$NODE_PORT" $NODE_TLS_FLAG &
   else
-    openclaw gateway run &
+    openclaw_exec_with_image_node openclaw gateway run &
   fi
   GW_PID=$!
   return 0
@@ -1562,7 +1680,7 @@ start_gw_relay() {
     | awk '/inet /{gsub(/\/.*/,"",$2); print $2; exit}' || true)
   if [[ "${ts_ip:-}" =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
     echo "INFO: Starting loopback relay for tailnet gateway (127.0.0.1:${GATEWAY_PORT} -> ${ts_ip}:${GATEWAY_PORT})"
-    node -e "
+    "$OPENCLAW_NODE_BIN" -e "
 const net = require('net');
 const TARGET_HOST = '${ts_ip}';
 const TARGET_PORT = ${GATEWAY_PORT};
@@ -1593,42 +1711,39 @@ stop_gw_relay() {
 # Used by the supervisor loop to detect self-restarts (SIGUSR1) without
 # spawning duplicate gateway instances that collide on the port.
 #
-# Three tiers, tried in order of reliability:
-#   1. Port ownership via `ss -tlnp` — authoritative, but only works once
-#      the daemon has bound the port (can take 20+ s on Pi hardware).
-#   2. Process title via `pgrep -f openclaw-gateway` — works after Node.js
-#      sets process.title, which also happens late during init.
-#   3. /proc cmdline scan — catches the daemon IMMEDIATELY after fork,
-#      before title or port bind, by matching "openclaw" in the cmdline.
-#      Excludes known PIDs (nginx, ttyd, relay, our shell, old GW_PID).
-#
-# Returns the PID on stdout and exit 0, or exits with code 1 if nothing found.
+# A listening socket is useful evidence only when its owner also passes the
+# daemon-argv check. Otherwise scan each numeric /proc entry exactly once.
+# Known wrapper PIDs and previously rejected candidates are never returned.
+oc_gateway_listener_pid() {
+  ss -tlnpH 2>/dev/null | awk -v port="${GATEWAY_INTERNAL_PORT}" '
+    $4 ~ (":" port "$") {
+      if (match($0, /pid=[0-9]+/)) {
+        print substr($0, RSTART + 4, RLENGTH - 4)
+        exit
+      }
+    }'
+}
+
 find_gateway_daemon_pid() {
-  local pid=""
+  local listener pid path
+  local known=" ${NGINX_PID:-0} ${TTYD_PID:-0} ${GW_RELAY_PID:-0} ${GW_PID:-0} $$ ${GW_DENIED_PIDS:-} "
 
-  # Tier 1: port ownership (authoritative once port is bound)
-  pid=$(ss -tlnp 2>/dev/null \
-    | grep ":${GATEWAY_INTERNAL_PORT} " \
-    | sed -n 's/.*pid=\([0-9]*\).*/\1/p' \
-    | head -1)
-  [ -n "$pid" ] && { echo "$pid"; return 0; }
+  listener="$(oc_gateway_listener_pid || true)"
+  if [ -n "$listener" ]; then
+    case "$known" in
+      *" $listener "*) listener="" ;;
+    esac
+    if [ -n "$listener" ] && oc_gateway_pid_is_daemon "$listener"; then
+      echo "$listener"
+      return 0
+    fi
+  fi
 
-  # Tier 2: process title (after Node sets process.title)
-  pid=$(pgrep -f "openclaw-gateway" 2>/dev/null | head -1)
-  [ -n "$pid" ] && { echo "$pid"; return 0; }
-
-  # Tier 3: scan /proc for any openclaw process we don't already know about.
-  # The daemon's cmdline (e.g. node /usr/.../openclaw/...) contains "openclaw"
-  # from the moment it is forked, even before process.title is set.
-  local known=" ${NGINX_PID:-0} ${TTYD_PID:-0} ${GW_RELAY_PID:-0} ${GW_PID:-0} $$ "
-  local f cand
-  for f in /proc/[0-9]*/cmdline; do
-    [ -r "$f" ] || continue
-    if tr '\0' ' ' < "$f" 2>/dev/null | grep -q "openclaw"; then
-      cand="${f#/proc/}"
-      cand="${cand%%/*}"
-      case "$known" in *" $cand "*) continue ;; esac
-      echo "$cand"
+  for path in /proc/[0-9]*; do
+    pid="${path#/proc/}"
+    case "$known" in *" $pid "*) continue ;; esac
+    if oc_gateway_pid_is_daemon "$pid"; then
+      echo "$pid"
       return 0
     fi
   done
@@ -2297,17 +2412,41 @@ GW_BOOT_START=$(date +%s)
 : "${GW_PREV_BOOT_ALIVE:=0}"   # was the last gateway attempt a boot that actually ran? (kept if the initial boot already came up)
 GW_CONSECUTIVE_FAILS=0
 GW_DOCTOR_REPAIR_RUNS=0
+# Give an adopted process five minutes to prove that it is the serving
+# gateway. Denied PIDs stay out of all subsequent discovery passes.
+GW_ADOPT_CONFIRM_TIMEOUT=300
+GW_DENIED_PIDS=""
 
 while true; do
+  GW_ADOPT_CLOCK_START=$SECONDS
   if [ "$GW_IS_CHILD" = "true" ]; then
     # Efficient blocking wait on our child process.
     GW_EXIT_CODE=0
     wait "${GW_PID}" 2>/dev/null || GW_EXIT_CODE=$?
   else
     # GW_PID is NOT our child (re-tracked after a self-restart).
-    # Poll with kill -0 until it exits.
+    # Poll with kill -0 until it exits. Adoption is provisional until this
+    # exact PID (or the real gateway replacing it) owns the internal port.
+    GW_ADOPT_CONFIRMED=false
+    if [ "$GATEWAY_MODE" = "remote" ]; then
+      GW_ADOPT_CONFIRMED=true
+    fi
     while kill -0 "$GW_PID" 2>/dev/null; do
       if [ "$SHUTTING_DOWN" = "true" ]; then break 2; fi
+      if [ "$GW_ADOPT_CONFIRMED" != "true" ]; then
+        GW_LISTENER_PID=$(oc_gateway_listener_pid || true)
+        if [ -n "$GW_LISTENER_PID" ] && oc_gateway_pid_is_daemon "$GW_LISTENER_PID"; then
+          if [ "$GW_LISTENER_PID" != "$GW_PID" ]; then
+            echo "INFO: Gateway port ${GATEWAY_INTERNAL_PORT} is owned by PID ${GW_LISTENER_PID}, not ${GW_PID}; monitoring ${GW_LISTENER_PID}."
+            GW_PID="$GW_LISTENER_PID"
+          fi
+          GW_ADOPT_CONFIRMED=true
+        elif [ $((SECONDS - GW_ADOPT_CLOCK_START)) -ge "$GW_ADOPT_CONFIRM_TIMEOUT" ]; then
+          echo "WARN: PID ${GW_PID} did not bind gateway port ${GATEWAY_INTERNAL_PORT} within ${GW_ADOPT_CONFIRM_TIMEOUT}s; it is not the gateway. Relaunching."
+          GW_DENIED_PIDS="${GW_DENIED_PIDS} ${GW_PID}"
+          break
+        fi
+      fi
       sleep 5
     done
     GW_EXIT_CODE=0
@@ -2347,12 +2486,11 @@ while true; do
   # Even if all detection methods missed the daemon during the loop above,
   # the port may now be bound (the daemon finished initialising while we slept).
   # Never launch a duplicate if the port is occupied.
-  if [ "$GATEWAY_MODE" != "remote" ] && \
-     ss -tlnp 2>/dev/null | grep -q ":${GATEWAY_INTERNAL_PORT} "; then
-    PORT_PID=$(ss -tlnp 2>/dev/null \
-      | grep ":${GATEWAY_INTERNAL_PORT} " \
-      | sed -n 's/.*pid=\([0-9]*\).*/\1/p' \
-      | head -1 || true)
+  PORT_PID=""
+  if [ "$GATEWAY_MODE" != "remote" ]; then
+    PORT_PID=$(oc_gateway_listener_pid || true)
+  fi
+  if [ -n "$PORT_PID" ] && oc_gateway_pid_is_daemon "$PORT_PID"; then
     echo "INFO: Gateway port ${GATEWAY_INTERNAL_PORT} occupied by PID ${PORT_PID:-unknown}; monitoring."
     GW_PID="${PORT_PID:-$GW_PID}"
     GW_IS_CHILD=false

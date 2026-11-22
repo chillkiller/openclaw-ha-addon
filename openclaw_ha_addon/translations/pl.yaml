@@ -53,22 +53,13 @@ configuration:
           Protocol. Wyłącz tylko jeśli zarządzasz konfiguracją mcporter ręcznie.
   acpx_enabled:
     name: Infrastruktura ACPX
-    description: Instaluj launchery wrapperów ACPX (Claude Code, Codex, OpenCode), aby OpenClaw mógł uruchamiać agentów kodujących
-      przez lokalny backend ACPX. Istniejąca konfiguracja agentów użytkownika pozostaje bez zmian. Przełącznik nadrzędny
-      całej powierzchni acp(x) — WYŁĄCZONE (domyślnie) = brak transferu konfiguracji Writer/Binding, ich przełączniki
-      pozostają nieaktywne; WŁĄCZONE = odblokowanie — przełączniki Writer/Binding decydują wtedy samodzielnie.
+    description: "Instaluje trwały projekt ACPX (workery referencyjne: Claude Code, Codex, OpenCode i Pi). Zachowuje agentów skonfigurowanych przez operatora. Przełącznik główny: WYŁĄCZONY (domyślnie) blokuje inicjalizację ACPX i wdrażanie harness-config-writer."
   harness_config_writer_enabled:
     name: Harness Config Writer
-    description: Opcjonalnie (Repo-Split A2) - Wdróż + zarejestruj wbudowany plugin harness-config-writer (generuje natywną
-      konfigurację plik/env harnessów z config.harnesses). Niezależny przełącznik opt-in, domyślnie WYŁĄCZONE — ani podąża
-      za ACP Dashboard Binding, ani nim steruje; działa tylko przy włączonym acpx_enabled (nadrzędny); do faktycznego
-      generowania potrzebna jest harness_base_url (puste = pełny no-op). Kopiuje, ale nigdy nie nadpisuje — odświeżane są
-      tylko wcześniej WYGENEROWANE wpisy identyczne bajt po bajcie; ręczne edycje operatora i wpisy bez skonfigurowanego
-      base URL pozostają nietknięte. Pierwsza włączona sesja robi zrzut zarządzanych plików harnessów — ponowne wyłączenie
-      automatycznie przywraca oryginały.
+    description: "Wdraża wbudowany plugin harness-config-writer. Niezależny opt-in, domyślnie WYŁĄCZONY; działa tylko przy włączonym acpx_enabled. harness_base_url uruchamia generowanie (puste = no-op). Aktualizuje tylko niezmienione wcześniej wygenerowane wpisy; edycje operatora pozostają nietknięte. Pierwsze włączenie tworzy migawkę; wyłączenie przywraca oryginały."
   harness:
     name: Harness (backendy kodujące)
-    description: Wspólne domyślne provider/ustawienia modeli dla wbudowanych harnessów acpx (Claude Code, Codex, OpenCode) i
+    description: Wspólne domyślne provider/ustawienia modeli dla wbudowanych harnessów acpx (Claude Code, Codex, OpenCode, Pi) i
       harness-config-writer. Endpointem jest dowolne API kompatybilne z OpenAI — nie tylko Ollama. Bez ustawionej
       harness_base_url wszystkie wartości w tej grupie są NIEWAŻNE — obowiązują tylko przełączniki (modele, agenty i
       utility_model zaczną działać dopiero po ustawieniu base URL).
@@ -84,8 +75,7 @@ configuration:
           lokalna Ollama).
       harness_model:
         name: Model domyślny (wszystkie harnessy)
-        description: Wspólny domyślny model harness. Stosowany do wszystkich NIEwykluczonych harnessów (codex/opencode/claude
-          zachowują swoje indywidualne modele poniżej), gdy ustawiony. Puste = wygrywają domyślne wartości indywidualne.
+        description: "Wspólny model kompatybilności. Opcja per harness > ta wartość > domyślny model gateway. Modele kanoniczne znajdują się we wpisach HCW."
       utility_model:
         name: Model utility
         description: Opcjonalnie - Override dla agents.defaults.utilityModel w openclaw.json (model za wewnętrznymi wywołaniami
@@ -93,14 +83,16 @@ configuration:
           model z czystym wyjściem strict-JSON.
       harness_opencode_model:
         name: Model OpenCode (forge)
-        description: Opcjonalnie - Model harnessa OpenCode (forge). Domyślnie - glm-5.3-flash:cloud
+        description: "Model kompatybilności dla OpenCode. Puste = wspólne harness_model, potem domyślny model gateway; bez ukrytego domyślnego modelu add-onu."
       harness_claude_model:
         name: Model Claude Code
-        description: Opcjonalnie - Model harnessa Claude Code (zasila także ambient ANTHROPIC_MODEL fallback). Domyślnie
-          - glm-5.3-flash:cloud
+        description: "Model kompatybilności dla Claude Code. Zasila także ambient ANTHROPIC_MODEL (glm-5.3-flash:cloud bez klucza dostawcy)."
       harness_codex_model:
         name: Model Codex (audit)
-        description: Opcjonalnie - Model harnessa Codex (audit). Domyślnie - kimi-k2.7-code:cloud
+        description: "Model kompatybilności dla Codex. Puste = wspólne harness_model, potem domyślny model gateway; bez ukrytego domyślnego modelu add-onu."
+      harness_pi_model:
+        name: Pi
+        description: "Model kompatybilności dla Pi. Puste = wspólne harness_model, potem domyślny model gateway; bez ukrytego domyślnego modelu add-onu."
       harness_excluded_agents:
         name: Wykluczone harnessy
         description: Opcjonalnie - Lista ID harnessów (rozdzielona przecinkami) WYKLUCZONYCH ze wspólnych domyślnych powyżej
@@ -108,14 +100,8 @@ configuration:
       additional_agents:
         name: Dodatkowe agenty
         description: Opcjonalnie - Lista DODATKOWYCH nazw agentów/harnessów (rozdzielona przecinkami) dla acp.allowedAgents
-          obok wbudowanych claude/codex/opencode/openclaw (np. "pi,colibri,gemini"). Agenty niestandardowe muszą też istnieć
+          obok wbudowanych claude/codex/opencode/pi (np. "colibri,gemini"). Agenty niestandardowe muszą też istnieć
           w rosterze OpenClaw z runtime.type=acp; lista jest tylko uzupełniana, nigdy nadpisywana.
-      acp_dashboard_binding_enabled:
-        name: ACP Dashboard Binding
-        description: Opcjonalnie (Faza 2.15) - Wdróż + zarejestruj wbudowany plugin acp-dashboard-binding (przypisuje rozmowy
-          dashboard/webchat do sesji harness ACP). Niezależny przełącznik opt-in, domyślnie WYŁĄCZONE (v0.7.13.30) — ani
-          podąża za Harness Config Writer, ani nim steruje; działa tylko, dopóki acpx_enabled=true (przełącznik nadrzędny); w
-          przeciwnym razie transfer konfiguracji pozostaje wyłączony.
   gateway_ext:
     name: Gateway (external)
     description: URLs, trusted proxies and allowed origins for gateway access
