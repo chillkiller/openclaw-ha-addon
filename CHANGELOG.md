@@ -8,6 +8,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Each entry summarizes user-visible changes. Full engineering notes:
 [openclaw_ha_addon/CHANGELOG.md](openclaw_ha_addon/CHANGELOG.md).
 
+## [0.7.13.41] — 2026-11-22
+
+The bundled OpenClaw runtime and ACP harness are updated to 2026.11.6, release checks now prevent stale runtime pins, and the separate native Codex plugin is retired.
+
+### Changed
+
+- **The bundled runtime moved from OpenClaw 2026.11.3 to 2026.11.6.** The update improves compaction continuity, credential handling and memory use.
+- **The ACP harness moved from 2026.7.1 to 2026.11.6.** All other harness CLI pins are unchanged. The Codex CLI used by the ACP harness comes from the harness dependency tree and follows its version instead of a separate add-on pin.
+- **The bundled tools moved to current releases.** The MCP client is now `mcporter` 0.17.1 and the package manager is `pnpm` 12.21.0; `node-llama-cpp` remains at 3.22.3.
+- **Release checks now compare all 13 bundled npm pins with the registry's latest stable release.** This covers OpenClaw, ACPX, every managed harness CLI, and the image tools `node-llama-cpp`, `mcporter` and `pnpm`. OpenClaw/ACPX runtime drift blocks tagging, while harness CLI and image-tool drift is a warning unless the strict check is requested. The check runs only at release time, never during an image build or application startup.
+
+### Fixed
+
+- **Long conversations retain more context through compaction.** Loaded chat history stays visible, history is preserved when a summary reaches its output limit, OpenAI sessions recover from compaction item conflicts, and the summary character cap is configurable upstream.
+- **Large stores and transcript repairs use less memory.** Large transcript trimming and indexing are bounded, large transcript-index repairs avoid worker out-of-memory failures, session rewinds no longer exhaust the shared database worker, and backup inspection avoids copying the live database.
+- **Credentials are exposed less often.** Inline environment credentials are redacted from configuration reads, stored secret references are preserved instead of being replaced with plaintext, and plaintext catalog credentials are no longer imported alongside stored secret references.
+
+### Removed
+
+- **The separate native Codex plugin is no longer installed.** Unconditional upgrade maintenance removes its old managed dependency and payload whether ACPX is on or off. The Codex agent keeps running through the ACP harness. Other packages, plugin entries and allowlist identifiers are preserved.
+- **The add-on-owned native Codex files now have a single writer layer, and the separate Codex wrapper is gone.** The Codex client reads the configuration the harness-config-writer writes: provider endpoint, credentials, model catalog and the Codex native compaction threshold; the model line stays the client default, while an ACP session runs the model selected in the picker. The Gateway agent entry supplies the model label of an ACP session and its fallback chain; ACPX starts the adapter and owns ACP session compaction.
+
+---
+
 ## [0.7.13.40] — 2026-11-22
 
 The standard Home Assistant MCP connection now uses the token entered in the app configuration and is registered only after Home Assistant successfully authenticates it.

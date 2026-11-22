@@ -1513,7 +1513,7 @@ fi
 configure_ha_mcp() {
   [ "$AUTO_CONFIGURE_MCP" = "true" ] || return 0
 
-  local mcporter_pin="0.17.0"
+  local mcporter_pin="0.17.1"
   local image_path="/usr/bin:$PATH"
   local installed_version=""
   local mcporter_bin=""

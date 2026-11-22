@@ -25,7 +25,7 @@ vi.mock("openclaw/plugin-sdk/core", () => ({
 }));
 
 // eslint-disable-next-line import/order
-import { registerHarnessConfigDeployment, resolveWriterGate } from "./index.js";
+import { ensureCodexAcpAuthEnv, registerHarnessConfigDeployment, resolveWriterGate } from "./index.js";
 
 type Logger = {
   debug?: (m: string) => void;
@@ -80,6 +80,25 @@ function makeApi(options: ApiOptions = {}): {
 }
 
 const CODEX_ENTRY = { model: "audit-m", baseUrl: "http://b:1234" };
+const ORIGINAL_ENV = {
+  HOME: process.env.HOME,
+  CODEX_HOME: process.env.CODEX_HOME,
+  CODEX_API_KEY: process.env.CODEX_API_KEY,
+  OPENAI_API_KEY: process.env.OPENAI_API_KEY,
+};
+
+beforeEach(() => {
+  delete process.env.CODEX_HOME;
+  delete process.env.CODEX_API_KEY;
+  delete process.env.OPENAI_API_KEY;
+});
+
+afterEach(() => {
+  for (const [key, value] of Object.entries(ORIGINAL_ENV)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
+});
 
 function codexTomlPath(root: string): string {
   return join(root, ".codex", "config.toml");
@@ -132,6 +151,29 @@ describe("resolveWriterGate (ENV-Gate, Audit B2)", () => {
   });
 });
 
+describe("ensureCodexAcpAuthEnv", () => {
+  it("supplies the configured credential to ACPX when no supported environment credential exists", () => {
+    const env: Record<string, string | undefined> = {};
+    ensureCodexAcpAuthEnv({ apiKey: "configured-test-key" }, env);
+    expect(env.CODEX_API_KEY).toBe("configured-test-key");
+  });
+
+  it("supplies the local-provider placeholder when the entry has no key", () => {
+    const env: Record<string, string | undefined> = {};
+    ensureCodexAcpAuthEnv({}, env);
+    expect(env.CODEX_API_KEY).toBe("ollama");
+  });
+
+  it("preserves existing CODEX_API_KEY and OPENAI_API_KEY precedence", () => {
+    const codexEnv = { CODEX_API_KEY: "existing-codex", OPENAI_API_KEY: "existing-openai" };
+    ensureCodexAcpAuthEnv({ apiKey: "configured-test-key" }, codexEnv);
+    expect(codexEnv).toEqual({ CODEX_API_KEY: "existing-codex", OPENAI_API_KEY: "existing-openai" });
+    const openAiEnv: Record<string, string | undefined> = { OPENAI_API_KEY: "existing-openai" };
+    ensureCodexAcpAuthEnv({ apiKey: "configured-test-key" }, openAiEnv);
+    expect(openAiEnv.CODEX_API_KEY).toBeUndefined();
+  });
+});
+
 describe("registerHarnessConfigDeployment — ENV-Gate-Verdrahtung am Entry", () => {
   let root: string;
 
@@ -148,6 +190,7 @@ describe("registerHarnessConfigDeployment — ENV-Gate-Verdrahtung am Entry", ()
 
   function boot(envOver: Record<string, string | undefined>) {
     process.env.OPENCLAW_STATE_DIR = join(root, "state");
+    process.env.HOME = root;
     process.env.HARNESS_CONFIG_WRITER_ENABLED = envOver.HARNESS_CONFIG_WRITER_ENABLED ?? "";
     if (envOver.ACP_DASHBOARD_BINDING_ENABLED === undefined) {
       delete process.env.ACP_DASHBOARD_BINDING_ENABLED;
@@ -163,6 +206,27 @@ describe("registerHarnessConfigDeployment — ENV-Gate-Verdrahtung am Entry", ()
     const toml = codexTomlPath(root);
     expect(existsSync(toml)).toBe(true);
     expect(readFileSync(toml, "utf-8")).toContain("[model_providers.");
+    expect(process.env.CODEX_API_KEY).toBe("ollama");
+  });
+
+  it("leaves the ACPX Codex command and every other harness command untouched", () => {
+    boot({ HARNESS_CONFIG_WRITER_ENABLED: "true" });
+    const acpx = {
+      agents: {
+        codex: { command: "codex-acp", args: ["--flag"] },
+        claude: { command: "claude-agent-acp" },
+        opencode: { command: "opencode-acp" },
+        pi: { command: "pi-acp" },
+      },
+    };
+    const { api } = makeApi({
+      harnesses: { codex: CODEX_ENTRY },
+      fullConfig: { plugins: { entries: { acpx: { config: acpx } } } },
+    });
+    const before = structuredClone(api.config);
+    registerHarnessConfigDeployment(api as never);
+    expect(api.config).toEqual(before);
+    expect(existsSync(join(root, "state", "acpx"))).toBe(false);
   });
 
   it("gate OFF (writer=false, binding=true) → operator veto wins, NO write", () => {
@@ -266,6 +330,7 @@ entry.register(api);
       env: {
         ...process.env,
         OPENCLAW_STATE_DIR: join(root, "state"),
+        HOME: root,
         HARNESS_CONFIG_WRITER_ENABLED: "true",
         ACP_DASHBOARD_BINDING_ENABLED: "true",
       },
@@ -293,6 +358,7 @@ describe("registerHarnessConfigDeployment — PluginConfig-Zufuhr (γ-Fix)", () 
 
   function bootOn() {
     process.env.OPENCLAW_STATE_DIR = join(root, "state");
+    process.env.HOME = root;
     process.env.HARNESS_CONFIG_WRITER_ENABLED = "true";
   }
 
@@ -369,6 +435,7 @@ describe("registerHarnessConfigDeployment — Modellkatalog-Matching (γ)", () =
 
   function bootOn() {
     process.env.OPENCLAW_STATE_DIR = join(root, "state");
+    process.env.HOME = root;
     process.env.HARNESS_CONFIG_WRITER_ENABLED = "true";
   }
 

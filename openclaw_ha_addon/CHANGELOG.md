@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For a release-facing summary, see the root [CHANGELOG.md](../CHANGELOG.md).
 
+## [0.7.13.41] — 2026-11-22
+
+OpenClaw and ACPX move to 2026.11.6, the separate native Codex plugin is retired, and an offline-testable release gate checks npm pin freshness.
+
+### Changed
+
+- **Runtime pin (`Dockerfile`):** OpenClaw `2026.11.3` -> `2026.11.6`. The tarball was verified before the bump: the unicode-guard byte anchors and the sanitize anchor remain present and `@homebridge/ciao` stays at `1.3.12`. The post-install check requires exactly `2026.11.6` and fails the image build on any other installed version.
+- **Agent package pin (`oc_acpx_helper.py`):** `@openclaw/acpx` `2026.7.1` -> `2026.11.6`. The Codex CLI used through ACP is supplied transitively by ACPX and follows that dependency tree rather than a separate add-on pin. The other harness CLI pins are unchanged.
+- **Image tool pins (`Dockerfile`):** `mcporter` `0.17.0` -> `0.17.1` and `pnpm` `12.18.0` -> `12.21.0`; `node-llama-cpp` remains at `3.22.3`. The MCP repair comparison and its user documentation use the same current `mcporter` pin.
+- **Release pin freshness (`oc_pin_freshness.py`):** a standard-library-only source parser reads helper package defaults through the Python AST and tokenizes Dockerfile `RUN` instructions to enumerate the actual OpenClaw pin plus every image-global npm pin. All 13 bundled npm pins—OpenClaw, all nine managed helper/harness declarations (including ACPX), and `node-llama-cpp`, `mcporter` and `pnpm`—are checked against npm `latest` with a bounded timeout. OpenClaw/ACPX runtime-family drift fails; all other drift warns unless `--strict` is set. Registry failure has a distinct exit code and cannot pass silently. The check is documented for release maintainers and is not connected to image builds or startup.
+
+### Fixed
+
+- **Upstream compaction continuity:** OpenClaw 2026.11.4 preserves history when a summary reaches its output limit, 2026.11.5 adds the `maxSummaryChars` control and recovers OpenAI sessions from compaction item conflicts, and 2026.11.6 keeps loaded chat history visible during compaction.
+- **Upstream memory and large-store behavior:** 2026.11.4 bounds large transcript trimming and sync-index work and avoids materializing unrelated retained summaries during large-store startup; 2026.11.5 avoids worker out-of-memory failures during large transcript-index repair and inspects the backup engine without copying the live database; 2026.11.6 keeps large rewinds from exhausting the shared database worker.
+- **Upstream credential handling:** 2026.11.4 stops importing plaintext catalog credentials alongside stored SecretRefs, and 2026.11.6 redacts inline environment credentials in configuration reads and preserves SecretRef-backed skill API keys instead of replacing them with plaintext.
+
+### Removed
+
+- **The separate native Codex plugin (`@openclaw/codex`):** always-run upgrade maintenance removes only its managed manifest dependency and exact `node_modules/@openclaw/codex` payload with ACPX either on or off, including partial states and without creating a project or invoking npm. The ACPX-on installer retains its normal dependency pruning. Gateway cleanup removes only `plugins.entries.codex` and the exact `codex` id from an existing `plugins.allow`; unrelated packages, entries and ids are preserved.
+- **The add-on-owned native Codex files now have a single writer layer, and the separate Codex wrapper is gone.** The Codex client reads the configuration the harness-config-writer writes into the Codex home: provider endpoint, credentials, model catalog, direct-CLI profiles and the Codex native compaction threshold; the model line stays the client default, while an ACP session runs the model selected in the picker. The Gateway agent entry supplies the model label of an ACP session and its fallback chain; ACPX starts the adapter, hands over the credentials through the environment and owns ACP session compaction. A changed Codex configuration reaches Codex clients after a Gateway restart.
+
+---
+
 ## [0.7.13.40] — 2026-11-22
 
 Home Assistant MCP registration now authenticates the configured token first, repairs the pinned client safely, and cleans up only registry entries proven to belong to the app.

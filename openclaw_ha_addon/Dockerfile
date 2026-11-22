@@ -1,5 +1,5 @@
 # OpenClaw HA-App v0.7.13 — Debian Bookworm Full-Stack
-# OpenClaw 2026.11.3 + node-llama-cpp@3.22.3 + mcporter@0.17.0 + CUPS/Scanner + crawl4ai + Go-PATH-Fix + D-Bus/Avahi
+# OpenClaw 2026.11.6 + node-llama-cpp@3.22.3 + mcporter@0.17.1 + CUPS/Scanner + crawl4ai + Go-PATH-Fix + D-Bus/Avahi
 # Builder stage removed (dead code since v0.7.5.1 — never wired)
 # Build dependencies are kept in the final image so runtime native builds work
 # NOTE: Since HA Supervisor 2026.04, build.yaml is obsolete. Base image must be
@@ -9,7 +9,7 @@ FROM ghcr.io/home-assistant/${BUILD_ARCH}-base-debian:bookworm
 
 # Labels required when not using the official GitHub builder action
 LABEL \
-  io.hass.version="0.7.13.40" \
+  io.hass.version="0.7.13.41" \
   io.hass.type="app" \
   io.hass.arch="aarch64|amd64"
 
@@ -278,7 +278,7 @@ RUN ARCH=$(echo ${TARGETARCH:-$(dpkg --print-architecture)} | sed 's|arm64|aarch
     && chmod +x /usr/local/bin/ttyd
 
 # =============================================================================
-# Install OpenClaw 2026.11.3 + node-llama-cpp 3.22.3 + mcporter 0.17.0
+# Install OpenClaw 2026.11.6 + node-llama-cpp 3.22.3 + mcporter 0.17.1
 # Bundle node-llama-cpp in the image so the default local memory/embeddings
 # provider works in HAOS without requiring manual npm installs in /usr/lib.
 #
@@ -294,17 +294,18 @@ ENV NODE_LLAMA_CPP_POSTINSTALL=skip
 # engine bump). npm itself verifies the registry dist.integrity for the pinned
 # version; the post-install gate re-checks the exact installed version so a
 # silently wrong registry manifest fails the build loudly.
-# 2026-11-14 bump to 2026.11.3 (npm latest, stable): tarball-verified — the
+# 2026-11-22 bump to 2026.11.6 (npm latest, stable): tarball-verified — the
 # unicode-guard byte anchors and the sanitize anchor are still present, and
 # @homebridge/ciao stays pinned at 1.3.12, so the mDNS patch anchor is unchanged.
+# node-llama-cpp stays at 3.22.3; mcporter and pnpm move to current latest.
 # OpenClaw engine range: node >=24.16.0 <25 || >=26.1.0.
 RUN export PATH="/usr/bin:/bin:${PATH}"; \
-    npm install -g openclaw@2026.11.3 \
-    && /usr/bin/node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('/usr/lib/node_modules/openclaw/package.json','utf8'));if(p.version!=='2026.11.3'){console.error('ERROR: unexpected OpenClaw version installed: '+p.version);process.exit(1)};console.log('OpenClaw pin verified: '+p.version)" \
+    npm install -g openclaw@2026.11.6 \
+    && /usr/bin/node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('/usr/lib/node_modules/openclaw/package.json','utf8'));if(p.version!=='2026.11.6'){console.error('ERROR: unexpected OpenClaw version installed: '+p.version);process.exit(1)};console.log('OpenClaw pin verified: '+p.version)" \
     && /usr/bin/node -e "const [maj,min]=process.versions.node.split('.').map(Number);if(!((maj===24&&min>=16)||(maj===26&&min>=1)||maj>=27)){console.error('ERROR: Node '+process.versions.node+' does not satisfy the OpenClaw engine range: >=24.16.0 <25 or >=26.1.0');process.exit(1)};console.log('Node engine range verified: '+process.versions.node)" \
     && npm install -g node-llama-cpp@3.22.3 \
-    && npm install -g mcporter@0.17.0 \
-    && npm install -g pnpm@12.18.0 \
+    && npm install -g mcporter@0.17.1 \
+    && npm install -g pnpm@12.21.0 \
     && npm cache clean --force
 
 # OpenClaw 2026.9.9+ keeps the openai-http agentId fix natively (tarball-verified

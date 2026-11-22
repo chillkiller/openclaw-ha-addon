@@ -5,9 +5,9 @@ OpenClaw HA App — ACPX harness initializer.
 This helper runs during app startup (called from run.sh) and ensures that
 the local-model ACP harnesses are ready to use:
 
-  1. (RETIRED, Phase 3 / v0.7.13.16) Harness config generation (codex
-     auth.json + /config/.codex/config.toml inheritance source, opencode
-     jsonc) moved into the harness-config-writer feature plugin (Repo-Split
+  1. (RETIRED, Phase 3 / v0.7.13.16) Harness config generation (the codex
+     auth.json + /config/.codex/config.toml that the Codex client reads,
+     opencode jsonc) moved into the harness-config-writer feature plugin (Repo-Split
      A2, 2026-10-11: previously plugins.entries['acp-dashboard-binding']
      .config.harnesses, the 15 design (generalized harness config (HCW phase 3))); deploy_harness_configs/
      prepare_opencode_home are no-ops now.
@@ -89,27 +89,17 @@ ESBUILD_BIN_CANDIDATES = (
 PRUNED_PLUGIN_DIRS = {"node_modules", ".git", "__pycache__"}
 CODEX_SOURCE_HOME = Path("/config/.codex")
 # γ.2 writer targets (HCW gamma.2, 2026-11-05): the file-based claude/pi
-# harnesses and the Codex-HCW wrapper write outside the acpx dir. The writer
+# harnesses and the standard Codex home live outside the acpx dir. The writer
 # paths mirror harness-config-writer.ts resolveHarnessWriterPaths(): the
 # state dir is /config/.openclaw, its parent (/config) carries .claude/ and
 # .pi/agent/. These constants must stay in sync with the plugin — a target
 # missing here is NOT rolled back when the writer is disabled.
 CLAUDE_SOURCE_HOME = Path("/config/.claude")
 PI_AGENT_DIR = Path("/config/.pi/agent")
-CODEX_HCW_WRAPPER_NAME = "codex-acp-hcw-wrapper.mjs"
-# NOTE: the codex-home-hcw dir and the adapter-paths mirror are DERIVED from
-# ACPX_DIR at call time (not import time) — the state dir is a runtime
-# constant of the container, and tests patch ACPX_DIR.
-# Adapter-path mirror: the HCW Codex wrapper resolves its ACP adapter via a
-# stable relative path (<state>/extensions/acpx/...) that does NOT exist in
-# the add-on (the acpx npm project and the plugin capture live elsewhere).
-# The helper publishes the resolved absolute candidates here; the wrapper
-# reads this file first.
-ADAPTER_PATHS_FILE_NAME = "adapter-paths.json"
 
 # npm package versions (bump when the app image is rebuilt)
-OPENCLAW_ACPX_VERSION = os.environ.get("OPENCLAW_ACPX_VERSION", "2026.7.1")
-OPENCLAW_CODEX_VERSION = os.environ.get("OPENCLAW_CODEX_VERSION", "2026.7.1-1")
+ACPX_PACKAGE = "@openclaw/acpx"
+OPENCLAW_ACPX_VERSION = os.environ.get("OPENCLAW_ACPX_VERSION", "2026.11.6")
 OPENCODE_VERSION = os.environ.get("OPENCODE_VERSION", "1.19.6")
 OPENCODE_PACKAGE = os.environ.get("OPENCODE_PACKAGE", "opencode-ai")
 # Vendor package names and versions verified against the packages' own npm
@@ -707,9 +697,87 @@ def remove_retired_binding_installation() -> bool:
     return ok
 
 
+def remove_native_codex_plugin_registration() -> bool:
+    """Remove only the retired native Codex plugin from gateway discovery.
+
+    The Codex ACP agent is a different surface: its acpx command, the HCW
+    harness entry and every ACP roster entry stay untouched. The allowlist is
+    edited only when it already exists and all unrelated ids retain their
+    order. No plugin or allowlist key is created by this cleanup.
+    """
+    config_path = CONFIG_DIR / "openclaw.json"
+    if not config_path.exists():
+        return True
+    try:
+        cfg = read_json(config_path)
+        plugins = cfg.get("plugins")
+        if not isinstance(plugins, dict):
+            return True
+        changed = False
+        entries = plugins.get("entries")
+        if isinstance(entries, dict) and "codex" in entries:
+            del entries["codex"]
+            changed = True
+        allow = plugins.get("allow")
+        if isinstance(allow, list) and "codex" in allow:
+            plugins["allow"] = [item for item in allow if item != "codex"]
+            changed = True
+        if changed:
+            write_json(config_path, cfg)
+            log("INFO: native Codex plugin registration and allow id removed; "
+                "Codex ACP harness and native writer configuration preserved")
+        return True
+    except Exception as e:
+        log(f"ERROR: native Codex plugin registration cleanup failed: {e}")
+        return False
+
+
+def prune_native_codex_managed_project() -> bool:
+    """Remove only the retired native Codex package from an existing project.
+
+    This unconditional upgrade cleanup deliberately does not invoke npm. It
+    therefore cannot install packages, create a missing managed project or
+    enable ACPX. Both the manifest entry and the exact package payload are
+    handled independently so interrupted/partial upgrades converge on the
+    next boot without touching any other dependency.
+    """
+    if not PROJECT_DIR.is_dir():
+        return True
+
+    ok = True
+    package_json = PROJECT_DIR / "package.json"
+    if package_json.is_file():
+        try:
+            manifest = read_json(package_json)
+            dependencies = manifest.get("dependencies")
+            if isinstance(dependencies, dict) and "@openclaw/codex" in dependencies:
+                del dependencies["@openclaw/codex"]
+                write_json(package_json, manifest)
+                log("INFO: native Codex dependency removed from the managed npm manifest")
+        except Exception as e:
+            log(f"ERROR: native Codex managed-manifest cleanup failed: {e}")
+            ok = False
+
+    # Do not remove or recreate the @openclaw scope directory: it can contain
+    # ACPX and unrelated operator packages. Only this exact retired payload is
+    # ours to prune.
+    payload = PROJECT_DIR / "node_modules" / "@openclaw" / "codex"
+    if payload.exists() or payload.is_symlink():
+        try:
+            if payload.is_symlink() or not payload.is_dir():
+                payload.unlink()
+            else:
+                shutil.rmtree(payload)
+            log("INFO: native Codex package payload removed; Codex ACP adapter preserved")
+        except OSError as e:
+            log(f"ERROR: native Codex package payload cleanup failed: {e}")
+            ok = False
+    return ok
+
+
 # Backup-Rewrite (GaRoN 2026-10-11): the writer plugin writes into
 # operator-adjacent surfaces (/config/.codex, /config/opencode, acpx
-# codex-home + opencode-home + harness-env). To make enable/disable fully
+# opencode-home + harness-env). To make enable/disable fully
 # reversible, this helper snapshots the pre-writer state ONCE at first
 # enable — it runs BEFORE the gateway reads any config, so a snapshot can
 # never capture writer-generated content — and restores it when the writer
@@ -733,54 +801,6 @@ HARNESS_WRITER_ENV_IDS = ("claude", "copilot", "droid", "gemini", "iflow", "kimi
 HARNESS_WRITER_BACKUP_VERSION = 1
 
 
-def _adapter_entry_rel() -> Path:
-    """Entry point of the @agentclientprotocol/codex-acp ACP adapter."""
-    return Path("node_modules") / "@agentclientprotocol" / "codex-acp" / "dist" / "index.js"
-
-
-def write_adapter_paths_mirror() -> bool:
-    """Publish the ACP adapter paths for the HCW Codex wrapper.
-
-    The wrapper resolves its adapter via a stable relative path
-    (<state>/extensions/acpx/...), which does not exist in the add-on: the
-    acpx npm project and the plugin capture live elsewhere. This mirror hands
-    the wrapper the absolute candidates that DO exist, plus the capture glob
-    (a capture is created per plugin build, so it may appear only later).
-
-    Contract — the wrapper reads this file FIRST, before its stable relative
-    path and before the npm-exec fallback:
-      {"version": 1,
-       "adapterPaths": ["<abs path>/node_modules/@agentclientprotocol/codex-acp/dist/index.js", ...],
-       "adapterGlobs": ["<abs glob>", ...]}
-    """
-    rel = _adapter_entry_rel()
-    candidates = [
-        PROJECT_DIR / rel,
-        CONFIG_DIR / "extensions" / "acpx" / rel,
-    ]
-    paths = [str(p) for p in candidates if p.exists()]
-    capture_glob = str(
-        CONFIG_DIR / "tmp" / "plugin-captures" / "*" / "captures" / "*"
-        / "package-*" / rel
-    )
-    payload: dict[str, Any] = {
-        "version": 1,
-        "adapterPaths": paths,
-        "adapterGlobs": [capture_glob],
-    }
-    try:
-        ACPX_DIR.mkdir(parents=True, exist_ok=True)
-        write_json(ACPX_DIR / ADAPTER_PATHS_FILE_NAME, payload)
-    except OSError as e:
-        log(f"WARN: adapter-paths mirror not written: {e}")
-        return False
-    log(
-        "Adapter-path mirror written: "
-        f"{ACPX_DIR / ADAPTER_PATHS_FILE_NAME} ({len(paths)} concrete path(s), 1 glob)"
-    )
-    return True
-
-
 def _hcw_env_value(env: Any, key: str) -> str:
     value = env.get(key)
     return value.strip() if isinstance(value, str) else ""
@@ -791,6 +811,19 @@ def _absolute_native_path(value: str | Path) -> Path:
     dereferencing symlinks. HCW accepts relative QWEN/COPILOT/KIMI homes;
     making the same location absolute keeps backup entries restorable."""
     return Path(os.path.abspath(os.fspath(value)))
+
+
+def _resolve_codex_native_home(env: Any = None) -> Path:
+    """Mirror HCW: CODEX_HOME first, then HOME/.codex, with the add-on path
+    retained only as the no-HOME fallback for the fixed container layout."""
+    e = os.environ if env is None else env
+    configured = _hcw_env_value(e, "CODEX_HOME")
+    if configured:
+        return _absolute_native_path(configured)
+    home = _hcw_env_value(e, "HOME").rstrip("/")
+    if home:
+        return _absolute_native_path(f"{home}/.codex")
+    return _absolute_native_path(CODEX_SOURCE_HOME)
 
 
 def _resolve_xdg_native_root(dirname: str, env: Any = None) -> Path | None:
@@ -836,7 +869,7 @@ def _harness_writer_native_roots() -> dict[str, Path]:
     e = os.environ
     roots = {
         "acpx": _absolute_native_path(ACPX_DIR),
-        "codex": _absolute_native_path(CODEX_SOURCE_HOME),
+        "codex": _resolve_codex_native_home(e),
         "claude": _absolute_native_path(CLAUDE_SOURCE_HOME),
         "pi": _absolute_native_path(PI_AGENT_DIR),
     }
@@ -894,17 +927,12 @@ def harness_writer_managed_files() -> list[Path]:
     pi_models = pi / "models.json"
     pi_settings = pi / "settings.json"
     files = [
-        # Legacy Codex/ACPX and current relocated direct Codex auth.
-        acpx / "codex-home" / "auth.json",
+        # Standard Codex files belong to HCW; ACPX owns its isolated home.
         codex / "auth.json",
         codex / "config.toml",
         codex / "model-catalog.json",
         opencode_acpx,
         acpx / "opencode-home" / "config.toml",
-        acpx / CODEX_HCW_WRAPPER_NAME,
-        acpx / "codex-home-hcw" / "auth.json",
-        acpx / "codex-home-hcw" / "config.toml",
-        acpx / "codex-home-hcw" / "model-catalog.json",
         claude_settings,
         pi_models,
         pi_settings,
@@ -1574,6 +1602,8 @@ def deploy_plugins() -> bool:
 
     migrate_legacy_harnesses_config(enable_fresh_entry=writer_enabled)
     ok = remove_retired_binding_installation() and ok
+    ok = remove_native_codex_plugin_registration() and ok
+    ok = prune_native_codex_managed_project() and ok
     if writer_enabled:
         merge_addon_harness_defaults()
     return ok
@@ -1583,12 +1613,16 @@ def migrate_retired_binding_installation() -> bool:
     """Run only the unconditional retired-plugin upgrade maintenance.
 
     This mode intentionally does not deploy the writer, restore/snapshot its
-    targets, install npm packages, or patch ACP configuration. A fresh writer
-    entry receives the migrated map without an enable decision; the normal
-    ACPX-gated deployment remains responsible for enabling it later.
+    targets, install npm packages, or patch ACP configuration. Direct removal
+    of the retired native Codex dependency/payload is the narrow exception:
+    it upgrades existing state even when ACPX is off and never creates a
+    project. A fresh writer entry receives the migrated map without an enable
+    decision; normal ACPX-gated deployment remains responsible for enabling.
     """
     migrate_legacy_harnesses_config(enable_fresh_entry=False)
-    return remove_retired_binding_installation()
+    ok = remove_retired_binding_installation()
+    ok = remove_native_codex_plugin_registration() and ok
+    return prune_native_codex_managed_project() and ok
 
 
 def install_acpx_npm_project() -> bool:
@@ -1604,8 +1638,7 @@ def install_acpx_npm_project() -> bool:
         "name": "openclaw-acpx-managed",
         "version": "1.0.0",
         "dependencies": {
-            "@openclaw/acpx": OPENCLAW_ACPX_VERSION,
-            "@openclaw/codex": OPENCLAW_CODEX_VERSION,
+            ACPX_PACKAGE: OPENCLAW_ACPX_VERSION,
             PI_PACKAGE: PI_VERSION,
             COPILOT_PACKAGE: COPILOT_VERSION,
             KILO_PACKAGE: KILO_VERSION,
@@ -1620,6 +1653,7 @@ def install_acpx_npm_project() -> bool:
         desired_pkg["dependencies"][OPENCODE_PACKAGE] = OPENCODE_VERSION
 
     need_install = False
+    current_deps = {}
     if not package_json.exists():
         need_install = True
     else:
@@ -1632,6 +1666,22 @@ def install_acpx_npm_project() -> bool:
                     break
         except Exception:
             need_install = True
+
+    if not isinstance(current_deps, dict):
+        current_deps = {}
+    # Removed direct dependencies must be pruned as well as new ones installed.
+    # Check the previous direct-dependency set, not every transitive package in
+    # node_modules. npm install prunes these obsolete entries after the desired
+    # manifest is written; the post-install check below proves they are gone.
+    extraneous_deps = set(current_deps) - set(desired_pkg["dependencies"])
+    removed_native_codex = "@openclaw/codex"
+    if (PROJECT_DIR / "node_modules" / Path(removed_native_codex)).exists():
+        # Also catch a partially upgraded manifest whose old payload survived.
+        extraneous_deps.add(removed_native_codex)
+    extraneous_deps = sorted(extraneous_deps)
+    if extraneous_deps:
+        log("Obsolete managed npm dependencies require pruning: " + ", ".join(extraneous_deps))
+        need_install = True
 
     # Follow-up audit: package.json alone says nothing about node_modules —
     # a failed npm install wrote package.json first, so every later boot
@@ -1669,6 +1719,17 @@ def install_acpx_npm_project() -> bool:
                 log(f"ERROR: npm install failed:\n{result.stderr}")
                 # Do not raise; run.sh surfaces the failure via the exit code
                 return False
+            remaining_obsolete = [
+                dep for dep in extraneous_deps
+                if (PROJECT_DIR / "node_modules" / Path(dep)).exists()
+            ]
+            if remaining_obsolete:
+                log("ERROR: npm install left obsolete managed packages installed: "
+                    + ", ".join(remaining_obsolete))
+                return False
+            if "@openclaw/codex" in extraneous_deps:
+                log("INFO: native Codex plugin removed from the managed npm project; "
+                    "Codex ACP adapter and native writer configuration preserved")
             missing = [
                 dep for dep in desired_pkg["dependencies"]
                 if not (PROJECT_DIR / "node_modules" / Path(dep)).is_dir()
@@ -1874,10 +1935,6 @@ def main() -> int:
     deploy_harness_configs()  # retired no-op (kept for the stable surface)
     ok = deploy_plugins()
     ok = install_acpx_npm_project() and ok
-    # The HCW Codex wrapper resolves its ACP adapter via a stable relative
-    # path that does not exist in the add-on; the mirror hands it the real
-    # candidates (written after the npm project exists).
-    ok = write_adapter_paths_mirror() and ok
     ok = patch_openclaw_config() and ok
     # V36.2 (2026-10-13): agents.defaults.utilityModel from the utility_model
     # option — agent entries stay untouched; unset = no write.

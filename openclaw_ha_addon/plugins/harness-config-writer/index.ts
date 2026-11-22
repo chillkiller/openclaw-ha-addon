@@ -56,6 +56,25 @@ function errorBrief(error: unknown): string {
 }
 
 /**
+ * Feed ACPX's own Codex auth bridge without replacing operator credentials.
+ * The bridge reads CODEX_API_KEY or OPENAI_API_KEY when the adapter starts and
+ * writes its isolated auth.json itself. The source-home auth.json is not an
+ * ACPX input. A configured HCW key (or the local-provider placeholder) is
+ * therefore exposed only when neither supported environment variable is set.
+ */
+export function ensureCodexAcpAuthEnv(
+  entry: unknown,
+  env: Record<string, string | undefined> = process.env,
+): void {
+  if ((env.CODEX_API_KEY ?? "").trim() || (env.OPENAI_API_KEY ?? "").trim()) return;
+  const raw = typeof entry === "object" && entry !== null && !Array.isArray(entry)
+    ? (entry as Record<string, unknown>).apiKey
+    : undefined;
+  const configured = typeof raw === "string" ? raw.trim() : "";
+  env.CODEX_API_KEY = configured || "ollama";
+}
+
+/**
  * Plugin-Config-Zufuhr (γ-Fix, dist-belegt): `api.config` ist die VOLLE
  * OpenClawConfig — `harnesses` lebt unter
  * `plugins.entries['harness-config-writer'].config` (der bisherige
@@ -148,6 +167,34 @@ export function registerHarnessConfigDeployment(api: OpenClawPluginApi): void {
       api.logger?.warn?.(`[${PLUGIN_ID}] ${warning}`);
     }
     const report = deployHarnessConfigs(pluginConfig, paths, logger, catalog);
+    const codexResult = report.results.find((result) => result.harnessId === "codex");
+    if (codexResult?.mechanism === "file-codex" && codexResult.files.length > 0) {
+      ensureCodexAcpAuthEnv((harnesses as Record<string, unknown>).codex);
+    }
+    // The Codex client reads the Codex home when its process starts and takes
+    // the provider endpoint and the credentials from the configuration written
+    // here; the model line is the client default. For an ACP session the
+    // adapter passes the model selected in the picker into the turn, so the
+    // picker selection is what runs; the provider comes from the written home
+    // and the adapter can override it through the ACP provider surface
+    // (providers/list, providers/set). The Gateway agent entry supplies the
+    // model label of an ACP session and its fallback chain; ACPX starts the
+    // adapter, hands over the credentials through the environment and owns
+    // ACP session compaction. ACPX prepares itself when the plugin loads and
+    // the Codex client reads its home when it starts, so a changed Codex
+    // configuration reaches Codex clients after a Gateway restart: OpenClaw
+    // 2026.11.6 exposes registerReload for lifecycle declarations, not a safe
+    // plugin-initiated ACPX reload.
+    const codexConfigChanged = codexResult?.files.some((file) =>
+      file.path.endsWith("/config.toml") &&
+      file.action !== "unchanged" &&
+      !file.action.startsWith("note ")
+    );
+    if (codexConfigChanged) {
+      api.logger.info(
+        `[${PLUGIN_ID}] Codex native configuration changed; restart the gateway so Codex clients pick it up`,
+      );
+    }
     for (const result of report.results) {
       for (const warning of result.warnings) {
         api.logger?.warn?.(`[${PLUGIN_ID}] harness ${result.harnessId}: ${warning}`);

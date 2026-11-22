@@ -632,7 +632,7 @@ The **Model Context Protocol (MCP)** lets OpenClaw communicate directly with Hom
 
 The app automatically registers Home Assistant as an MCP server named `HA` using `mcporter`. The standard route is `http://supervisor/core/api/mcp`, which works in every app network mode, and the credential is the Home Assistant token entered in the app configuration. Before registration, the app sends an MCP initialization request and continues only when Home Assistant answers with HTTP 200. An expired or mistyped token therefore does not create a new failing MCP entry. If the app's ownership marker proves that it wrote the existing `HA` entry, a failed probe removes exactly that stale home-scoped entry and deletes the marker. An unmarked `HA` entry and every other registry entry remain untouched.
 
-While automatic setup is enabled, the app also checks that `mcporter` is installed at the bundled pinned version (0.17.0). A missing or different version is repaired with the image's own Node.js runtime; an installation failure is logged without preventing the app from starting.
+While automatic setup is enabled, the app also checks that `mcporter` is installed at the bundled pinned version (0.17.1). A missing or different version is repaired with the image's own Node.js runtime; an installation failure is logged without preventing the app from starting.
 
 If no Home Assistant token is configured, the Supervisor token is only a fallback and is registered only after the same successful authentication probe. Without either token, automatic registration is skipped. The direct `http://localhost:8123/api/mcp` route remains only for installations where no Supervisor token is available and host networking provides direct access to Home Assistant.
 
@@ -684,7 +684,7 @@ MCP setup requires an AI model that understands tool/skill invocation. Budget mo
 
 | Symptom | Fix |
 |---|---|
-| `mcporter: command not found` or an unexpected `mcporter` version | With automatic setup enabled, the app repairs the bundled `mcporter` installation to pinned version 0.17.0. Check the startup log for an npm or network error; the app continues to start if the repair fails. |
+| `mcporter: command not found` or an unexpected `mcporter` version | With automatic setup enabled, the app repairs the bundled `mcporter` installation to pinned version 0.17.1. Check the startup log for an npm or network error; the app continues to start if the repair fails. |
 | The standard route is not registered because authentication failed | The app registers the route only after a successful authentication probe. Check the startup log, enter a valid Home Assistant long-lived token in the app configuration, and restart. |
 | MCP add fails with auth error | Verify your long-lived token is valid and not expired |
 | OpenClaw doesn’t see HA entities | Run `mcporter call HA.GetLiveContext` to refresh |
@@ -859,8 +859,12 @@ With `acpx_enabled` on, the helper maintains the npm project at
 `/config/.openclaw/acpx/.node_project`. Installs are idempotent and the package
 pins are explicit. Verified executables are symlinked into
 `/config/.node_global/bin`, which `run.sh` already places on `PATH`; existing
-operator binaries or symlinks there are never overwritten. In addition to ACPX,
-Codex and OpenCode, the project carries these vendor-verified CLI packages:
+operator binaries or symlinks there are never overwritten. In addition to ACPX
+and OpenCode, the project carries these vendor-verified CLI packages. The
+separate native Codex plugin is not installed: Codex keeps running through the
+ACP harness, whose dependency tree supplies the Codex adapter and CLI, and the
+add-on still writes native Codex configuration for clients that read
+`CODEX_HOME`, notably direct Codex CLI use:
 
 | Harness | npm package | Pin |
 |---|---|---|
@@ -871,6 +875,45 @@ Codex and OpenCode, the project carries these vendor-verified CLI packages:
 | Gemini | `@google/gemini-cli` | `0.70.0` |
 | Droid | `@factory/cli` | `1.17.2` |
 | iFlow | `@iflow-ai/iflow-cli` | `0.5.19` |
+
+#### Codex configuration ownership
+
+The harness-config-writer is the single add-on-owned writer of the native Codex
+configuration. It writes `config.toml`, `model-catalog.json` and an
+install-if-missing `auth.json` to `CODEX_HOME`, or to `$HOME/.codex` when
+`CODEX_HOME` is unset (`/config/.codex` in the add-on). The standard TOML
+includes direct-CLI profiles, the model-catalog reference and the Codex native
+post-turn compaction threshold.
+
+That configuration is what the Codex client uses when it reads the Codex home
+at process start: the provider endpoint and the credentials come from there,
+and the model line is the client default. For an ACP session the adapter
+passes the model selected in the picker into the turn, so the picker selection
+is what runs; the provider endpoint comes from the written home and the adapter
+can override it through the ACP provider surface. The Gateway agent entry
+supplies the model label of an ACP session and its fallback chain, and ACPX
+starts the Codex adapter, hands over the credentials through the environment and
+owns the compaction of ACP sessions.
+
+Ordering matters: the Codex client reads its home when it starts and ACPX
+prepares itself when the plugin loads, so a changed Codex configuration
+reaches Codex clients after a Gateway restart.
+
+ACPX's auth bridge reads `CODEX_API_KEY` or `OPENAI_API_KEY` when the adapter
+starts and writes the isolated `auth.json`. For a writer-managed Codex entry,
+the plugin supplies its configured API key (or the local-provider placeholder)
+as `CODEX_API_KEY` only when neither operator variable is already present.
+
+OpenClaw 2026.11.6 has no safe plugin-initiated ACPX reload API. After changing
+the harness entry or Gateway provider mapping, restart the gateway so the ACP
+session is rebuilt with the updated selection. A native-TOML-only edit does not
+change the model of an ACP session, because that comes from the picker; the
+provider endpoint of the Codex client does come from this file, and the adapter
+may override it through the ACP provider surface. For Codex over ACP, compaction is
+governed by ACPX and the native OpenClaw ACP compaction path. The threshold in
+the standard Codex TOML is for direct Codex CLI use; OpenClaw 2026.11.6 exposes
+compaction API types, but no native OpenClaw configuration key for an ACP
+compaction threshold.
 
 Kiro is different: ACPX expects the vendor executable `kiro-cli`, but the public
 npm artifact with that name is only a placeholder exposing `kirox`. The helper
@@ -1020,6 +1063,8 @@ against the container filesystem. The supported update path for the bundled
 runtime is an app update — every app release carries its pinned OpenClaw
 version (see the release notes and `DEPLOYMENT.md`). To check what your
 running container holds, use `openclaw --version` in the web terminal.
+
+Before tagging a release, maintainers run `python3 openclaw_ha_addon/oc_pin_freshness.py` from the repository root. The gate checks every bundled npm pin: OpenClaw, ACPX, all managed harness CLIs, and the image tools `node-llama-cpp`, `mcporter` and `pnpm`. The release must not be tagged while OpenClaw or ACPX lags behind the npm registry `latest` dist-tag; other harness/image-tool drift warns by default, and `--strict` makes it fatal.
 
 ### Checking your version
 

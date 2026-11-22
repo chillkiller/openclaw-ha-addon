@@ -50,6 +50,10 @@ This applies to every agent and human contributor working in this repository. Ag
 8. **Verification numbers are optional** — test counts (e.g. "254 binding tests pass") may be included in detailed engineering notes but should not clutter the public changelog summary.
 9. **Root cause in past tense, fix in present tense** — "was fixed", "no longer crashes", "silently blocked" — not "we discovered", "we investigated", "it turned out".
 
+### Release freshness checklist
+
+- Before tagging a release, run `python3 openclaw_ha_addon/oc_pin_freshness.py` from the repository root. The gate covers every bundled npm pin: OpenClaw, ACPX, managed harness CLIs, and image tools. Do not tag while OpenClaw or ACPX lags behind the npm registry `latest` dist-tag; use `--strict` to fail on harness/image-tool drift too.
+
 Capture what matters: decisions, context, things to remember. Skip secrets unless asked to keep them.
 
 ### USER.md - Durable User Directives

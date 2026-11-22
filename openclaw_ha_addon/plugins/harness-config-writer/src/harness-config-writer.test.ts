@@ -106,14 +106,13 @@ describe("withV1Suffix / deriveProviderId", () => {
     expect(withV1Suffix("http://localai.lan:8080/api/v1")).toBe("http://localai.lan:8080/api/v1");
   });
 
-  it("derives deterministic provider names that are NEVER 'ollama'", () => {
+  it("derives deterministic provider names for harnesses with URL-derived fallbacks", () => {
     expect(deriveProviderId("http://localhost:11434")).toBe("binding_localhost_11434");
     expect(deriveProviderId("https://vllm.lan:8000")).toBe("binding_vllm_lan_8000");
     expect(deriveProviderId("http://localhost:11434")).toBe(
       deriveProviderId("http://localhost:11434/"),
     );
-    // Reservierte id "ollama" (codex model_provider) ist ausgeschlossen.
-    expect(deriveProviderId("http://ollama:11434")).not.toBe("ollama");
+    expect(deriveProviderId("http://ollama:11434")).toBe("binding_ollama_11434");
     expect(deriveProviderId("!!!")).toBe("binding_backend");
   });
 });
@@ -147,13 +146,13 @@ describe("codex writer", () => {
 
     const toml = readText(join(p.codexSourceHome, "config.toml"));
     expect(toml).toContain('model = "kimi-k2.7-code:cloud"');
-    expect(toml).toContain('model_provider = "binding_localhost_11434"');
+    expect(toml).toContain('model_provider = "ollama"');
     expect(toml).toContain('base_url = "http://localhost:11434/v1"');
     expect(toml).toContain('wire_api = "responses"');
     expect(toml).toContain("requires_openai_auth = true");
     expect(toml).toContain('sandbox_mode = "workspace-write"');
-    // thinking NICHT gesetzt → model_reasoning_effort-Var fehlt (der Header-
-    // Kommentar NENNT den Key im Inheritance-Caveat — nur Var-Zeilen zählen).
+    // thinking NICHT gesetzt → model_reasoning_effort-Var fehlt (nur Var-Zeilen
+    // zaehlen, nicht der Kommentar-Block).
     expect(toml).not.toMatch(/^model_reasoning_effort =/m);
     // Self-Recognition-Signatur (γ) immer erste Zeile.
     expect(toml.startsWith("# harness-config-writer (generated)")).toBe(true);
@@ -196,7 +195,7 @@ describe("codex writer", () => {
     // KEIN Writer-Routing in fremden Dateien (Model-Wahl = Operator).
     expect(after).not.toMatch(/^model_provider = /m);
     expect(after).not.toMatch(/^model_catalog_json = /m);
-    expect(after).toContain('[model_providers."binding_localhost_11434"]');
+    expect(after).toContain('[model_providers."ollama"]');
     // Operator-Key model = "gpt-5" unverändert (kein Überschreiben).
     expect(after).toContain('model = "gpt-5"');
   });
@@ -215,7 +214,7 @@ describe("codex writer", () => {
     expect(readText(tomlPath)).toBe(afterFirst);
   });
 
-  it("augment refresh: baseUrl change re-writes ONLY the marked section, operator content untouched", () => {
+  it("augment refresh: baseUrl change re-writes only the marked section and keeps the stable provider id", () => {
     const p = paths();
     const tomlPath = join(p.codexSourceHome, "config.toml");
     mkdirSync(join(root, "config", ".codex"), { recursive: true });
@@ -230,8 +229,9 @@ describe("codex writer", () => {
     ).toBe(true);
     const after = readText(tomlPath);
     expect(after).toContain('model = "gpt-5"'); // Operator-Zeile unangetastet
-    expect(after).not.toContain("[model_providers.binding_localhost_11434]"); // alte Section weg
-    expect(after).toContain('[model_providers."binding_elsewhere_9"]'); // neue Section da
+    expect(after).not.toContain('base_url = "http://localhost:11434/v1"');
+    expect(after).toContain('base_url = "http://elsewhere:9/v1"');
+    expect((after.match(/\[model_providers\."ollama"\]/g) ?? []).length).toBe(1);
   });
 
   // ---- Final-Audit r2 Regression: jede behobene Critical/High/Medium-Lücke ----
@@ -275,7 +275,7 @@ describe("codex writer", () => {
     DEPLOY({ harnesses: { codex: { ...OLLAMA, models: ["m1"] } } }, p);
     // Operator adoptiert den Provider-Header oberhalb des Blocks (Total-Kollision)
     const before = readText(tomlPath);
-    const withOperatorHeader = '[model_providers.binding_localhost_11434]\nbase_url = "x"\n\n' + before;
+    const withOperatorHeader = '[model_providers.ollama]\nbase_url = "x"\n\n' + before;
     writeFileSync(tomlPath, withOperatorHeader, "utf-8");
     const report = DEPLOY({ harnesses: { codex: { ...OLLAMA, models: [] } } }, p);
     const after = readText(tomlPath);
@@ -283,7 +283,7 @@ describe("codex writer", () => {
     expect(after).not.toContain("--- BEGIN harness-config-writer");
     expect(after).not.toContain("[profiles.");
     // Operator-Header bleibt
-    expect((after.match(/\[model_providers\.binding_localhost_11434\]/g) ?? []).length).toBe(1);
+    expect((after.match(/\[model_providers\.ollama\]/g) ?? []).length).toBe(1);
     expect(
       report.results[0].files.some((f) => f.path === tomlPath && f.action === "updated"),
     ).toBe(true);
@@ -356,7 +356,7 @@ describe("codex writer", () => {
     mkdirSync(join(root, "config", ".codex"), { recursive: true });
     // Operator hat bereits Provider+Profil unter unseren exakten Header-Namen
     const foreign =
-      '[model_providers.binding_localhost_11434]\nbase_url = "x"\n[profiles."m1"]\nmodel = "m1"\n[profiles.m1b]\nmodel = "m1b"\n';
+      '[model_providers.ollama]\nbase_url = "x"\n[profiles."m1"]\nmodel = "m1"\n[profiles.m1b]\nmodel = "m1b"\n';
     writeFileSync(tomlPath, foreign, "utf-8");
     const report = DEPLOY({ harnesses: { codex: { ...OLLAMA, models: ["m1"] } } }, p);
     const after = readText(tomlPath);
@@ -453,7 +453,7 @@ describe("codex writer", () => {
     });
     expect(toml).toContain('base_url = "https://vllm.lan:8000/v1"');
     expect(toml).not.toContain("/v1/v1");
-    expect(toml).toContain('model_provider = "binding_vllm_lan_8000"');
+    expect(toml).toContain('model_provider = "ollama"');
   });
 
   it("codex without baseUrl → skipped with warning, NO file written", () => {
@@ -1602,11 +1602,12 @@ describe("codex writer multi-model", () => {
     const headers = toml.split("\n").filter((l) => l.startsWith("[profiles."));
     expect(headers).toEqual(['[profiles."kimi-k2.7-code:cloud"]', '[profiles."glm-5.3-flash:cloud"]']);
     expect(toml.startsWith("# harness-config-writer (generated)")).toBe(true);
-    expect(toml).toContain("inherited by acpx");
+    expect(toml).toContain("serve direct codex-CLI users");
+    expect(toml).toContain("an ACP session runs the model selected in the picker");
     expect(toml).toMatch(/^model = "kimi-k2\.7-code:cloud"$/m);
     // Profile-Blöcke: model + reasoning effort + gleicher provider.
     expect(toml).toMatch(
-      /\[profiles\."glm-5\.3-flash:cloud"\]\nmodel = "glm-5\.3-flash:cloud"\nmodel_reasoning_effort = "high"\nmodel_provider = "binding_localhost_11434"/,
+      /\[profiles\."glm-5\.3-flash:cloud"\]\nmodel = "glm-5\.3-flash:cloud"\nmodel_reasoning_effort = "high"\nmodel_provider = "ollama"/,
     );
   });
 
@@ -2440,7 +2441,7 @@ describe("resolveHarnessWriterPaths", () => {
     });
     expect(p).toEqual({
       acpxDir: "/config/.openclaw/acpx",
-      codexSourceHome: "/config/.codex",
+      codexSourceHome: "/home/testuser/.codex",
       opencodeGlobalDir: "/home/testuser/.config/opencode",
       claudeSourceHome: "/config/.claude",
       piAgentDir: "/config/.pi/agent",
@@ -2455,6 +2456,12 @@ describe("resolveHarnessWriterPaths", () => {
         kimi: "/home/testuser/.kimi-code",
       },
     });
+  });
+
+  it("uses the add-on standard Codex home and honours CODEX_HOME first", () => {
+    const base = { OPENCLAW_STATE_DIR: "/config/.openclaw", HOME: "/config" };
+    expect(resolveHarnessWriterPaths(base)?.codexSourceHome).toBe("/config/.codex");
+    expect(resolveHarnessWriterPaths({ ...base, CODEX_HOME: "/custom/codex/" })?.codexSourceHome).toBe("/custom/codex");
   });
 
   it("honours XDG_CONFIG_HOME for opencodeGlobalDir", () => {

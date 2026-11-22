@@ -192,7 +192,7 @@ describe("Codex native config and models catalog", () => {
     const nativeOnly = overlayCodexCatalog(entry, null, []);
     expect(JSON.parse(nativeOnly!.content).defaults).toEqual({ capability: "native" });
   });
-  it("deploys native config and catalog directly without a Codex wrapper home", () => {
+  it("deploys native config and catalog directly in the standard Codex home", () => {
     const p = paths();
     const entry: HarnessConfigEntry = {
       ...BASE,
@@ -206,7 +206,7 @@ describe("Codex native config and models catalog", () => {
     expect(directToml).toContain('"review_model" = "review-large"');
     expect(directToml).toContain('"default_subagent_model" = "subagent-small"');
     expect(directToml).toContain("model_catalog_json");
-    expect(existsSync(join(p.acpxDir, "codex-home-hcw"))).toBe(false);
+    expect(existsSync(p.acpxDir)).toBe(false);
     const directCatalog = readJson(join(p.codexSourceHome, "model-catalog.json"));
     expect(directCatalog.catalogVersion).toBe(7);
   });
@@ -1226,7 +1226,7 @@ describe("provider-key cleanup across duplicate base URLs", () => {
     expect(Object.keys(explicit.provider)).toEqual(["operator-selected"]);
   });
 
-  it("never borrows another provider's API and enforces Codex reserved-key handling even for explicit ollama", () => {
+  it("never borrows another provider's API and keeps the stable Codex provider id", () => {
     const catalog = buildModelCatalog({
       models: {
         providers: {
@@ -1245,8 +1245,8 @@ describe("provider-key cleanup across duplicate base URLs", () => {
     const p = paths();
     deploy({ harnesses: { codex: explicit } }, p);
     const toml = readFileSync(join(p.codexSourceHome, "config.toml"), "utf-8");
-    expect(toml).toContain('model_provider = "binding_localhost_11434"');
-    expect(toml).not.toContain('model_provider = "ollama"');
+    expect(toml).toContain('model_provider = "ollama"');
+    expect(toml).toContain('[model_providers."ollama"]');
   });
 
   it("rejects a sole incompatible model candidate and an API-only match without the model", () => {
@@ -1261,7 +1261,7 @@ describe("provider-key cleanup across duplicate base URLs", () => {
     for (const model of ["main-model", "missing-model"]) {
       const warnings: string[] = [];
       const toml = buildCodexConfigToml({ ...BASE, model }, undefined, 70, warnings, catalog);
-      expect(toml).toContain('model_provider = "binding_localhost_11434"');
+      expect(toml).toContain('model_provider = "ollama"');
       expect(toml).not.toContain('model_provider = "completions"');
       expect(toml).not.toContain('model_provider = "responses"');
       expect(warnings.some((warning) => warning.includes("providerKey explicitly"))).toBe(true);
@@ -1282,7 +1282,7 @@ describe("provider-key cleanup across duplicate base URLs", () => {
     expect(models.providers["route-b"]).toBeDefined();
   });
 
-  it("quotes explicit dotted Codex provider keys without a wrapper TOML", () => {
+  it("quotes explicit dotted Codex provider keys in standard TOML", () => {
     const p = paths();
     mkdirSync(p.codexSourceHome, { recursive: true });
     writeFileSync(join(p.codexSourceHome, "config.toml"), 'sandbox_mode = "read-only"\n');

@@ -103,7 +103,7 @@ class ConfigureHaMcpTests(unittest.TestCase):
             "HA_TOKEN": self.ha_token,
             "SUPERVISOR_TOKEN": self.supervisor_token,
             "MCP_TEST_LOG": str(self.log),
-            "STUB_MCPORTER_VERSION": "0.17.0",
+            "STUB_MCPORTER_VERSION": "0.17.1",
             "STUB_MCPORTER_VERSION_EXIT": "0",
             "STUB_MCPORTER_SOURCE": str(self.mcporter_template),
             "STUB_MCPORTER_TARGET": str(self.mcporter),
@@ -186,7 +186,7 @@ if name == "npm":
         print("simulated npm install failure", file=sys.stderr)
         raise SystemExit(status)
     if args[:1] == ["install"]:
-        Path(os.environ["STUB_MCPORTER_STATE"]).write_text("0.17.0", encoding="utf-8")
+        Path(os.environ["STUB_MCPORTER_STATE"]).write_text("0.17.1", encoding="utf-8")
         target = Path(os.environ["STUB_MCPORTER_TARGET"])
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(os.environ["STUB_MCPORTER_SOURCE"], target)
@@ -353,14 +353,14 @@ raise SystemExit(0)
         env.pop("SUPERVISOR_TOKEN")
         result = self.configure(env=env)
         self.assert_booted(result)
-        self.assertIn("Ensuring mcporter 0.17.0", result.stdout)
+        self.assertIn("Ensuring mcporter 0.17.1", result.stdout)
         npm = self.npm_install_calls()
         self.assertEqual(len(npm), 1)
-        self.assertEqual(npm[0]["args"], ["install", "-g", "mcporter@0.17.0"])
+        self.assertEqual(npm[0]["args"], ["install", "-g", "mcporter@0.17.1"])
         self.assertEqual(self.calls("curl"), [])
         self.assertTrue(self.mcporter.is_file())
-        self.assertEqual(self.version_state.read_text(encoding="utf-8"), "0.17.0")
-        self.assert_timeout_call("120s", "install", "-g", "mcporter@0.17.0")
+        self.assertEqual(self.version_state.read_text(encoding="utf-8"), "0.17.1")
+        self.assert_timeout_call("120s", "install", "-g", "mcporter@0.17.1")
 
     def test_pinned_mcporter_requires_no_install(self) -> None:
         result = self.configure()
@@ -378,7 +378,7 @@ raise SystemExit(0)
         env["STUB_MCPORTER_VERSION"] = "0.16.9"
         result = self.configure(env=env, source=source)
         self.assert_booted(result)
-        self.assertIn("Ensuring mcporter 0.17.0", result.stdout)
+        self.assertIn("Ensuring mcporter 0.17.1", result.stdout)
         self.assertIn("MCP server 'HA' registered", result.stdout)
         self.assertEqual(len(self.npm_install_calls()), 1)
         versions = [call for call in self.calls("mcporter") if call["args"] == ["--version"]]
@@ -386,10 +386,10 @@ raise SystemExit(0)
         self.assertEqual(versions[0]["executable"], str(image_mcporter.resolve()))
         self.assertEqual(versions[1]["executable"], str(self.mcporter.resolve()))
         self.assertEqual(self.add_calls()[0]["executable"], str(self.mcporter.resolve()))
-        self.assertEqual(self.version_state.read_text(encoding="utf-8"), "0.17.0")
+        self.assertEqual(self.version_state.read_text(encoding="utf-8"), "0.17.1")
         self.assertEqual(len(self.calls("curl")), 1)
         self.assertEqual(len(self.add_calls()), 1)
-        self.assert_timeout_call("120s", "install", "mcporter@0.17.0")
+        self.assert_timeout_call("120s", "install", "mcporter@0.17.1")
         self.assert_timeout_call("30s", "config", "add", "HA")
 
     def test_npm_install_failure_warns_without_aborting_boot(self) -> None:
@@ -398,14 +398,14 @@ raise SystemExit(0)
         env["STUB_NPM_EXIT"] = "1"
         result = self.configure(env=env)
         self.assert_booted(result)
-        self.assertIn("WARN: Could not install mcporter 0.17.0", result.stdout)
+        self.assertIn("WARN: Could not install mcporter 0.17.1", result.stdout)
         self.assertEqual(len(self.npm_install_calls()), 1)
         self.assertEqual(self.calls("curl"), [])
         self.assertEqual(self.add_calls(), [])
 
     def test_nonzero_version_output_is_not_accepted(self) -> None:
         env = self.env.copy()
-        env["STUB_MCPORTER_VERSION"] = "0.17.0"
+        env["STUB_MCPORTER_VERSION"] = "0.17.1"
         env["STUB_MCPORTER_VERSION_EXIT"] = "9"
         result = self.configure(env=env)
         self.assert_booted(result)

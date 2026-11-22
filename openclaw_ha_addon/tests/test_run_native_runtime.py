@@ -193,7 +193,6 @@ helper._deploy_and_register_plugin = lambda *args: forbidden("writer-deploy")
 helper.backup_harness_writer_targets_once = lambda: forbidden("writer-backup")
 helper.restore_harness_writer_targets = lambda: forbidden("writer-restore")
 helper.install_acpx_npm_project = lambda: forbidden("npm-install")
-helper.write_adapter_paths_mirror = lambda: forbidden("adapter-mirror")
 helper.patch_openclaw_config = lambda: forbidden("acp-patch")
 helper.merge_utility_model = lambda: forbidden("utility-model")
 raise SystemExit(helper.main())
@@ -707,7 +706,7 @@ class HaMcpCredentialTests(unittest.TestCase):
         mcporter = persistent_bin / "mcporter"
         mcporter.write_text(
             "#!/usr/bin/env bash\n"
-            "if [ \"${1:-}\" = --version ]; then printf '0.17.0\\n'; exit 0; fi\n"
+            "if [ \"${1:-}\" = --version ]; then printf '0.17.1\\n'; exit 0; fi\n"
             "{ printf 'CALL'; printf '\\t%s' \"$@\"; printf '\\n'; } >> \"$MCPORTER_LOG\"\n",
             encoding="utf-8",
         )
@@ -811,7 +810,7 @@ class DockerGuardTests(unittest.TestCase):
         self.assertIn("NodeSource pin verified: '+process.versions.node", dockerfile)
         self.assertIn('RUN export PATH="/usr/bin:/bin:${PATH}";', dockerfile)
         self.assertNotIn("RUN node ", dockerfile)
-        self.assertIn("npm install -g openclaw@2026.11.3", dockerfile)
+        self.assertIn("npm install -g openclaw@2026.11.6", dockerfile)
 
     @unittest.skipUnless(NODE, "node is required to execute the engine gate")
     def test_node_engine_range_and_negative_controls(self) -> None:
@@ -839,7 +838,7 @@ class DockerGuardTests(unittest.TestCase):
                 self.assertEqual(result.returncode == 0, accepted, result.stdout + result.stderr)
                 if not accepted:
                     self.assertIn(">=24.16.0 <25 or >=26.1.0", result.stderr)
-        self.assertIn("npm install -g openclaw@2026.11.3", dockerfile)
+        self.assertIn("npm install -g openclaw@2026.11.6", dockerfile)
 
     def test_dockerignore_excludes_vendored_dependency_payloads_only(self) -> None:
         patterns = [

@@ -320,7 +320,7 @@ class DeployPluginsEnabledOptionTest(unittest.TestCase):
         Auth and env fixtures contain synthetic credentials only."""
         os.environ["HARNESS_CONFIG_WRITER_ENABLED"] = "true"
         managed = helper.harness_writer_managed_files()
-        self.assertEqual(len(managed), 42, "inventory must track the complete HCW surface")
+        self.assertEqual(len(managed), 37, "inventory must track the complete HCW surface")
         originals: dict[Path, tuple[bytes, int]] = {}
         for index, path in enumerate(managed):
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -1222,15 +1222,15 @@ class Gamma2WriterSurfaceTest(unittest.TestCase):
         managed = set(helper.harness_writer_managed_files())
         acpx = self.config_dir / "acpx"
         for expected in (
-            acpx / "codex-acp-hcw-wrapper.mjs",
-            acpx / "codex-home-hcw" / "auth.json",
-            acpx / "codex-home-hcw" / "config.toml",
-            acpx / "codex-home-hcw" / "model-catalog.json",
+            self.config_dir / ".codex" / "auth.json",
+            self.config_dir / ".codex" / "config.toml",
+            self.config_dir / ".codex" / "model-catalog.json",
             self.config_dir / ".claude" / "settings.json",
             self.config_dir / ".pi" / "agent" / "models.json",
             self.config_dir / ".pi" / "agent" / "settings.json",
         ):
             self.assertIn(expected, managed)
+        self.assertFalse(any(path.is_relative_to(acpx) and path.name == "auth.json" for path in managed))
 
     def test_dynamic_native_inventory_and_all_json_sidecars(self) -> None:
         custom = Path(self.tmp.name) / "custom"
@@ -1278,7 +1278,15 @@ class Gamma2WriterSurfaceTest(unittest.TestCase):
             }
             for primary in json_primaries:
                 self.assertIn(Path(f"{primary}.hcw-managed.json"), managed, str(primary))
-            self.assertEqual(len(managed), 42)
+            self.assertEqual(len(managed), 37)
+
+    def test_codex_home_resolution_matches_hcw(self) -> None:
+        home = Path(self.tmp.name) / "codex-home-parent"
+        with mock.patch.dict(os.environ, {"HOME": str(home)}, clear=True):
+            self.assertEqual(helper._harness_writer_native_roots()["codex"], home / ".codex")
+        custom = Path(self.tmp.name) / "custom-codex"
+        with mock.patch.dict(os.environ, {"HOME": str(home), "CODEX_HOME": str(custom)}, clear=True):
+            self.assertEqual(helper._harness_writer_native_roots()["codex"], custom)
 
     def test_qwen_home_resolution_matches_hcw_edge_cases(self) -> None:
         home = "/home/testuser"
@@ -1317,60 +1325,15 @@ class Gamma2WriterSurfaceTest(unittest.TestCase):
             self.assertEqual(roots["droid"], home / ".factory")
             self.assertEqual(roots["kiro"], home / ".kiro")
 
-    def test_legacy_targets_still_managed(self) -> None:
+    def test_direct_codex_and_legacy_opencode_targets_stay_managed(self) -> None:
         managed = set(helper.harness_writer_managed_files())
         acpx = self.config_dir / "acpx"
         for expected in (
-            acpx / "codex-home" / "auth.json",
             self.config_dir / ".codex" / "config.toml",
             acpx / "opencode-home" / "opencode.jsonc",
             self.config_dir / "opencode" / "opencode.jsonc",
         ):
             self.assertIn(expected, managed)
-
-
-class AdapterPathsMirrorTest(unittest.TestCase):
-    """The HCW Codex wrapper resolves its ACP adapter via a stable relative
-    path that does not exist in the add-on; the helper publishes the real
-    candidates in <state>/acpx/adapter-paths.json."""
-
-    def setUp(self) -> None:
-        self.tmp = tempfile.TemporaryDirectory()
-        self.addCleanup(self.tmp.cleanup)
-        self.config_dir = Path(self.tmp.name) / "config"
-        self.config_dir.mkdir()
-        patches = (
-            mock.patch.object(helper, "CONFIG_DIR", self.config_dir),
-            mock.patch.object(helper, "ACPX_DIR", self.config_dir / "acpx"),
-            mock.patch.object(helper, "PROJECT_DIR", self.config_dir / "acpx" / ".node_project"),
-        )
-        for patcher in patches:
-            patcher.start()
-            self.addCleanup(patcher.stop)
-
-    def test_mirror_written_with_contract(self) -> None:
-        self.assertTrue(helper.write_adapter_paths_mirror())
-        payload = json.loads(
-            (self.config_dir / "acpx" / "adapter-paths.json").read_text()
-        )
-        self.assertEqual(payload["version"], 1)
-        self.assertIsInstance(payload["adapterPaths"], list)
-        self.assertIsInstance(payload["adapterGlobs"], list)
-        self.assertTrue(payload["adapterGlobs"])
-        self.assertIn("@agentclientprotocol", payload["adapterGlobs"][0])
-
-    def test_existing_candidate_is_published(self) -> None:
-        entry = (
-            self.config_dir / "acpx" / ".node_project" / "node_modules"
-            / "@agentclientprotocol" / "codex-acp" / "dist" / "index.js"
-        )
-        entry.parent.mkdir(parents=True)
-        entry.write_text("// adapter\n")
-        self.assertTrue(helper.write_adapter_paths_mirror())
-        payload = json.loads(
-            (self.config_dir / "acpx" / "adapter-paths.json").read_text()
-        )
-        self.assertIn(str(entry), payload["adapterPaths"])
 
 
 @unittest.skipUnless(Path("/usr/bin/node").is_file(), "image Node fixture requires /usr/bin/node")
@@ -1522,23 +1485,25 @@ class PersistentHarnessInstallTest(unittest.TestCase):
             path.chmod(0o755)
         return SimpleNamespace(returncode=0, stderr="")
 
+    def _expected_dependencies(self):
+        return {
+            "@openclaw/acpx": "2026.11.6",
+            "opencode-ai": "1.19.6",
+            "@mariozechner/pi-coding-agent": "0.73.1",
+            "@github/copilot": "1.0.114",
+            "@kilocode/cli": "7.8.32",
+            "@qwen-code/qwen-code": "0.28.3",
+            "@google/gemini-cli": "0.70.0",
+            "@factory/cli": "1.17.2",
+            "@iflow-ai/iflow-cli": "0.5.19",
+        }
+
     def test_all_verified_harnesses_are_pinned_and_second_boot_is_noop(self) -> None:
         with mock.patch.object(helper.subprocess, "run", side_effect=self._complete_fake_install) as run:
             self.assertTrue(helper.install_acpx_npm_project())
             package = json.loads((self.project / "package.json").read_text())
             deps = package["dependencies"]
-            expected = {
-                "@openclaw/acpx": "2026.7.1",
-                "@openclaw/codex": "2026.7.1-1",
-                "opencode-ai": "1.19.6",
-                "@mariozechner/pi-coding-agent": "0.73.1",
-                "@github/copilot": "1.0.114",
-                "@kilocode/cli": "7.8.32",
-                "@qwen-code/qwen-code": "0.28.3",
-                "@google/gemini-cli": "0.70.0",
-                "@factory/cli": "1.17.2",
-                "@iflow-ai/iflow-cli": "0.5.19",
-            }
+            expected = self._expected_dependencies()
             self.assertEqual(deps, expected)
             self.assertNotIn("kiro-cli", deps)
             for executable in helper.HARNESS_EXECUTABLES.values():
@@ -1552,6 +1517,37 @@ class PersistentHarnessInstallTest(unittest.TestCase):
             self.assertTrue(helper.install_acpx_npm_project())
             self.assertEqual(run.call_count, 1, "complete persistent install must be idempotent")
             self.assertEqual((self.project / "package.json").read_bytes(), first)
+
+    def test_removed_native_codex_plugin_is_pruned_and_desired_packages_stay(self) -> None:
+        expected = self._expected_dependencies()
+        removed_package = "@openclaw/codex"
+        old_deps = {**expected, removed_package: "2026.7.1-1"}
+        (self.project / "package.json").parent.mkdir(parents=True, exist_ok=True)
+        (self.project / "package.json").write_text(json.dumps({"dependencies": old_deps}))
+        for dep in old_deps:
+            (self.project / "node_modules" / Path(dep)).mkdir(parents=True, exist_ok=True)
+        for executable in helper._required_harness_executables().values():
+            path = self.project / "node_modules" / ".bin" / executable
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text("#!/bin/sh\n")
+            path.chmod(0o755)
+
+        def fake_npm_prune(command, cwd, **kwargs):
+            result = self._complete_fake_install(command, cwd, **kwargs)
+            shutil.rmtree(Path(cwd) / "node_modules" / Path(removed_package))
+            return result
+
+        with mock.patch.object(helper.subprocess, "run", side_effect=fake_npm_prune) as run, \
+             mock.patch.object(helper, "log") as logged:
+            self.assertTrue(helper.install_acpx_npm_project())
+
+        self.assertEqual(run.call_count, 1, "the obsolete payload must trigger installation and pruning")
+        self.assertFalse((self.project / "node_modules" / Path(removed_package)).exists())
+        for dep in expected:
+            self.assertTrue((self.project / "node_modules" / Path(dep)).is_dir(), dep)
+        package = json.loads((self.project / "package.json").read_text())
+        self.assertEqual(package["dependencies"], expected)
+        self.assertIn("native Codex plugin removed", str(logged.call_args_list))
 
     def test_success_without_installed_package_fails_loudly(self) -> None:
         with mock.patch.object(
@@ -1625,6 +1621,176 @@ class PersistentBackupSurfaceTest(unittest.TestCase):
         excluded = yaml.safe_load((REPO / "config.yaml").read_text())["backup_exclude"]
         self.assertIn("*.tar.gz.partial", excluded)
         self.assertNotIn("*.tar.gz", excluded)
+
+
+class NativeCodexPluginRemovalTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.config_dir = Path(self.tmp.name) / "config"
+        self.config_dir.mkdir()
+        self.path = self.config_dir / "openclaw.json"
+        patches = (
+            mock.patch.object(helper, "CONFIG_DIR", self.config_dir),
+            mock.patch.object(helper, "BUNDLED_EXTENSIONS_DIR", self.config_dir / "bundled"),
+        )
+        for patcher in patches:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_cleanup_preserves_acp_codex_route_and_unrelated_plugin_ids(self) -> None:
+        acpx_entry = {
+            "enabled": True,
+            "config": {
+                "agents": {
+                    "codex": {"command": "codex-acp"},
+                    "claude": {"command": "claude-code-acp"},
+                },
+            },
+        }
+        writer_entry = {
+            "enabled": True,
+            "config": {"harnesses": {"codex": {"model": "configured-model"}}},
+        }
+        other_entry = {"enabled": True, "config": {"operator": "preserved"}}
+        self.path.write_text(json.dumps({
+            "plugins": {
+                "entries": {
+                    "codex": {"enabled": True},
+                    "acpx": acpx_entry,
+                    "harness-config-writer": writer_entry,
+                    "other-plugin": other_entry,
+                },
+                "allow": ["codex", "acpx", "other-plugin", "codex"],
+                "load": {"paths": ["operator-plugin-root"]},
+            },
+            "acp": {"allowedAgents": ["codex", "claude"]},
+        }))
+
+        self.assertTrue(helper.migrate_retired_binding_installation())
+        cfg = json.loads(self.path.read_text())
+        plugins = cfg["plugins"]
+        self.assertNotIn("codex", plugins["entries"])
+        self.assertEqual(plugins["allow"], ["acpx", "other-plugin"])
+        self.assertEqual(plugins["entries"]["acpx"], acpx_entry)
+        self.assertEqual(plugins["entries"]["harness-config-writer"], writer_entry)
+        self.assertEqual(plugins["entries"]["other-plugin"], other_entry)
+        self.assertEqual(plugins["load"], {"paths": ["operator-plugin-root"]})
+        self.assertEqual(cfg["acp"]["allowedAgents"], ["codex", "claude"])
+
+        first = self.path.read_bytes()
+        self.assertTrue(helper.remove_native_codex_plugin_registration())
+        self.assertEqual(self.path.read_bytes(), first)
+
+
+class NativeCodexManagedProjectPruneTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.config_dir = Path(self.tmp.name) / "config"
+        self.project = self.config_dir / "acpx" / ".node_project"
+        self.payload = self.project / "node_modules" / "@openclaw" / "codex"
+        self.config_dir.mkdir()
+        patches = (
+            mock.patch.object(helper, "CONFIG_DIR", self.config_dir),
+            mock.patch.object(helper, "ACPX_DIR", self.config_dir / "acpx"),
+            mock.patch.object(helper, "PROJECT_DIR", self.project),
+            mock.patch.object(helper, "BUNDLED_EXTENSIONS_DIR", self.config_dir / "bundled"),
+        )
+        for patcher in patches:
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def seed_upgrade(self, *, manifest_entry=True, payload=True, allow=True) -> None:
+        config = {
+            "plugins": {
+                "entries": {
+                    "codex": {"enabled": True},
+                    "operator-plugin": {"enabled": True, "config": {"keep": 42}},
+                },
+            },
+        }
+        if allow:
+            config["plugins"]["allow"] = ["codex", "operator-plugin"]
+        (self.config_dir / "openclaw.json").write_text(json.dumps(config))
+        self.project.mkdir(parents=True)
+        dependencies = {"@openclaw/acpx": "2026.11.6", "operator-cli": "1.2.3"}
+        if manifest_entry:
+            dependencies["@openclaw/codex"] = "2026.7.1-1"
+        (self.project / "package.json").write_text(json.dumps({
+            "name": "openclaw-acpx-managed",
+            "private": True,
+            "dependencies": dependencies,
+        }))
+        for package in ("@openclaw/acpx", "operator-cli"):
+            package_dir = self.project / "node_modules" / Path(package)
+            package_dir.mkdir(parents=True)
+            (package_dir / "package.json").write_text('{"name": "preserved"}')
+        if payload:
+            self.payload.mkdir(parents=True)
+            (self.payload / "package.json").write_text('{"name": "@openclaw/codex"}')
+
+    def assert_pruned_and_preserved(self) -> None:
+        manifest = json.loads((self.project / "package.json").read_text())
+        self.assertEqual(manifest["dependencies"], {
+            "@openclaw/acpx": "2026.11.6",
+            "operator-cli": "1.2.3",
+        })
+        self.assertFalse(self.payload.exists())
+        for package in ("@openclaw/acpx", "operator-cli"):
+            self.assertTrue((self.project / "node_modules" / Path(package) / "package.json").is_file())
+        cfg = json.loads((self.config_dir / "openclaw.json").read_text())
+        self.assertNotIn("codex", cfg["plugins"]["entries"])
+        self.assertEqual(
+            cfg["plugins"]["entries"]["operator-plugin"],
+            {"enabled": True, "config": {"keep": 42}},
+        )
+        if "allow" in cfg["plugins"]:
+            self.assertEqual(cfg["plugins"]["allow"], ["operator-plugin"])
+
+    def test_acpx_off_upgrade_prunes_manifest_and_payload_and_is_idempotent(self) -> None:
+        self.seed_upgrade()
+        with mock.patch.dict(os.environ, {"ACPX_ENABLED": "false"}), \
+             mock.patch.object(helper.subprocess, "run", side_effect=AssertionError("npm forbidden")):
+            self.assertTrue(helper.migrate_retired_binding_installation())
+            self.assert_pruned_and_preserved()
+            manifest_first = (self.project / "package.json").read_bytes()
+            config_first = (self.config_dir / "openclaw.json").read_bytes()
+            self.assertTrue(helper.migrate_retired_binding_installation())
+        self.assertEqual((self.project / "package.json").read_bytes(), manifest_first)
+        self.assertEqual((self.config_dir / "openclaw.json").read_bytes(), config_first)
+
+    def test_acpx_on_upgrade_uses_the_same_unconditional_prune(self) -> None:
+        self.seed_upgrade()
+        with mock.patch.dict(os.environ, {"ACPX_ENABLED": "true"}), \
+             mock.patch.object(helper.subprocess, "run", side_effect=AssertionError("npm forbidden")):
+            self.assertTrue(helper.migrate_retired_binding_installation())
+        self.assert_pruned_and_preserved()
+
+    def test_updated_manifest_with_surviving_payload_is_completed(self) -> None:
+        self.seed_upgrade(manifest_entry=False, payload=True)
+        self.assertTrue(helper.migrate_retired_binding_installation())
+        self.assert_pruned_and_preserved()
+
+    def test_removed_payload_with_surviving_manifest_entry_is_completed(self) -> None:
+        self.seed_upgrade(manifest_entry=True, payload=False)
+        self.assertTrue(helper.migrate_retired_binding_installation())
+        self.assert_pruned_and_preserved()
+
+    def test_absent_allowlist_is_not_created(self) -> None:
+        self.seed_upgrade(allow=False)
+        self.assertTrue(helper.migrate_retired_binding_installation())
+        self.assert_pruned_and_preserved()
+        cfg = json.loads((self.config_dir / "openclaw.json").read_text())
+        self.assertNotIn("allow", cfg["plugins"])
+
+    def test_missing_managed_project_is_a_noop_and_is_not_created(self) -> None:
+        (self.config_dir / "openclaw.json").write_text("{}")
+        before = (self.config_dir / "openclaw.json").read_bytes()
+        with mock.patch.object(helper.subprocess, "run", side_effect=AssertionError("npm forbidden")):
+            self.assertTrue(helper.migrate_retired_binding_installation())
+        self.assertFalse(self.project.exists())
+        self.assertEqual((self.config_dir / "openclaw.json").read_bytes(), before)
 
 
 class ReferenceWorkerRosterTest(unittest.TestCase):

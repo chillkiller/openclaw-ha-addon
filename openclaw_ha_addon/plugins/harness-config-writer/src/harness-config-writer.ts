@@ -12,11 +12,10 @@
  * (`model` — bleibt in ALLEN Fällen der Default) schreibt der Writer die
  * VERFÜGBAREN Modelle je nach Surface:
  *   - opencode : provider.models-Map (native Multi-Model-Surface)
- *   - codex    : [profiles."<id>"]-Blöcke in der Source-config.toml — Caveat:
- *                renderIsolatedCodexConfig vererbt KEINE Profiles (nur
- *                model/model_provider/model_reasoning_effort/sandbox_mode +
- *                [model_providers.*], acpx-dist verifiziert); Profile nutzen
- *                direkte codex-CLI-Nutzer mit CODEX_HOME auf dieser Datei.
+ *   - codex    : [profiles."<id>"]-Bloecke in der Source-config.toml — Profile
+ *                bedienen direkte codex-CLI-Nutzer, die CODEX_HOME auf diese
+ *                Datei setzen; eine ACP-Session nutzt das im Picker gewaehlte
+ *                Modell.
  *   - claude   : CLAUDE_MODEL_CONFIG ENV (claude-agent-acp-dist-belegt:
  *                JSON { availableModels: [...] }).
  *   - übrige ENV-Harnesses : Kommentar-Block (informational, keine
@@ -30,8 +29,8 @@
  * wandern in /config/.codex/model-catalog.json und die config.toml tragt
  * `model_catalog_json` (key-Verifizierung am DEPLOYED binary: `codex debug
  * models` parsed die Datei, Custom-Slugs haben echte Metadaten statt
- * Fallback-Warnung). Caveat: ersetzt den built-in Katalog; acpx vererbt den
- * key NICHT → nur direkte CLI-Nutzer (the 15.10 design (model-catalog match keys)).
+ * Fallback-Warnung). Caveat: ersetzt den built-in Katalog; nur direkte
+ * CLI-Nutzer (the 15.10 design (model-catalog match keys)).
  *
  * ADDITIV-GARANTIE (bindend): das Plugin ist ein Add-on zum bundled acpx,
  * kein Ersatz. Fehlt ein Harness in `harnesses` (oder die Section ganz),
@@ -42,9 +41,9 @@
  * Drei Mechanismen (Katalog: acpx SKILL.md Abschnitt "Harness aliases" ab Zeile 199 + docs
  * acp-agents/quickstart+setup, 10:37 live-gefetched):
  *   A FILE : codex   → CODEX_HOME auth.json + /config/.codex/config.toml
- *                      (die acpx-Inheritance-Quelle; Semantik VERBATIM aus
- *                      oc_acpx_helper.py deploy_harness_configs) + Multi-Model
- *                      via [profiles.*] (Caveat above)
+ *                      (native Dateien fuer Codex-Clients, die CODEX_HOME lesen:
+ *                      Modell-Default, Provider-Endpunkt, Credentials) +
+ *                      Multi-Model via [profiles.*] (Caveat above)
  *            opencode → opencode.jsonc nach opencode-home/ UND /config/opencode/
  *                      (beide wie der Helper) + legacy config.toml neutralisiert
  *                      + Multi-Model via provider.models-Map
@@ -302,7 +301,8 @@ export const CODEX_SIGNATURE_LINE = "# harness-config-writer (generated)";
 export type HarnessWriterPaths = {
   /** <STATE>/acpx — Parent von codex-home/, opencode-home/, harness-env/ */
   acpxDir: string;
-  /** Parent/state-dir/.codex — die acpx-Inheritance-Quelle (config.toml). */
+  /** Parent/state-dir/.codex — native Codex-Dateien (Modell-Default des Clients,
+   *  Provider-Endpunkt, Credentials) fuer Clients, die CODEX_HOME lesen. */
   codexSourceHome: string;
   /** `$XDG_CONFIG_HOME/opencode` bzw. `$HOME/.config/opencode` — OpenCode global config dir. */
   opencodeGlobalDir: string;
@@ -351,8 +351,9 @@ export type HarnessWriterLogger = {
 // Pfadauflösung — dieselbe ENV-Ladder wie acp-dashboard-binding/agent-map
 // (Repo-Split A2: EIGENE Kopie oben, kein Cross-Import — beide Plugins
 // unabhängig pflegbar).
-// Auf dem Host ist STATE /config/.openclaw → codexSourceHome /config/.codex,
-// opencodeGlobalDir hingegen wird aus dem laufenden Prozess-HOME (XDG) aufgelöst,
+// Auf dem Host ist STATE /config/.openclaw → codexSourceHome aus CODEX_HOME
+// bzw. HOME/.codex (Add-on /config/.codex), opencodeGlobalDir hingegen wird
+// aus dem laufenden Prozess-HOME (XDG) aufgelöst,
 // weil OpenCode seine Config tatsächlich unter ~/.config/opencode sucht.
 // ---------------------------------------------------------------------------
 
@@ -384,9 +385,10 @@ export function resolveHarnessWriterPaths(
   if (kimiHome) nativeHomes.kimi = kimiHome;
   const state = stateDir.replace(/\/+$/, "");
   const parent = dirname(state);
+  const codexSourceHome = explicitHome("CODEX_HOME") ?? (home ? `${home}/.codex` : `${parent}/.codex`);
   return {
     acpxDir: `${state}/acpx`,
-    codexSourceHome: `${parent}/.codex`,
+    codexSourceHome,
     opencodeGlobalDir,
     claudeSourceHome: `${parent}/.claude`,
     piAgentDir: `${parent}/.pi/agent`,
@@ -745,12 +747,12 @@ export function withV1Suffix(baseUrl: string): string {
 }
 
 /**
- * Deterministischer generierter provider-Name aus der baseUrl-host. NICHT
- * "ollama" — bei @openclaw/codex ist die id "ollama" reserviert
- * (.codex-source/config.toml Template-Kommentar verbatim: 'hence
- * "garon_ollama"'). Beispiel: http://localhost:11434 → binding_localhost_11434;
+ * Deterministischer generierter provider-Name aus der baseUrl-host fuer
+ * Harnesses ohne stabilen Gateway-Provider-Key. Beispiel:
+ * http://localhost:11434 → binding_localhost_11434;
  * https://vllm.lan:8000 → binding_vllm_lan_8000. Reine [a-z0-9_] ids sind als
  * TOML-Header unquoted safe (keine Doppel-Header: dedupe+sort der trusts).
+ * Codex verwendet seit der ACPX-Route stattdessen standardmaessig "ollama".
  */
 export function deriveProviderId(baseUrl: string): string {
   let host: string;
@@ -1898,13 +1900,20 @@ export function buildCodexModelCatalogJson(
 }
 
 /**
- * codex config.toml — die acpx-Inheritance-Quelle (der acpx-Plugin-Codex-Wrapper
- * regeneriert daraus das operative codex-home/config.toml bei JEDEM Gateway-
- * Start; inheritiert nur model/model_provider/model_reasoning_effort/
- * sandbox_mode/[model_providers.*]/trust-entries — Template-Kommentar verbatim).
+ * codex config.toml — native Konfiguration fuer Codex-Clients, die CODEX_HOME
+ * lesen (insbesondere direkte Codex-CLI-Nutzung).
+ * Der Codex-Client liest sein Home beim Prozessstart und uebernimmt daraus
+ * Provider-Endpunkt und Credentials; die `model`-Zeile ist der Client-Default.
+ * Fuer eine ACP-Session liefert der Adapter das Session-Modell (Model-Picker)
+ * in den Turn ein; der Provider kommt aus dieser Datei und kann ueber die
+ * ACP-Provider-Surface (providers/list, providers/set) ueberschrieben werden.
+ * ACPX konfiguriert sich beim Plugin-Start und besitzt Adapter-Start,
+ * Authentifizierung und Compaction; eine geaenderte Codex-Konfiguration
+ * erreicht Codex-Clients erst nach einem Gateway-Neustart.
  *
- * Generiert aus der Entry: model, model_provider (derivierter Name, NICHT
- * "ollama" — reserviert), base_url = baseUrl + /v1 (kein Doppel-/v1),
+ * Generiert aus der Entry: model (Default des Codex-Clients; eine ACP-Session
+ * nutzt das im Picker gewaehlte Modell), model_provider (stabile id "ollama" bei
+ * fehlendem eindeutigem Gateway-Key), base_url = baseUrl + /v1 (kein Doppel-/v1),
  * wire_api "responses" ("chat" wird von codex rejected — Template verbatim),
  * requires_openai_auth = true (liest auth.json; env_key bricht Gateway-Spawns),
  * sandbox_mode ("workspace-write" — Template-Default, nicht konfigurierbar),
@@ -1913,9 +1922,10 @@ export function buildCodexModelCatalogJson(
  * sort — tomllib rejected duplicate table headers, Template-Kommentar verbatim).
  *
  * γ.1: `modelCatalogPath` → top-level `model_catalog_json` key (Metadaten-
- * Katalog für Custom-Modelle). NICHT acpx-vererbt (the 15.10 design (model-catalog match keys)) — nur
- * direkte codex-CLI-Nutzer mit CODEX_HOME auf dieser Datei bekommen den
- * Katalog live; ACP-Sessions bleiben bundled-catalog.
+ * Katalog für Custom-Modelle). Der Key gilt für Codex-Clients, die CODEX_HOME
+ * auf diese Datei setzen (the 15.10 design (model-catalog match keys)) — sie
+ * bekommen den Katalog live; eine ACP-Session nutzt das im Picker gewählte
+ * Modell und bleibt beim gebündelten Katalog.
  */
 export function buildCodexConfigToml(
   entry: HarnessConfigEntry,
@@ -1931,10 +1941,9 @@ export function buildCodexConfigToml(
     // Self-Recognition + Refresh-Aufnahme (γ): nachweislich writer-generierte
     // Dateien werden bytes-sync aktualisiert; Hands-Edits haben nach dem
     // ersten Upgrade verloren (the 15.10 design (model-catalog match keys), one-time-Migration Doku).
-    "# Multi-Model γ: [profiles.*] blocks are NOT inherited by acpx",
-    "# renderIsolatedCodexConfig (only model/model_provider/model_reasoning_effort/",
-    "# sandbox_mode + [model_providers.*]); profiles serve direct codex-CLI users",
-    "# pointing CODEX_HOME at this file.",
+    "# Multi-Model γ: [profiles.*] blocks serve direct codex-CLI users",
+    "# pointing CODEX_HOME at this file; the model below is the Codex client",
+    "# default, while an ACP session runs the model selected in the picker.",
     `model = ${tomlString(entry.model)}`,
     `model_provider = ${tomlString(providerId)}`,
   ];
@@ -1944,8 +1953,10 @@ export function buildCodexConfigToml(
   }
   if (modelCatalogPath) {
     lines.push(
-      // γ.1: Metadaten-Katalog für Custom-Modelle (binary-verifiziert). Nur
-      // direkte CLI-Nutzer — acpx inheritiert den key nicht (the 15.10 design (model-catalog match keys)).
+      // γ.1: Metadaten-Katalog fuer Custom-Modelle (binary-verifiziert). Der
+      // model_catalog_json-Key gilt fuer Codex-Clients, die CODEX_HOME auf
+      // diese Datei setzen; eine ACP-Session nutzt das im Picker gewaehlte
+      // Modell (the 15.10 design (model-catalog match keys)).
       `model_catalog_json = ${tomlString(modelCatalogPath)}`,
     );
   }
@@ -2005,13 +2016,14 @@ export function deployCodexHarnessFiles(
   const warnings: string[] = [];
   const files: HarnessDeployFile[] = [];
 
-  // 1) CODEX_HOME auth.json — der acpx-Wrapper-CODEX_HOME, bei jedem
-  //    Adapter-Start gelesen; ohne ihn codex "Authentication required"
-  //    (Helper-Doku verbatim).
+  // 1) Standard-CODEX_HOME auth.json fuer direkte Codex-CLI-Nutzer. ACPX
+  //    schreibt sein isoliertes auth.json selbst aus CODEX_API_KEY/
+  //    OPENAI_API_KEY; die Entry stellt diesen ENV-Wert am Plugin-Entry bereit.
   files.push(deployCodexAuth(entry, paths, warnings, logger, harnessId));
 
-  // 2) /config/.codex/config.toml — Inheritance-Quelle, install-if-missing /
-  //    upgrade-only-no-providers / customized NEVER overwritten (NOTE).
+  // 2) /config/.codex/config.toml — Config-Quelle des Codex-Prozesses,
+  //    install-if-missing / upgrade-only-no-providers / customized NEVER
+  //    overwritten (NOTE).
   //    M1-Fix (2026-10-14): der `model_catalog_json`-Key wird NUR emittiert,
   //    wenn der Katalog auch tatsächlich geschrieben werden kann — sonst
   //    entstünde ein dangling Key auf eine nie existierende Datei (codex
@@ -2818,13 +2830,12 @@ export function resolveHarnessProviderId(
   const explicit = nonEmpty(entry.providerKey);
   const baseUrl = entry.baseUrl ?? "";
   const normalized = normalizeBaseUrlForMatch(baseUrl);
-  const fallback = deriveProviderId(baseUrl);
-  const finalize = (providerKey: string): string => {
-    if (harnessId === "codex" && providerKey === "ollama") {
-      return fallback;
-    }
-    return providerKey;
-  };
+  // The retired native Codex plugin reserved "ollama"; ACPX has no such
+  // reservation and passes the provider map through to its isolated config.
+  // Keep Codex stable across backend address changes. Other harnesses retain
+  // their existing URL-derived fallback unchanged.
+  const fallback = harnessId === "codex" ? "ollama" : deriveProviderId(baseUrl);
+  const finalize = (providerKey: string): string => providerKey;
   if (explicit) return finalize(explicit);
   const inherited = normalized ? catalog?.providerKeyByBaseUrl.get(normalized) : undefined;
   if (inherited) return finalize(inherited);
