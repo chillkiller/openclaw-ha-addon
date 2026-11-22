@@ -68,8 +68,8 @@ class ConfigureHaMcpTests(unittest.TestCase):
             "OPENCLAW_CONFIG_DIR": str(self.config),
             "HA_TOKEN": self.ha_token,
             "SUPERVISOR_TOKEN": self.supervisor_token,
-            "HA_MCP_URLS": self.mcp_url,
-            "HA_MCP_ENABLED": "true",
+            "MCP_URLS": self.mcp_url,
+            "MCP_ENABLED": "true",
             "HA_OFFICIAL_MCP_URL": "",
             "HA_OFFICIAL_MCP_ENABLED": "false",
             "OPENCLAW_CONFIG_PATH": str(self.openclaw_config),
@@ -139,12 +139,18 @@ if name == "openclaw" and args[:2] == ["mcp", "doctor"]:
 
 if name == "curl":
     url = args[args.index("--request") + 2]
+    output = args[args.index("--output") + 1]
     if url == os.environ.get("STUB_CURL_FAIL_URL"):
         status = os.environ.get("STUB_CURL_FAIL_STATUS", "503")
         exit_code = int(os.environ.get("STUB_CURL_FAIL_EXIT", "0"))
     else:
         status = os.environ.get("STUB_CURL_STATUS", "200")
         exit_code = int(os.environ.get("STUB_CURL_EXIT", "0"))
+    body = os.environ.get(
+        "STUB_CURL_BODY",
+        '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2024-11-05"}}',
+    )
+    Path(output).write_text(body, encoding="utf-8")
     print(status, end="")
     raise SystemExit(exit_code)
 
@@ -255,6 +261,8 @@ raise SystemExit(0)
         self.assertNotIn(self.ha_token, probe)
         self.assertNotIn(self.supervisor_token, probe)
         self.assertIn(INITIALIZE, probe)
+        self.assertEqual(probe[probe.index("--write-out") + 1], "%{http_code}")
+        self.assertIn("--output", probe)
         self.assertEqual(probe[probe.index("--max-time") + 1], "10")
         self.assertEqual(self.registry.read_bytes(), registry_before)
         self.assertFalse((self.config / ".mcp_ha_configured").exists())
@@ -332,12 +340,58 @@ raise SystemExit(0)
         self.assertEqual(self.calls("openclaw"), [])
         self.assertEqual(self.openclaw_config.read_bytes(), before)
 
+    def test_http_200_json_rpc_error_skips_registration_and_preserves_foreign_entries(self) -> None:
+        original = (
+            '{"mcp":{"servers":{"operator"  : {"command":"keep"}}},'
+            '"unrelated":[1,  2]}\n'
+        )
+        self.openclaw_config.write_text(original, encoding="utf-8")
+        env = self.env.copy()
+        env["STUB_CURL_BODY"] = (
+            '{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"Method not found"}}'
+        )
+
+        result = self.configure(env=env)
+
+        self.assert_booted(result)
+        self.assert_no_forbidden_tools()
+        self.assertIn("did not answer the initialize probe", result.stdout)
+        self.assertIn("HTTP 200", result.stdout)
+        self.assertIn("it was not registered", result.stdout)
+        self.assertIn("every existing MCP entry stays untouched", result.stdout)
+        self.assertEqual(self.openclaw_config.read_bytes(), original.encode())
+        self.assertEqual(len(self.calls("curl")), 1)
+        self.assertEqual(self.calls("openclaw"), [])
+        self.assertNotIn(self.mcp_url, result.stdout + result.stderr)
+        self.assertNotIn(self.ha_token, result.stdout + result.stderr)
+        self.assertNotIn(self.supervisor_token, result.stdout + result.stderr)
+
+    def test_http_202_notification_response_skips_registration_and_preserves_foreign_entries(self) -> None:
+        original = '{"mcp":{"servers":{"operator":{"command":"keep"}}},"unrelated":[1,  2]}\n'
+        self.openclaw_config.write_text(original, encoding="utf-8")
+        env = self.env.copy()
+        env["STUB_CURL_STATUS"] = "202"
+
+        result = self.configure(env=env)
+
+        self.assert_booted(result)
+        self.assert_no_forbidden_tools()
+        self.assertIn("did not answer the initialize probe", result.stdout)
+        self.assertIn("HTTP 202", result.stdout)
+        self.assertIn("it was not registered", result.stdout)
+        self.assertEqual(self.openclaw_config.read_bytes(), original.encode())
+        self.assertEqual(len(self.calls("curl")), 1)
+        self.assertEqual(self.calls("openclaw"), [])
+        self.assertNotIn(self.mcp_url, result.stdout + result.stderr)
+        self.assertNotIn(self.ha_token, result.stdout + result.stderr)
+        self.assertNotIn(self.supervisor_token, result.stdout + result.stderr)
+
     def test_switch_on_with_empty_urls_is_silent_and_does_nothing(self) -> None:
         self.write_registry(self.registry, {"HA": {"baseUrl": "http://user-owned"}})
         before = self.registry.read_bytes()
         openclaw_before = self.openclaw_config.read_bytes()
         env = self.env.copy()
-        env["HA_MCP_URLS"] = ""
+        env["MCP_URLS"] = ""
         env["HA_OFFICIAL_MCP_URL"] = ""
 
         result = self.configure(env=env)
@@ -356,7 +410,7 @@ raise SystemExit(0)
         before = self.registry.read_bytes()
         openclaw_before = self.openclaw_config.read_bytes()
         env = self.env.copy()
-        env["HA_MCP_ENABLED"] = "false"
+        env["MCP_ENABLED"] = "false"
 
         result = self.configure(env=env)
 
@@ -403,7 +457,7 @@ raise SystemExit(0)
 
     def test_way_2_writes_oauth_definition_without_mcporter_or_npm(self) -> None:
         env = self.env.copy()
-        env["HA_MCP_URLS"] = ""
+        env["MCP_URLS"] = ""
         env["HA_OFFICIAL_MCP_URL"] = self.oauth_url
         env["HA_OFFICIAL_MCP_ENABLED"] = "true"
 
@@ -432,7 +486,7 @@ raise SystemExit(0)
 
     def test_way_2_identical_definition_does_not_write_again(self) -> None:
         env = self.env.copy()
-        env["HA_MCP_URLS"] = ""
+        env["MCP_URLS"] = ""
         env["HA_OFFICIAL_MCP_URL"] = self.oauth_url
         env["HA_OFFICIAL_MCP_ENABLED"] = "true"
         first = self.configure(env=env)
@@ -488,7 +542,7 @@ raise SystemExit(0)
         self.openclaw_config.write_text(original, encoding="utf-8")
         before = self.openclaw_config.read_bytes()
         env = self.env.copy()
-        env["HA_MCP_URLS"] = ""
+        env["MCP_URLS"] = ""
         env["HA_OFFICIAL_MCP_URL"] = self.oauth_url
         env["HA_OFFICIAL_MCP_ENABLED"] = "true"
 
@@ -528,7 +582,7 @@ raise SystemExit(0)
 
     def test_way_2_authorization_required_prints_exact_login_and_no_fallback(self) -> None:
         env = self.env.copy()
-        env["HA_MCP_URLS"] = ""
+        env["MCP_URLS"] = ""
         env["HA_OFFICIAL_MCP_URL"] = self.oauth_url
         env["HA_OFFICIAL_MCP_ENABLED"] = "true"
         env["STUB_OPENCLAW_AUTH_REQUIRED"] = "1"
@@ -554,7 +608,7 @@ raise SystemExit(0)
 
     def test_startup_never_runs_the_offline_doctor_probe(self) -> None:
         env = self.env.copy()
-        env["HA_MCP_URLS"] = ""
+        env["MCP_URLS"] = ""
         env["HA_OFFICIAL_MCP_URL"] = self.oauth_url
         env["HA_OFFICIAL_MCP_ENABLED"] = "true"
         env["STUB_OPENCLAW_DOCTOR_AUTH_REQUIRED"] = "1"
@@ -585,7 +639,7 @@ raise SystemExit(0)
 
     def test_way_1_stores_private_token_and_announces_without_probing(self) -> None:
         env = self.env.copy()
-        env["HA_MCP_URLS"] = ""
+        env["MCP_URLS"] = ""
         env["HA_OFFICIAL_MCP_URL"] = ""
 
         result = self.configure(env=env, include_api_token=True)
@@ -603,7 +657,7 @@ raise SystemExit(0)
     def test_no_connection_way_is_silent_and_touches_no_state(self) -> None:
         env = self.env.copy()
         env["HA_TOKEN"] = ""
-        env["HA_MCP_URLS"] = ""
+        env["MCP_URLS"] = ""
         env["HA_OFFICIAL_MCP_URL"] = ""
         before = self.openclaw_config.read_bytes()
 
@@ -661,7 +715,7 @@ raise SystemExit(0)
         first_url = "https://alpha.example.test/first-private-path"
         second_url = "https://beta.example.test/second-private-path"
         env = self.env.copy()
-        env["HA_MCP_URLS"] = f"{first_url},{second_url}"
+        env["MCP_URLS"] = f"{first_url},{second_url}"
 
         result = self.configure(env=env)
 
@@ -685,7 +739,7 @@ raise SystemExit(0)
         self.openclaw_config.write_text(original, encoding="utf-8")
         failed_url = "https://offline.example.test/private-offline-secret"
         env = self.env.copy()
-        env["HA_MCP_URLS"] = f"{self.mcp_url},{failed_url}"
+        env["MCP_URLS"] = f"{self.mcp_url},{failed_url}"
         env["STUB_CURL_FAIL_URL"] = failed_url
         env["STUB_CURL_FAIL_STATUS"] = "503"
 
@@ -710,7 +764,7 @@ raise SystemExit(0)
         first_url = "https://same-host.example.test/first-secret"
         second_url = "https://same-host.example.test/second-secret"
         env = self.env.copy()
-        env["HA_MCP_URLS"] = f"{first_url},{second_url}"
+        env["MCP_URLS"] = f"{first_url},{second_url}"
 
         result = self.configure(env=env)
 
@@ -725,7 +779,7 @@ raise SystemExit(0)
     def test_way_2_switch_off_with_url_is_silent_and_does_nothing(self) -> None:
         before = self.openclaw_config.read_bytes()
         env = self.env.copy()
-        env["HA_MCP_URLS"] = ""
+        env["MCP_URLS"] = ""
         env["HA_OFFICIAL_MCP_URL"] = self.oauth_url
         env["HA_OFFICIAL_MCP_ENABLED"] = "false"
 
@@ -739,7 +793,7 @@ raise SystemExit(0)
 
     def test_way_2_empty_url_uses_official_default(self) -> None:
         env = self.env.copy()
-        env["HA_MCP_URLS"] = ""
+        env["MCP_URLS"] = ""
         env["HA_OFFICIAL_MCP_URL"] = ""
         env["HA_OFFICIAL_MCP_ENABLED"] = "true"
 
@@ -755,7 +809,7 @@ raise SystemExit(0)
         first_url = "https://trim-one.example.test/first-secret"
         second_url = "https://trim-two.example.test/second-secret"
         env = self.env.copy()
-        env["HA_MCP_URLS"] = f"  {first_url}  , ,\t{second_url} \n"
+        env["MCP_URLS"] = f"  {first_url}  , ,\t{second_url} \n"
 
         result = self.configure(env=env)
 

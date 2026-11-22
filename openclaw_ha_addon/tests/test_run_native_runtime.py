@@ -126,14 +126,14 @@ class SectionedHaMcpOptionsTests(unittest.TestCase):
             SectionedDoctorOptionsTests.FLATTEN_START,
             SectionedDoctorOptionsTests.FLATTEN_END,
         )
-        self.assertIn("ha_mcp_urls: .ha_integration.ha_mcp_urls,", flatten)
-        self.assertIn("ha_mcp_enabled: .ha_integration.ha_mcp_enabled,", flatten)
+        self.assertIn("mcp_urls: .ha_integration.mcp_urls,", flatten)
+        self.assertIn("mcp_enabled: .ha_integration.mcp_enabled,", flatten)
         self.assertIn("ha_official_mcp_url: .ha_integration.ha_official_mcp_url,", flatten)
         self.assertIn("ha_official_mcp_enabled: .ha_integration.ha_official_mcp_enabled,", flatten)
-        self.assertIn("HA_MCP_URLS=$(jq -r '.ha_mcp_urls // empty' \"$OPTIONS_FILE\")", RUN_TEXT)
+        self.assertIn("MCP_URLS=$(jq -r '.mcp_urls // empty' \"$OPTIONS_FILE\")", RUN_TEXT)
         self.assertIn(
-            "HA_MCP_ENABLED=$(jq -r 'if .ha_mcp_enabled == null then true else "
-            "(.ha_mcp_enabled | tostring) end' \"$OPTIONS_FILE\")",
+            "MCP_ENABLED=$(jq -r 'if .mcp_enabled == null then true else "
+            "(.mcp_enabled | tostring) end' \"$OPTIONS_FILE\")",
             RUN_TEXT,
         )
         self.assertIn("HA_OFFICIAL_MCP_URL=$(jq -r '.ha_official_mcp_url // empty' \"$OPTIONS_FILE\")", RUN_TEXT)
@@ -143,13 +143,15 @@ class SectionedHaMcpOptionsTests(unittest.TestCase):
             RUN_TEXT,
         )
         reserved = shell_function("is_reserved_gateway_env_var")
-        self.assertIn("HA_MCP_URLS", reserved)
-        self.assertIn("HA_MCP_ENABLED", reserved)
+        self.assertIn("MCP_URLS", reserved)
+        self.assertIn("MCP_ENABLED", reserved)
         self.assertIn("HA_OFFICIAL_MCP_URL", reserved)
         self.assertIn("HA_OFFICIAL_MCP_ENABLED", reserved)
+        self.assertNotIn("HA_MCP_URLS", reserved)
+        self.assertNotIn("HA_MCP_ENABLED", reserved)
         for retired in (
-            ".ha_mcp_url //", ".ha_mcp_token //", ".ha_oauth_mcp_url //",
-            ".auto_configure_mcp //",
+            ".ha_mcp_urls", ".ha_mcp_enabled", ".ha_mcp_url //", ".ha_mcp_token //",
+            ".ha_oauth_mcp_url //", ".auto_configure_mcp //",
         ):
             self.assertNotIn(retired, RUN_TEXT)
 
@@ -958,6 +960,11 @@ class HaMcpUrlTests(unittest.TestCase):
         curl.write_text(
             "#!/usr/bin/env bash\n"
             "{ printf 'PROBE'; printf '\t%s' \"$@\"; printf '\n'; } >> \"$MCP_PROBE_LOG\"\n"
+            "output=\n"
+            "while [ \"$#\" -gt 0 ]; do\n"
+            "  if [ \"$1\" = '--output' ]; then output=$2; shift 2; else shift; fi\n"
+            "done\n"
+            "printf '%s' '{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{}}' > \"$output\"\n"
             "printf '%s' \"${MCP_PROBE_STATUS:-200}\"\n",
             encoding="utf-8",
         )
@@ -989,8 +996,8 @@ class HaMcpUrlTests(unittest.TestCase):
             OPENCLAW_CONFIG_PATH=str(self.openclaw_config),
             HA_TOKEN="user-token",
             SUPERVISOR_TOKEN="supervisor-token",
-            HA_MCP_URLS=self.mcp_url,
-            HA_MCP_ENABLED="true",
+            MCP_URLS=self.mcp_url,
+            MCP_ENABLED="true",
             HA_OFFICIAL_MCP_URL="",
             HA_OFFICIAL_MCP_ENABLED="false",
         )
@@ -1028,14 +1035,14 @@ class HaMcpUrlTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assert_no_forbidden_tools()
         definition = json.loads(self.openclaw_config.read_text(encoding="utf-8"))["mcp"]["servers"][self.community_name]
-        self.assertEqual(definition["url"], self.env["HA_MCP_URLS"])
+        self.assertEqual(definition["url"], self.env["MCP_URLS"])
         self.assertNotIn("headers", definition)
         probe = self.probe_log.read_text(encoding="utf-8")
-        self.assertIn(self.env["HA_MCP_URLS"], probe)
+        self.assertIn(self.env["MCP_URLS"], probe)
         self.assertNotIn("Authorization:", probe)
         self.assertNotIn("user-token", probe)
         self.assertNotIn("supervisor-token", probe)
-        self.assertNotIn(self.env["HA_MCP_URLS"], result.stdout + result.stderr)
+        self.assertNotIn(self.env["MCP_URLS"], result.stdout + result.stderr)
 
     def test_no_bearer_credential_is_sent_or_persisted(self) -> None:
         env = self.env.copy()
@@ -1054,15 +1061,15 @@ class HaMcpUrlTests(unittest.TestCase):
     def test_exact_url_is_used_without_supervisor_token(self) -> None:
         env = self.env.copy()
         env.pop("SUPERVISOR_TOKEN")
-        env["HA_MCP_URLS"] = "http://192.0.2.10:8124/mcp/private-test-path"
+        env["MCP_URLS"] = "http://192.0.2.10:8124/mcp/private-test-path"
         result = self.configure(env)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assert_no_forbidden_tools()
         definition = json.loads(self.openclaw_config.read_text(encoding="utf-8"))["mcp"]["servers"]["ha-mcp-192-0-2-10"]
-        self.assertEqual(definition["url"], env["HA_MCP_URLS"])
-        self.assertIn(env["HA_MCP_URLS"], self.probe_log.read_text(encoding="utf-8"))
+        self.assertEqual(definition["url"], env["MCP_URLS"])
+        self.assertIn(env["MCP_URLS"], self.probe_log.read_text(encoding="utf-8"))
         self.assertNotIn("supervisor-token", result.stdout + result.stderr)
-        self.assertNotIn(env["HA_MCP_URLS"], result.stdout + result.stderr)
+        self.assertNotIn(env["MCP_URLS"], result.stdout + result.stderr)
 
     def test_failed_url_probe_skips_registration_without_leaking(self) -> None:
         env = self.env.copy()
@@ -1076,11 +1083,11 @@ class HaMcpUrlTests(unittest.TestCase):
         self.assertEqual(self.openclaw_config.read_bytes(), before)
         self.assertNotIn("user-token", result.stdout + result.stderr)
         self.assertNotIn("supervisor-token", result.stdout + result.stderr)
-        self.assertNotIn(env["HA_MCP_URLS"], result.stdout + result.stderr)
+        self.assertNotIn(env["MCP_URLS"], result.stdout + result.stderr)
 
     def test_way_2_is_independent_and_needs_no_mcporter_npm_or_curl(self) -> None:
         env = self.env.copy()
-        env["HA_MCP_URLS"] = ""
+        env["MCP_URLS"] = ""
         env["HA_OFFICIAL_MCP_URL"] = "http://192.0.2.10:8123/api/mcp/assist"
         env["HA_OFFICIAL_MCP_ENABLED"] = "true"
 
@@ -1110,7 +1117,7 @@ class HaMcpUrlTests(unittest.TestCase):
 
     def test_way_1_token_is_private_and_needs_no_network_probe(self) -> None:
         env = self.env.copy()
-        env["HA_MCP_URLS"] = ""
+        env["MCP_URLS"] = ""
         env["HA_OFFICIAL_MCP_URL"] = ""
 
         result = self.configure(env, include_api_token=True)
@@ -1141,12 +1148,12 @@ class HaMcpUrlTests(unittest.TestCase):
         ])
         output = result.stdout + result.stderr
         self.assertNotIn("user-token", output)
-        self.assertNotIn(env["HA_MCP_URLS"], output)
+        self.assertNotIn(env["MCP_URLS"], output)
         self.assertNotIn(env["HA_OFFICIAL_MCP_URL"], output)
 
     def test_empty_url_is_a_silent_noop_negative_control(self) -> None:
         env = self.env.copy()
-        env["HA_MCP_URLS"] = ""
+        env["MCP_URLS"] = ""
         before = self.openclaw_config.read_bytes()
         result = self.configure(env)
         self.assertEqual(result.returncode, 0, result.stderr)

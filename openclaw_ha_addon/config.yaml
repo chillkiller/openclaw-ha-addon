@@ -104,9 +104,9 @@ options:
     # Way 3 - community/custom MCP servers (Streamable HTTP).
     # Comma-separated list of connect URLs; the secret is part of each URL and
     # every URL becomes its own MCP server entry.
-    ha_mcp_urls: ""
+    mcp_urls: ""
     # Way 3 switch. Without a configured URL the way does nothing.
-    ha_mcp_enabled: true
+    mcp_enabled: true
     # Optional: outbound HTTP/HTTPS proxy for OpenClaw network access.
     # Example: "http://192.0.2.2:3128"
     http_proxy: ""
@@ -307,8 +307,8 @@ schema:
     homeassistant_token: str?
     ha_official_mcp_url: str?
     ha_official_mcp_enabled: bool?
-    ha_mcp_urls: str?
-    ha_mcp_enabled: bool?
+    mcp_urls: str?
+    mcp_enabled: bool?
     http_proxy: str?
     enable_openai_api: bool?
   acpx_enabled: bool?

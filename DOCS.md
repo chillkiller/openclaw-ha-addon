@@ -400,8 +400,8 @@ Top-level knobs (not inside a section): `timezone`, `network_mode`,
 | `homeassistant_token` | string | _(empty)_ | **Way 1:** HA long-lived access token for the Home Assistant API, Assist-related API access and scripts/skills. Saved to `/config/secrets/homeassistant.token`. **Not used for MCP.** |
 | `ha_official_mcp_url` | string | _(empty)_ | **Way 2:** official Home Assistant MCP URL ending in `/api/mcp` or `/api/mcp/<api_id>`. Uses OpenClaw OAuth 2.0/PKCE and one interactive consent in the Control UI. An empty value uses the default `http://homeassistant.local:8123/api/mcp`. |
 | `ha_official_mcp_enabled` | bool | `false` | **Way 2:** switch for the official Home Assistant MCP server. Independent of way 3; while it is off no official entry is written. |
-| `ha_mcp_urls` | string | _(empty)_ | **Way 3:** comma-separated list of community/custom MCP connect URLs. The secret is part of each URL, so treat the whole field as a secret. Every URL becomes its own MCP server, named `ha-mcp-<host>`. |
-| `ha_mcp_enabled` | bool | `true` | **Way 3:** switch for the community/custom MCP servers. Without a URL in `ha_mcp_urls` the way does nothing. |
+| `mcp_urls` | string | _(empty)_ | **Way 3:** comma-separated list of community/custom MCP connect URLs. The secret is part of each URL, so treat the whole field as a secret. Every URL becomes its own MCP server, named `ha-mcp-<host>`. |
+| `mcp_enabled` | bool | `true` | **Way 3:** switch for the community/custom MCP servers. Without a URL in `mcp_urls` the way does nothing. |
 | `http_proxy` | string | _(empty)_ | Optional outbound proxy URL for HTTP/HTTPS requests from OpenClaw and Node tools. Example: `http://198.51.100.1:3128` |
 
 ### Maintenance
@@ -631,7 +631,7 @@ The add-on configuration supports three independent connection ways. An empty op
 |---|---|---|---|---|
 | **1 — Home Assistant API** | `homeassistant_token` | Home Assistant long-lived access token, stored with mode `0600` | HA API, Assist-related API access and scripts/skills; **not MCP** | Token file exists and an HA API/Assist call succeeds |
 | **2 — official MCP** | `ha_official_mcp_enabled` plus `ha_official_mcp_url` (empty uses the default `http://homeassistant.local:8123/api/mcp`) | OAuth 2.0/PKCE after one interactive consent; OpenClaw owns the stored OAuth credentials | Official Home Assistant MCP server as `mcp.servers.ha-official` | `openclaw mcp status --verbose` and the server's tools in the catalog |
-| **3 — community/custom MCP** | `ha_mcp_enabled` plus `ha_mcp_urls` (comma-separated list of connect URLs) | The secret inside each URL; the whole field is a secret | One native MCP server per URL, named `ha-mcp-<host>` | `openclaw mcp status --verbose` and the servers' tools in the catalog |
+| **3 — community/custom MCP** | `mcp_enabled` plus `mcp_urls` (comma-separated list of connect URLs) | The secret inside each URL; the whole field is a secret | One native MCP server per URL, named `ha-mcp-<host>` | `openclaw mcp status --verbose` and the servers' tools in the catalog |
 
 **A Home Assistant long-lived access token is not an MCP credential for way 2 and returns HTTP 401 at the official MCP endpoint.** `homeassistant_token` remains dedicated to way 1. Neither it nor the Supervisor token is copied into either MCP definition.
 
@@ -653,8 +653,8 @@ The add-on configuration supports three independent connection ways. An empty op
 
 ##### Way 3 — community/custom MCP servers (URL list)
 
-- Install a community or custom MCP server (for example [`homeassistant-ai/ha-mcp`](https://github.com/homeassistant-ai/ha-mcp)) and copy its exact client connect URL into `ha_mcp_urls`. Several servers are separated by **commas**; treat the whole field like a password, because the secret is part of each URL.
-- Leave `ha_mcp_enabled` on (it is on by default). It has no effect without a URL in the list.
+- Install a community or custom MCP server (for example [`homeassistant-ai/ha-mcp`](https://github.com/homeassistant-ai/ha-mcp)) and copy its exact client connect URL into `mcp_urls`. Several servers are separated by **commas**; treat the whole field like a password, because the secret is part of each URL.
+- Leave `mcp_enabled` on (it is on by default). It has no effect without a URL in the list.
 - At startup the app sends a bounded MCP `initialize` request to each URL in turn. Only HTTP 200 permits registration; a URL that does not answer is reported without printing the URL or the secret, is not registered, and leaves every existing OpenClaw MCP entry unchanged.
 - After a successful probe the app writes one native entry per URL. The name is derived from the host: `ha-mcp-<host>` with dots replaced by dashes (for example `ha-mcp-192-168-178-68`); a second URL on the same host continues as `ha-mcp-<host>-2`.
 - Verify with `openclaw mcp status --verbose` and the servers' HA tools in the agent catalog.
@@ -693,7 +693,7 @@ The image also bundles `mcporter` for OpenClaw's `mcporter` skill. That skill ca
 | Way-2 OAuth discovery fails or Home Assistant bans repeated attempts | Use the exact reachable HA internal/external base URL and correct proxy/issuer mismatch before retrying. Do not loop login/probe attempts; check Home Assistant's `ip_bans.yaml` only if HA reports a ban. |
 | `/api/mcp` denies access after login | Use an administrator account, or deliberately choose `/api/mcp/assist` for the admin-free device-control API. Other individual APIs may still require an administrator. |
 | An existing `ha` or `ha_official` entry is reported as unowned | It is user-managed and is not replaced. Review or rename it manually before asking the app to manage that exact name. |
-| Way-3 MCP registration fails with an auth error | Confirm the community-server secret URL in `ha_mcp_urls`. Do not use a Home Assistant long-lived token for official `/api/mcp`; that way requires OAuth. |
+| Way-3 MCP registration fails with an auth error | Confirm the community-server secret URL in `mcp_urls`. Do not use a Home Assistant long-lived token for official `/api/mcp`; that way requires OAuth. |
 | OpenClaw doesn’t see HA entities | Run `openclaw mcp status --verbose` and `openclaw mcp doctor ha --probe` (or `ha_official`). Complete `openclaw mcp login ha_official` if requested, then confirm that the server's HA tools appear in the agent's tool catalog. |
 | Model says “what’s MCP?” | Switch to a more capable model for the initial session (see below) |
 

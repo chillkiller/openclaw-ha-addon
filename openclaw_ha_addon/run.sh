@@ -48,8 +48,8 @@ if jq -e 'has("harness") or has("ha_integration")' "$OPTIONS_FILE" >/dev/null 2>
       acpx_enabled: .acpx_enabled,
       harness_config_writer_enabled: .harness_config_writer_enabled,
       homeassistant_token: .ha_integration.homeassistant_token,
-      ha_mcp_urls: .ha_integration.ha_mcp_urls,
-      ha_mcp_enabled: .ha_integration.ha_mcp_enabled,
+      mcp_urls: .ha_integration.mcp_urls,
+      mcp_enabled: .ha_integration.mcp_enabled,
       ha_official_mcp_url: .ha_integration.ha_official_mcp_url,
       ha_official_mcp_enabled: .ha_integration.ha_official_mcp_enabled,
       http_proxy: .ha_integration.http_proxy,
@@ -101,8 +101,8 @@ GW_PUBLIC_URL=$(jq -r '.gateway_public_url // empty' "$OPTIONS_FILE")
 HA_TOKEN=$(jq -r '.homeassistant_token // empty' "$OPTIONS_FILE")
 # Way 3: comma-separated list of community/custom MCP server URLs. The secret
 # is part of each URL. Way 2: the official Home Assistant MCP server.
-HA_MCP_URLS=$(jq -r '.ha_mcp_urls // empty' "$OPTIONS_FILE")
-HA_MCP_ENABLED=$(jq -r 'if .ha_mcp_enabled == null then true else (.ha_mcp_enabled | tostring) end' "$OPTIONS_FILE")
+MCP_URLS=$(jq -r '.mcp_urls // empty' "$OPTIONS_FILE")
+MCP_ENABLED=$(jq -r 'if .mcp_enabled == null then true else (.mcp_enabled | tostring) end' "$OPTIONS_FILE")
 HA_OFFICIAL_MCP_URL=$(jq -r '.ha_official_mcp_url // empty' "$OPTIONS_FILE")
 HA_OFFICIAL_MCP_ENABLED=$(jq -r 'if .ha_official_mcp_enabled == null then false else (.ha_official_mcp_enabled | tostring) end' "$OPTIONS_FILE")
 ADDON_HTTP_PROXY=$(jq -r '.http_proxy // empty' "$OPTIONS_FILE")
@@ -540,7 +540,7 @@ is_reserved_gateway_env_var() {
     # (nginx/node-relay config rendering, port guards, cert SANs). Allowing
     # them via gateway_env_vars would invalidate the explicit validation
     # run.sh and render_nginx.py perform (nginx/node config injection vector).
-    GATEWAY_PORT|GATEWAY_INTERNAL_PORT|GATEWAY_MODE|GATEWAY_BIND|GATEWAY_AUTH_MODE|GATEWAY_REMOTE_URL|GATEWAY_TLS_ENABLED|GATEWAY_TLS_AUTO|GATEWAY_LOG_LEVEL|GATEWAY_TRUSTED_PROXIES|NETWORK_MODE|ACCESS_MODE|INGRESS_PORT|TERMINAL_PORT|HTTPS_PROXY_PORT|ENABLE_HTTPS_PROXY|CERTS_DIR|LAN_IP|GW_PUBLIC_URL|GW_TOKEN|NGINX_LOG_LEVEL|SHOW_WEBUI|SHOW_TERMINAL|SHOW_DOCS|TAILSCALE_MODE|GATEWAY_ADDITIONAL_ALLOWED_ORIGINS|MDNS_MODE|CONTROLUI_DISABLE_DEVICE_AUTH|ACPX_ENABLED|ENABLE_OPENAI_API|BLOCKED_HOSTNAMES|HA_MCP_URLS|HA_MCP_ENABLED|HA_OFFICIAL_MCP_URL|HA_OFFICIAL_MCP_ENABLED|TRACE_LOG_TO_CONSOLE|GATEWAY_LOG_TO_CONSOLE)
+    GATEWAY_PORT|GATEWAY_INTERNAL_PORT|GATEWAY_MODE|GATEWAY_BIND|GATEWAY_AUTH_MODE|GATEWAY_REMOTE_URL|GATEWAY_TLS_ENABLED|GATEWAY_TLS_AUTO|GATEWAY_LOG_LEVEL|GATEWAY_TRUSTED_PROXIES|NETWORK_MODE|ACCESS_MODE|INGRESS_PORT|TERMINAL_PORT|HTTPS_PROXY_PORT|ENABLE_HTTPS_PROXY|CERTS_DIR|LAN_IP|GW_PUBLIC_URL|GW_TOKEN|NGINX_LOG_LEVEL|SHOW_WEBUI|SHOW_TERMINAL|SHOW_DOCS|TAILSCALE_MODE|GATEWAY_ADDITIONAL_ALLOWED_ORIGINS|MDNS_MODE|CONTROLUI_DISABLE_DEVICE_AUTH|ACPX_ENABLED|ENABLE_OPENAI_API|BLOCKED_HOSTNAMES|MCP_URLS|MCP_ENABLED|HA_OFFICIAL_MCP_URL|HA_OFFICIAL_MCP_ENABLED|TRACE_LOG_TO_CONSOLE|GATEWAY_LOG_TO_CONSOLE)
       return 0
       ;;
     *)
@@ -1928,7 +1928,7 @@ process.stdout.write(JSON.stringify(definition));
     fi
   fi
 
-  if [ "$HA_MCP_ENABLED" != "true" ] || [ -z "$HA_MCP_URLS" ]; then
+  if [ "$MCP_ENABLED" != "true" ] || [ -z "$MCP_URLS" ]; then
     return 0
   fi
   if ! curl_bin=$(command -v curl 2>/dev/null); then
@@ -1945,9 +1945,11 @@ process.stdout.write(JSON.stringify(definition));
   local mcp_candidate=""
   local mcp_suffix=1
   local http_status=""
+  local probe_body=""
+  local probe_ok="false"
   local community_definition=""
 
-  IFS=',' read -r -a mcp_url_entries <<< "$HA_MCP_URLS"
+  IFS=',' read -r -a mcp_url_entries <<< "$MCP_URLS"
   for mcp_url in "${mcp_url_entries[@]}"; do
     mcp_url="$(printf '%s' "$mcp_url" | tr -d '[:space:]')"
     [ -n "$mcp_url" ] || continue
@@ -1963,14 +1965,28 @@ process.stdout.write(JSON.stringify(definition));
     mcp_used_names+=("$mcp_name")
 
     http_status=""
-    http_status=$(PATH="$image_path" "$curl_bin" \
-      --silent --show-error --output /dev/null --write-out '%{http_code}' \
-      --connect-timeout 5 --max-time 10 --request POST "$mcp_url" \
-      --header "Content-Type: application/json" \
-      --header "Accept: application/json, text/event-stream" \
-      --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"0"}}}' \
-      2>/dev/null) || http_status=""
-    if [ "$http_status" != "200" ]; then
+    probe_body="$(mktemp 2>/dev/null || true)"
+    if [ -n "$probe_body" ]; then
+      http_status=$(PATH="$image_path" "$curl_bin" \
+        --silent --show-error --output "$probe_body" --write-out '%{http_code}' \
+        --connect-timeout 5 --max-time 10 --request POST "$mcp_url" \
+        --header "Content-Type: application/json" \
+        --header "Accept: application/json, text/event-stream" \
+        --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"0"}}}' \
+        2>/dev/null) || http_status=""
+    else
+      http_status=""
+    fi
+    # An initialize request is answered with HTTP 200 and an MCP result. A
+    # server that answers with a protocol error must not be registered, so the
+    # body has to carry a JSON-RPC result. HTTP 202 is the answer to a
+    # notification, which this probe does not send.
+    probe_ok=false
+    if [ "$http_status" = "200" ] && grep -q '"result"' "$probe_body" 2>/dev/null; then
+      probe_ok=true
+    fi
+    rm -f "$probe_body"
+    if [ "$probe_ok" != "true" ]; then
       echo "WARN: Home Assistant connection way 3 (community MCP, URL list): a configured URL did not answer the initialize probe (HTTP ${http_status:-no answer}); it was not registered and every existing MCP entry stays untouched."
       continue
     fi
