@@ -8,6 +8,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Each entry summarizes user-visible changes. Full engineering notes:
 [openclaw_ha_addon/CHANGELOG.md](openclaw_ha_addon/CHANGELOG.md).
 
+## [0.7.13.40] — 2026-11-22
+
+The standard Home Assistant MCP connection now uses the token entered in the app configuration and is registered only after Home Assistant successfully authenticates it.
+
+### Fixed
+
+- **The standard Home Assistant MCP route authenticates with the configured Home Assistant token.** A bounded initialization check runs before registration for both the configured token and the Supervisor-token fallback. Failed or unreachable authentication is logged and skipped instead of creating a broken entry. When the app's ownership marker proves that it wrote the existing `HA` entry, the failed probe also removes exactly that stale home-scoped entry and its marker; an unmarked `HA` entry and all other entries remain untouched.
+- **The MCP client stays available at the pinned version.** While MCP auto-configuration is enabled, a missing or outdated `mcporter` 0.17.0 installation is repaired with the image's Node.js runtime. Installation, version and registry operations have hard timeouts, and a repair failure does not stop the app from starting.
+
+### Changed
+
+- **Further MCP servers and tools stay with the user.** The app registers only the standard Home Assistant route; additional servers and tools are configured in the OpenClaw Control UI.
+
+---
+
 ## [0.7.13.39] — 2026-11-22
 
 The agent harnesses now receive their complete native configuration from the add-on, and the add-on itself cleans up the parts that made upgrades and restarts unreliable.

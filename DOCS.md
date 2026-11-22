@@ -397,14 +397,14 @@ Top-level knobs (not inside a section): `timezone`, `network_mode`,
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `homeassistant_token` | string | _(empty)_ | Optional HA long-lived access token (use at own risk, can be very unsecure but very powerful). Saved to `/config/secrets/homeassistant.token` for use by scripts/skills |
+| `homeassistant_token` | string | _(empty)_ | Optional HA long-lived access token (use at own risk, can be very unsecure but very powerful). Used for the standard Home Assistant MCP route and saved to `/config/secrets/homeassistant.token` for use by scripts/skills |
 | `http_proxy` | string | _(empty)_ | Optional outbound proxy URL for HTTP/HTTPS requests from OpenClaw and Node tools. Example: `http://198.51.100.1:3128` |
 
 ### Maintenance
 
 | Option | Type | Default | Description |
 |---|---|---|---|
-| `auto_configure_mcp` | bool | `false` | Auto-register Home Assistant as an MCP server on startup (requires `homeassistant_token`) |
+| `auto_configure_mcp` | bool | `false` | Probe and auto-register the standard Home Assistant MCP route on startup; also keeps `mcporter` at the bundled pinned version |
 | `gateway_log_to_console` | bool | `false` | Mirror gateway stdout/stderr to the HA app log window (default: gateway logs go to `/config/clawd/logs/gateway_startup.log` only) |
 | `gateway_log_level` | `off` / `info` / `debug` | `info` | Gateway log verbosity |
 | `trace_log_to_console` | bool | `false` | Mirror trace output to the HA app log window (default: trace logs go to `/config/clawd/logs/trace_startup.log` only) |
@@ -630,19 +630,27 @@ The **Model Context Protocol (MCP)** lets OpenClaw communicate directly with Hom
 3. Set **Auto-Configure MCP for Home Assistant** (`auto_configure_mcp`) to **ON**
 4. Restart the app
 
-The app will automatically register Home Assistant as an MCP server named `HA` using `mcporter`. It auto-detects the HA API URL (supervisor proxy when available, otherwise `localhost:8123`). Check the logs for:
+The app automatically registers Home Assistant as an MCP server named `HA` using `mcporter`. The standard route is `http://supervisor/core/api/mcp`, which works in every app network mode, and the credential is the Home Assistant token entered in the app configuration. Before registration, the app sends an MCP initialization request and continues only when Home Assistant answers with HTTP 200. An expired or mistyped token therefore does not create a new failing MCP entry. If the app's ownership marker proves that it wrote the existing `HA` entry, a failed probe removes exactly that stale home-scoped entry and deletes the marker. An unmarked `HA` entry and every other registry entry remain untouched.
+
+While automatic setup is enabled, the app also checks that `mcporter` is installed at the bundled pinned version (0.17.0). A missing or different version is repaired with the image's own Node.js runtime; an installation failure is logged without preventing the app from starting.
+
+If no Home Assistant token is configured, the Supervisor token is only a fallback and is registered only after the same successful authentication probe. Without either token, automatic registration is skipped. The direct `http://localhost:8123/api/mcp` route remains only for installations where no Supervisor token is available and host networking provides direct access to Home Assistant.
+
+Check the logs for:
 ```
 INFO: MCP server 'HA' registered — OpenClaw can now control Home Assistant
 ```
 
-On subsequent restarts, the configuration is skipped if the token hasn’t changed.
+On subsequent restarts, registration is skipped after a successful probe if the token and route have not changed.
+
+The app manages only this standard Home Assistant entry. Configure any further MCP servers and tools yourself in the OpenClaw Control UI; the app does not add, change, or remove those user-managed entries.
 
 #### Manual setup
 
 If you prefer to configure MCP manually (or `auto_configure_mcp` is off), run this in the app terminal:
 
 ```sh
-mcporter config add HA "http://localhost:8123/api/mcp" \
+mcporter config add HA "http://supervisor/core/api/mcp" \
   --header "Authorization=Bearer YOUR_LONG_LIVED_TOKEN" \
   --scope home
 ```
@@ -663,7 +671,7 @@ If OpenClaw can execute HA actions, MCP is working.
 If OpenClaw has stale or missing Home Assistant data after an upgrade, run:
 
 ```sh
-mcporter call home-assistant.GetLiveContext
+mcporter call HA.GetLiveContext
 ```
 
 This refreshes the entity/service metadata that OpenClaw uses.
@@ -676,9 +684,10 @@ MCP setup requires an AI model that understands tool/skill invocation. Budget mo
 
 | Symptom | Fix |
 |---|---|
-| `mcporter: command not found` | Run `openclaw onboard` first, then restart the app |
+| `mcporter: command not found` or an unexpected `mcporter` version | With automatic setup enabled, the app repairs the bundled `mcporter` installation to pinned version 0.17.0. Check the startup log for an npm or network error; the app continues to start if the repair fails. |
+| The standard route is not registered because authentication failed | The app registers the route only after a successful authentication probe. Check the startup log, enter a valid Home Assistant long-lived token in the app configuration, and restart. |
 | MCP add fails with auth error | Verify your long-lived token is valid and not expired |
-| OpenClaw doesn’t see HA entities | Run `mcporter call home-assistant.GetLiveContext` to refresh |
+| OpenClaw doesn’t see HA entities | Run `mcporter call HA.GetLiveContext` to refresh |
 | Model says “what’s MCP?” | Switch to a more capable model for the initial session (see above) |
 
 To enable it, add to `/config/.openclaw/openclaw.json`:

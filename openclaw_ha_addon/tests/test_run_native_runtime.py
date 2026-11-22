@@ -698,18 +698,45 @@ class HaMcpCredentialTests(unittest.TestCase):
         self.config.mkdir()
         self.bin = self.root / "bin"
         self.bin.mkdir()
+        self.npm_prefix = self.root / "npm-prefix"
+        persistent_bin = self.npm_prefix / "bin"
+        persistent_bin.mkdir(parents=True)
         self.log = self.root / "mcporter-log"
-        mcporter = self.bin / "mcporter"
+        self.probe_log = self.root / "probe-log"
+        self.npm_log = self.root / "npm-log"
+        mcporter = persistent_bin / "mcporter"
         mcporter.write_text(
-            "#!/usr/bin/env bash\n{ printf 'CALL'; printf '\\t%s' \"$@\"; printf '\\n'; } >> \"$MCPORTER_LOG\"\n",
+            "#!/usr/bin/env bash\n"
+            "if [ \"${1:-}\" = --version ]; then printf '0.17.0\\n'; exit 0; fi\n"
+            "{ printf 'CALL'; printf '\\t%s' \"$@\"; printf '\\n'; } >> \"$MCPORTER_LOG\"\n",
             encoding="utf-8",
         )
         mcporter.chmod(0o755)
+        curl = self.bin / "curl"
+        curl.write_text(
+            "#!/usr/bin/env bash\n"
+            "{ printf 'PROBE'; printf '\\t%s' \"$@\"; printf '\\n'; } >> \"$MCP_PROBE_LOG\"\n"
+            "printf '%s' \"${MCP_PROBE_STATUS:-200}\"\n",
+            encoding="utf-8",
+        )
+        curl.chmod(0o755)
+        npm = self.bin / "npm"
+        npm.write_text(
+            "#!/usr/bin/env bash\n"
+            "if [ \"${1:-}\" = prefix ] && [ \"${2:-}\" = -g ]; then printf '%s\\n' \"$MCP_NPM_PREFIX\"; exit 0; fi\n"
+            "{ printf 'NPM'; printf '\\t%s' \"$@\"; printf '\\n'; } >> \"$MCP_NPM_LOG\"\n",
+            encoding="utf-8",
+        )
+        npm.chmod(0o755)
         self.env = os.environ.copy()
         self.env.update(
             PATH=f"{self.bin}:{self.env['PATH']}",
             MCPORTER_LOG=str(self.log),
+            MCP_PROBE_LOG=str(self.probe_log),
+            MCP_NPM_LOG=str(self.npm_log),
+            MCP_NPM_PREFIX=str(self.npm_prefix),
             HOME=str(self.root),
+            XDG_CONFIG_HOME=str(self.root / "xdg"),
             OPENCLAW_CONFIG_DIR=str(self.config),
             AUTO_CONFIGURE_MCP="true",
             HA_TOKEN="user-token",
@@ -720,20 +747,18 @@ class HaMcpCredentialTests(unittest.TestCase):
         self.temp.cleanup()
 
     def configure(self, env: dict[str, str]) -> subprocess.CompletedProcess[str]:
-        body = """mcporter() {
-  { printf 'CALL'; printf '\\t%s' "$@"; printf '\\n'; } >> "$MCPORTER_LOG"
-}
-configure_ha_mcp"""
-        return run_bash(["configure_ha_mcp"], body, env=env)
+        return run_bash(["configure_ha_mcp"], "configure_ha_mcp", env=env)
 
-    def test_supervisor_proxy_uses_supervisor_token_not_ha_token(self) -> None:
+    def test_supervisor_proxy_uses_ha_token_not_supervisor_token(self) -> None:
         result = self.configure(self.env)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(self.log.exists(), result.stdout + result.stderr)
         calls = self.log.read_text(encoding="utf-8")
         self.assertIn("http://supervisor/core/api/mcp", calls)
-        self.assertIn("Authorization=Bearer supervisor-token", calls)
-        self.assertNotIn("Authorization=Bearer user-token", calls)
+        self.assertIn("Authorization=Bearer user-token", calls)
+        self.assertNotIn("Authorization=Bearer supervisor-token", calls)
+        self.assertIn("Authorization: Bearer user-token", self.probe_log.read_text(encoding="utf-8"))
+        self.assertFalse(self.npm_log.exists())
 
     def test_supervisor_token_does_not_require_configured_ha_token(self) -> None:
         env = self.env.copy()
@@ -742,6 +767,7 @@ configure_ha_mcp"""
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(self.log.exists(), result.stdout + result.stderr)
         self.assertIn("Authorization=Bearer supervisor-token", self.log.read_text(encoding="utf-8"))
+        self.assertIn("Authorization: Bearer supervisor-token", self.probe_log.read_text(encoding="utf-8"))
 
     def test_localhost_fallback_uses_ha_token(self) -> None:
         env = self.env.copy()
@@ -753,6 +779,18 @@ configure_ha_mcp"""
         self.assertIn("http://localhost:8123/api/mcp", calls)
         self.assertIn("Authorization=Bearer user-token", calls)
         self.assertNotIn("supervisor-token", calls)
+        self.assertIn("http://localhost:8123/api/mcp", self.probe_log.read_text(encoding="utf-8"))
+
+    def test_failed_ha_token_probe_skips_registration_without_leaking(self) -> None:
+        env = self.env.copy()
+        env["MCP_PROBE_STATUS"] = "401"
+        result = self.configure(env)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn("could not authenticate", result.stdout)
+        self.assertIn("skipping registration", result.stdout)
+        self.assertFalse(self.log.exists())
+        self.assertNotIn("user-token", result.stdout + result.stderr)
+        self.assertNotIn("supervisor-token", result.stdout + result.stderr)
 
     def test_no_credentials_is_a_noop_negative_control(self) -> None:
         env = self.env.copy()
@@ -761,6 +799,7 @@ configure_ha_mcp"""
         result = self.configure(env)
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertFalse(self.log.exists())
+        self.assertFalse(self.probe_log.exists())
         self.assertIn("no Supervisor or Home Assistant token", result.stdout)
 
 

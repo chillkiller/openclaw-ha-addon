@@ -1504,51 +1504,207 @@ fi
 # ------------------------------------------------------------------------------
 # Auto-configure MCP (Model Context Protocol) for Home Assistant
 # Registers HA as an MCP server so OpenClaw can control HA entities/services.
-# Requires: homeassistant_token set in app options + mcporter CLI available.
-# Runs once; re-runs when the token changes.
-# Auto-detects HA API URL: supervisor proxy if available, else localhost:8123.
+# Uses the configured homeassistant_token, with the Supervisor token only as
+# fallback. Every route must pass an authentication probe before registration.
+# Ensures pinned mcporter with the image Node.js runtime.
+# Reuses registration when the token is unchanged; probes on every start.
+# Standard route: supervisor proxy; localhost:8123 only without Supervisor.
 # ------------------------------------------------------------------------------
 configure_ha_mcp() {
-if [ "$AUTO_CONFIGURE_MCP" = "true" ] && { [ -n "$HA_TOKEN" ] || [ -n "${SUPERVISOR_TOKEN:-}" ]; }; then
-  if command -v mcporter >/dev/null 2>&1; then
-    # Detect HA API URL: prefer supervisor proxy (works in all app network modes),
-    # fall back to localhost:8123 (works with host_network: true).
-    # HA documents SUPERVISOR_TOKEN for /core/api/ proxy routes. The configured
-    # long-lived HA token is only for the direct localhost Core API fallback.
-    if [ -n "${SUPERVISOR_TOKEN:-}" ]; then
-      MCP_HA_URL="http://supervisor/core/api/mcp"
-      MCP_HA_TOKEN="$SUPERVISOR_TOKEN"
-    else
-      MCP_HA_URL="http://localhost:8123/api/mcp"
-      MCP_HA_TOKEN="$HA_TOKEN"
-    fi
-    MCP_FLAG="${OPENCLAW_CONFIG_DIR}/.mcp_ha_configured"
-    MCP_TOKEN_HASH=$(printf '%s\n%s' "$MCP_HA_URL" "$MCP_HA_TOKEN" | sha256sum | cut -d' ' -f1)
+  [ "$AUTO_CONFIGURE_MCP" = "true" ] || return 0
 
-    if [ -f "$MCP_FLAG" ] && [ "$(cat "$MCP_FLAG" 2>/dev/null)" = "$MCP_TOKEN_HASH" ]; then
-      echo "INFO: MCP Home Assistant server already configured (token unchanged)"
-    else
-      echo "INFO: Configuring MCP for Home Assistant at $MCP_HA_URL ..."
-      # Remove stale entry if present (token may have changed)
-      mcporter config remove HA 2>/dev/null || true
+  local mcporter_pin="0.17.0"
+  local image_path="/usr/bin:$PATH"
+  local installed_version=""
+  local mcporter_bin=""
+  local npm_bin=""
+  local curl_bin=""
+  local timeout_bin=""
+  local npm_prefix=""
+  local persistent_mcporter=""
 
-      if mcporter config add HA "$MCP_HA_URL" \
-          --header "Authorization=Bearer $MCP_HA_TOKEN" \
-          --scope home 2>&1; then
-        printf '%s' "$MCP_TOKEN_HASH" > "$MCP_FLAG"
-        echo "INFO: MCP server 'HA' registered — OpenClaw can now control Home Assistant"
-      else
-        echo "WARN: MCP auto-configuration failed. Configure manually in the terminal:"
-        echo "WARN:   mcporter config add HA \"$MCP_HA_URL\" --header \"Authorization=Bearer YOUR_TOKEN\" --scope home"
-      fi
-    fi
-  else
-    echo "INFO: mcporter not available; skipping MCP auto-configuration (run 'openclaw onboard' first)"
+  # Resolve executables before prepending /usr/bin. The latter is only the
+  # runtime PATH for env-node shebangs; it must not select a stale mcporter or
+  # allow a persisted Homebrew Node.js to run it. No environment variable can
+  # replace these executables with an arbitrary credential recipient.
+  if ! npm_bin=$(command -v npm 2>/dev/null); then
+    echo "WARN: npm was not found; skipping MCP auto-configuration."
+    return 0
   fi
-elif [ "$AUTO_CONFIGURE_MCP" = "true" ]; then
-  echo "INFO: MCP auto-configure enabled but no Supervisor or Home Assistant token is available — skipping"
-  echo "INFO: For the localhost fallback, set homeassistant_token in app Configuration, then restart"
-fi
+  if ! curl_bin=$(command -v curl 2>/dev/null); then
+    echo "WARN: curl was not found; skipping MCP auto-configuration."
+    return 0
+  fi
+  if ! timeout_bin=$(command -v timeout 2>/dev/null); then
+    echo "WARN: coreutils timeout was not found; skipping bounded MCP install, version and registry operations."
+    return 0
+  fi
+  if ! npm_prefix=$(PATH="$image_path" "$timeout_bin" 30s "$npm_bin" prefix -g 2>/dev/null) || [ -z "$npm_prefix" ]; then
+    echo "WARN: Could not determine the npm global prefix; skipping MCP auto-configuration."
+    return 0
+  fi
+  persistent_mcporter="${npm_prefix}/bin/mcporter"
+
+  resolve_mcporter_binary() {
+    # The pinned image binary is the normal choice. After a repair, prefer the
+    # just-installed persistent binary so a stale image copy cannot shadow it.
+    if [ "${1:-image}" = "persistent" ] && [ -x "$persistent_mcporter" ]; then
+      mcporter_bin="$persistent_mcporter"
+      return 0
+    fi
+    if [ -x /usr/bin/mcporter ]; then
+      mcporter_bin="/usr/bin/mcporter"
+      return 0
+    fi
+    if [ -x "$persistent_mcporter" ]; then
+      mcporter_bin="$persistent_mcporter"
+      return 0
+    fi
+    mcporter_bin=""
+    return 1
+  }
+
+  read_mcporter_version() {
+    installed_version=""
+    if installed_version=$(PATH="$image_path" "$timeout_bin" 30s "$mcporter_bin" --version 2>/dev/null); then
+      return 0
+    fi
+    # stdout from a broken or timed-out binary is not a verified version.
+    installed_version=""
+    return 1
+  }
+
+  # mcporter's env-node shebang must resolve the image Node.js, not a persisted
+  # Homebrew installation. Repair only a missing or differently pinned CLI.
+  if resolve_mcporter_binary image; then
+    read_mcporter_version || true
+  fi
+  if [ "$installed_version" != "$mcporter_pin" ]; then
+    echo "INFO: Ensuring mcporter $mcporter_pin is installed with the image Node.js runtime..."
+    if ! PATH="$image_path" "$timeout_bin" 120s "$npm_bin" install -g "mcporter@$mcporter_pin"; then
+      echo "WARN: Could not install mcporter $mcporter_pin; skipping MCP auto-configuration. Check npm/network access and restart the app."
+      return 0
+    fi
+    if ! resolve_mcporter_binary persistent; then
+      echo "WARN: mcporter $mcporter_pin could not be found after installation; skipping MCP auto-configuration."
+      return 0
+    fi
+    read_mcporter_version || true
+    if [ "$installed_version" != "$mcporter_pin" ]; then
+      echo "WARN: mcporter $mcporter_pin could not be verified after installation; skipping MCP auto-configuration. Check the image Node.js/npm installation and restart the app."
+      return 0
+    fi
+  fi
+
+  local mcp_ha_url=""
+  local mcp_ha_token=""
+
+  if [ -n "$HA_TOKEN" ]; then
+    # The configured long-lived Home Assistant token always wins. The standard
+    # Supervisor proxy route works in every app network mode; loopback is only
+    # the host-network fallback when no Supervisor token is available.
+    mcp_ha_token="$HA_TOKEN"
+    if [ -n "${SUPERVISOR_TOKEN:-}" ]; then
+      mcp_ha_url="http://supervisor/core/api/mcp"
+    else
+      mcp_ha_url="http://localhost:8123/api/mcp"
+    fi
+  elif [ -n "${SUPERVISOR_TOKEN:-}" ]; then
+    mcp_ha_url="http://supervisor/core/api/mcp"
+    mcp_ha_token="$SUPERVISOR_TOKEN"
+  else
+    echo "INFO: MCP auto-configure enabled but no Supervisor or Home Assistant token is available — skipping"
+    echo "INFO: Set homeassistant_token in app Configuration, then restart"
+    return 0
+  fi
+
+  local http_status=""
+  local mcp_flag="${OPENCLAW_CONFIG_DIR}/.mcp_ha_configured"
+
+  remove_owned_ha_entry() {
+    # The marker is the ownership proof. Without it, even an exact HA entry is
+    # user-managed and must survive a failed probe unchanged.
+    [ -f "$mcp_flag" ] || return 0
+
+    # Resolve the registry through the installed mcporter's own paths.js. This
+    # is exactly resolveWriteTarget(--scope home): mcporterDir('config') plus
+    # mcporter.json. Delete only the exact own-property HA under mcporter's
+    # own file lock, and use its atomic writer to retain every other key, the
+    # file mode and symlink-aware same-directory rename semantics.
+    if ! PATH="$image_path" "$timeout_bin" 30s /usr/bin/node --input-type=module -e '
+import fs from "node:fs";
+import path from "node:path";
+import { pathToFileURL } from "node:url";
+const cliPath = fs.realpathSync(process.argv[1]);
+const packageRoot = path.dirname(path.dirname(cliPath));
+const { mcporterDir } = await import(pathToFileURL(path.join(packageRoot, "dist", "paths.js")).href);
+const { withFileLock, writeTextFileAtomic } = await import(pathToFileURL(path.join(packageRoot, "dist", "fs-json.js")).href);
+const registry = path.join(mcporterDir("config"), "mcporter.json");
+await withFileLock(registry, async () => {
+  let config;
+  try { config = JSON.parse(fs.readFileSync(registry, "utf8")); }
+  catch (error) { if (error.code === "ENOENT") return; throw error; }
+  if (!config || typeof config !== "object" || Array.isArray(config)) throw new Error("invalid home registry");
+  const servers = config.mcpServers;
+  if (!servers || typeof servers !== "object" || !Object.prototype.hasOwnProperty.call(servers, "HA")) return;
+  delete servers.HA;
+  await writeTextFileAtomic(registry, `${JSON.stringify(config, null, 2)}\n`);
+  });
+' "$mcporter_bin" >/dev/null 2>&1; then
+      echo "WARN: Could not remove the add-on-owned HA entry after the failed probe; other MCP entries were left untouched."
+      return 0
+    fi
+    if ! rm -f -- "$mcp_flag"; then
+      echo "WARN: Removed the add-on-owned HA entry but could not delete its ownership marker."
+      return 0
+    fi
+    echo "INFO: Removed the stale add-on-owned HA entry after the failed authentication probe"
+  }
+
+  if ! http_status=$(PATH="$image_path" "$curl_bin" \
+      --silent --show-error --output /dev/null --write-out '%{http_code}' \
+      --connect-timeout 5 --max-time 10 --request POST "$mcp_ha_url" \
+      --header "Authorization: Bearer $mcp_ha_token" \
+      --header "Content-Type: application/json" \
+      --header "Accept: application/json, text/event-stream" \
+      --data '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"probe","version":"0"}}}' \
+      2>/dev/null); then
+    remove_owned_ha_entry
+    echo "WARN: Home Assistant MCP route could not authenticate at $mcp_ha_url because the probe could not connect; skipping registration. Check connectivity and enter a valid Home Assistant long-lived token in the app Configuration, then restart."
+    return 0
+  fi
+  if [ "$http_status" != "200" ]; then
+    remove_owned_ha_entry
+    echo "WARN: Home Assistant MCP route could not authenticate at $mcp_ha_url (HTTP $http_status); skipping registration. Enter a valid Home Assistant long-lived token in the app Configuration, then restart."
+    return 0
+  fi
+
+  local mcp_token_hash=""
+  if ! mcp_token_hash=$(printf '%s\n%s' "$mcp_ha_url" "$mcp_ha_token" | sha256sum | cut -d' ' -f1); then
+    echo "WARN: Could not hash the Home Assistant MCP configuration; skipping registration without changing the registry."
+    return 0
+  fi
+
+  if [ -f "$mcp_flag" ] && [ "$(cat "$mcp_flag" 2>/dev/null)" = "$mcp_token_hash" ]; then
+    echo "INFO: MCP Home Assistant server already configured (token unchanged)"
+  else
+    echo "INFO: Configuring MCP for Home Assistant at $mcp_ha_url ..."
+    # config add atomically overwrites only the exact HA key in the home scope.
+    # Never invoke the client's removal command: its default scope and fuzzy
+    # matching can select a different registry and a user-owned, similar name.
+    if PATH="$image_path" "$timeout_bin" 30s "$mcporter_bin" config add HA "$mcp_ha_url" \
+        --header "Authorization=Bearer $mcp_ha_token" \
+        --scope home >/dev/null 2>&1; then
+      if ! printf '%s' "$mcp_token_hash" > "$mcp_flag"; then
+        echo "WARN: MCP server 'HA' was registered, but its ownership marker could not be written; skipping the marker and continuing startup."
+        return 0
+      fi
+      echo "INFO: MCP server 'HA' registered — OpenClaw can now control Home Assistant"
+    else
+      echo "WARN: MCP auto-configuration failed. Configure manually in the terminal:"
+      echo "WARN:   mcporter config add HA \"$mcp_ha_url\" --header \"Authorization=Bearer YOUR_TOKEN\" --scope home"
+    fi
+  fi
 }
 configure_ha_mcp
 

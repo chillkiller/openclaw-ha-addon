@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For a release-facing summary, see the root [CHANGELOG.md](../CHANGELOG.md).
 
+## [0.7.13.40] — 2026-11-22
+
+Home Assistant MCP registration now authenticates the configured token first, repairs the pinned client safely, and cleans up only registry entries proven to belong to the app.
+
+### Fixed
+
+- **Standard Home Assistant MCP authentication:** the standard `http://supervisor/core/api/mcp` route now uses the Home Assistant long-lived token entered in the app configuration whenever one is set. Every credential is checked with a bounded MCP initialization request before registration; an unreachable route or any response other than HTTP 200 is skipped with an actionable warning instead of creating a failing entry. If the ownership marker proves that the app wrote the existing `HA` entry, a failed probe removes exactly that stale home-scoped entry and deletes the marker. An unmarked `HA` entry and every other entry survive unchanged. The Supervisor token is only a fallback when no Home Assistant token is configured, and the loopback route remains available only when no Supervisor token is present.
+- **MCP tooling availability:** while MCP auto-configuration is enabled, `mcporter` is kept installed at pinned version 0.17.0 and runs with the image's Node.js runtime. A missing or different version is reinstalled automatically, the persistent binary is resolved again after repair, and installation, version and registry calls have hard timeouts. Failures are logged without aborting startup.
+
+### Changed
+
+- **User-owned MCP configuration:** the app manages only the standard Home Assistant entry. All further MCP servers and tools remain under the user's control in the OpenClaw Control UI.
+
+---
+
 ## [0.7.13.39] — 2026-11-22
 
 ### Changed
