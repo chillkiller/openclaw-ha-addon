@@ -116,9 +116,12 @@ if name == "openclaw" and args[:2] == ["mcp", "status"]:
     with open(os.environ["OPENCLAW_CONFIG_PATH"], encoding="utf-8") as handle:
         server_names = list(json.load(handle).get("mcp", {}).get("servers", {}))
     payload = {"servers": [
+        # The gateway reports one of: authorized, requires-authorization,
+        # pending-authorization, unauthenticated (live observed on 2026-11-22:
+        # "state": "unauthenticated" with "requiresAuthorization": false).
         {"name": server_name, "ok": True, "authStatus": {
-            "requiresAuthorization": requires_auth and server_name == "ha-official",
-            "state": "authorization-required" if requires_auth and server_name == "ha-official" else "authorized",
+            "requiresAuthorization": False,
+            "state": "unauthenticated" if requires_auth and server_name == "ha-official" else "authorized",
         }}
         for server_name in server_names
     ]}
@@ -634,6 +637,23 @@ raise SystemExit(0)
         self.assertNotIn("https://", result.stdout)
         self.assertNotIn("openclaw mcp login", result.stdout)
         self.assertEqual(self.calls("curl"), [])
+
+    def test_status_reports_authorization_required_for_the_unauthenticated_state(self) -> None:
+        env = self.env.copy()
+        env["HA_MCP_URLS"] = ""
+        env["HA_OFFICIAL_MCP_URL"] = "http://ha.example.test/api/mcp"
+        env["HA_OFFICIAL_MCP_ENABLED"] = "true"
+        env["STUB_OPENCLAW_AUTH_REQUIRED"] = "1"
+
+        result = self.configure(env=env)
+
+        self.assert_booted(result)
+        self.assertIn(
+            "Home Assistant connection way 2 (official MCP, OAuth): authorization-required",
+            result.stdout,
+        )
+        self.assertIn("settings/mcp", result.stdout)
+        self.assertIn("ha-official", result.stdout)
 
     def test_startup_never_runs_the_offline_doctor_probe(self) -> None:
         env = self.env.copy()

@@ -1372,5 +1372,45 @@ class ReleaseManifestAndHygieneTests(unittest.TestCase):
         self.assertIn("http://192.0.2.34:11434", native_test)
 
 
+class GatewayPublicOriginTests(unittest.TestCase):
+    """The Control UI only offers the browser sign-in for OAuth MCP servers when
+    the gateway knows its public origin, because the OAuth callback has to
+    return to that very origin."""
+
+    def test_run_sh_passes_the_public_origin_to_the_config_helper(self) -> None:
+        self.assertIn(
+            'set-control-ui-origins "$ALLOWED_ORIGINS" "$GATEWAY_ADDITIONAL_ALLOWED_ORIGINS" '
+            '"$CONTROLUI_DISABLE_DEVICE_AUTH" "$GATEWAY_PUBLIC_ORIGIN"',
+            RUN_TEXT,
+        )
+
+    def test_helper_writes_the_public_origin_into_the_gateway_config(self) -> None:
+        import importlib.util
+
+        with tempfile.TemporaryDirectory() as tmp:
+            config = Path(tmp) / "openclaw.json"
+            config.write_text(
+                json.dumps({"gateway": {"controlUi": {"allowedOrigins": ["https://old:1"]}}}),
+                encoding="utf-8",
+            )
+            os.environ["OPENCLAW_CONFIG_PATH"] = str(config)
+            spec = importlib.util.spec_from_file_location(
+                "oc_config_helper_public_origin", ADDON_DIR / "oc_config_helper.py"
+            )
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+
+            self.assertTrue(
+                module.set_control_ui_origins(
+                    "https://192.0.2.10:18789", "", True, "https://192.0.2.10:18789"
+                )
+            )
+            gateway = json.loads(config.read_text(encoding="utf-8"))["gateway"]
+            self.assertEqual(gateway.get("publicOrigin"), "https://192.0.2.10:18789")
+            self.assertEqual(
+                gateway.get("controlUi", {}).get("allowedOrigins"), ["https://192.0.2.10:18789"]
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

@@ -411,12 +411,24 @@ def apply_gateway_settings(
 
 
 def set_control_ui_origins(
-    origins_csv: str, additional_origins_csv: str = "", disable_device_auth: bool = True
+    origins_csv: str,
+    additional_origins_csv: str = "",
+    disable_device_auth: bool = True,
+    public_origin: str = "",
 ):
-    """Configure gateway.controlUi for the built-in HTTPS proxy."""
+    """Configure gateway.controlUi and the public origin for the HTTPS proxy."""
     cfg = read_config() or {}
     gateway = cfg.setdefault("gateway", {})
     control_ui = gateway.setdefault("controlUi", {})
+    changes: list[str] = []
+
+    # The gateway's public origin is the externally reachable HTTPS address. The
+    # Control UI needs it to offer the browser sign-in for OAuth MCP servers,
+    # because the OAuth callback has to return to this very origin.
+    public_origin = (public_origin or "").strip()
+    if public_origin and gateway.get("publicOrigin") != public_origin:
+        gateway["publicOrigin"] = public_origin
+        changes.append(f"publicOrigin -> {public_origin}")
 
     default_origins = [o.strip() for o in origins_csv.split(",") if o.strip()]
     additional_origins = [o.strip() for o in (additional_origins_csv or "").split(",") if o.strip()]
@@ -442,7 +454,6 @@ def set_control_ui_origins(
             f"gateway_additional_allowed_origins if still needed): {dropped_origins}"
         )
 
-    changes = []
     if current_origins != merged:
         control_ui["allowedOrigins"] = merged
         changes.append(f"allowedOrigins -> {merged}")
@@ -735,15 +746,19 @@ def main():
         sys.exit(0 if write_config(cfg) else 1)
 
     elif cmd == "set-control-ui-origins":
-        if len(sys.argv) not in (3, 4, 5):
-            print("Usage: oc_config_helper.py set-control-ui-origins <origins_csv> [additional] [disable_device_auth]")
+        if len(sys.argv) not in (3, 4, 5, 6):
+            print(
+                "Usage: oc_config_helper.py set-control-ui-origins <origins_csv> "
+                "[additional] [disable_device_auth] [public_origin]"
+            )
             sys.exit(1)
         origins_csv = sys.argv[2]
         additional = sys.argv[3] if len(sys.argv) >= 4 else ""
         disable = True
         if len(sys.argv) == 5:
             disable = sys.argv[4].strip().lower() == "true"
-        sys.exit(0 if set_control_ui_origins(origins_csv, additional, disable) else 1)
+        public_origin = sys.argv[5] if len(sys.argv) == 6 else ""
+        sys.exit(0 if set_control_ui_origins(origins_csv, additional, disable, public_origin) else 1)
 
     elif cmd == "set-mdns-settings":
         if len(sys.argv) < 3:

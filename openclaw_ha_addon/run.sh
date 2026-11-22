@@ -1520,7 +1520,7 @@ PY
     fi
   fi
 
-  python3 "$HELPER_PATH" set-control-ui-origins "$ALLOWED_ORIGINS" "$GATEWAY_ADDITIONAL_ALLOWED_ORIGINS" "$CONTROLUI_DISABLE_DEVICE_AUTH" || \
+  python3 "$HELPER_PATH" set-control-ui-origins "$ALLOWED_ORIGINS" "$GATEWAY_ADDITIONAL_ALLOWED_ORIGINS" "$CONTROLUI_DISABLE_DEVICE_AUTH" "$GATEWAY_PUBLIC_ORIGIN" || \
     echo "WARN: Could not set controlUi settings — gateway may reject the Control UI"
 fi
 
@@ -1867,7 +1867,9 @@ process.stdin.on("end", () => {
   function needsAuth(value) {
     if (!value || typeof value !== "object") return false;
     if (value.requiresAuthorization === true) return true;
-    if (typeof value.state === "string" && /^(authorization-required|pending-authorization)$/i.test(value.state)) return true;
+    // The gateway reports one of: authorized, requires-authorization,
+    // pending-authorization, unauthenticated.
+    if (typeof value.state === "string" && /^(authorization-required|requires-authorization|pending-authorization|unauthenticated)$/i.test(value.state)) return true;
     return Object.values(value).some((entry) => needsAuth(entry));
   }
   let report;
