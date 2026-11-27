@@ -2280,13 +2280,6 @@ start_openclaw_runtime() {
   # Apply gateway log level (Audit R4)
   export LOG_LEVEL="$GATEWAY_LOG_LEVEL"
 
-  # How long the runtime waits for the agent-database preparation before it
-  # refuses a startup read. The preparation of a large state takes minutes
-  # (schema, integrity, FTS repair) and the upstream default of 20 s made the
-  # gateway abort before it bound its listener. The runtime patch turns this
-  # into a configurable budget; the upstream default stays untouched when the
-  # variable is not set.
-  export OPENCLAW_STARTUP_READ_WAIT_MS="${OPENCLAW_STARTUP_READ_WAIT_MS:-900000}"
 
   # Enable trace logging if requested (Audit R4)
   if [ "$TRACE_LOG_TO_CONSOLE" = "true" ] || [ "$TRACE_LOG_TO_CONSOLE" = "1" ]; then
