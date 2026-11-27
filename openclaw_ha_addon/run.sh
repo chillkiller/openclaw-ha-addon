@@ -3098,7 +3098,8 @@ run_image_activation() {
   # stop signals to the repair run must not replace the shutdown trap of this
   # shell, which owns the whole shutdown sequence.
   (
-    trap 'kill -TERM "${child}" 2>/dev/null' TERM INT HUP QUIT
+    child=""
+    trap 'kill -TERM "${child:-0}" 2>/dev/null' TERM INT HUP QUIT
     OPENCLAW_IMAGE_ACTIVATION_CAPTURE_MARKER="${marker}" \
       timeout --kill-after=30s "$GW_DOCTOR_REPAIR_TIMEOUT" openclaw doctor --fix --non-interactive &
     child=$!
@@ -3110,6 +3111,7 @@ run_image_activation() {
   fi
   echo "INFO: image activation finished"
   GW_ACTIVATION_OK=1
+  GW_ACTIVATION_RETRIES=0
   return 0
 }
 
@@ -3188,6 +3190,9 @@ GW_DOCTOR_REPAIR_RUNS=0
 # The restart delay is used before it is assigned in some paths; keep it
 # defined from the start so `set -u` cannot abort the add-on.
 GW_BACKOFF=2
+# The repair is retried a bounded number of times; the operator can raise the bound.
+GW_ACTIVATION_RETRIES=0
+GW_ACTIVATION_MAX_RETRIES=3
 # The upstream activation repairs the retained state before the first gateway
 # start. Until that succeeded, no gateway start is attempted.
 GW_ACTIVATION_OK=0
@@ -3384,6 +3389,22 @@ while true; do
     GW_CONSECUTIVE_FAILS=0
     if [ "${GW_ACTIVATION_OK}" != "1" ]; then
       echo "WARN: the retained state has not been repaired yet; retrying the repair."
+      # An operator-held latch wins: the repair belongs to the operator then.
+      if [ -f "${GATEWAY_MAINTENANCE_FLAG}" ]; then
+        echo "NOTICE: Maintenance latch present; the repair is left to the operator."
+        GW_IS_CHILD=false
+        GW_PID=""
+        sleep "$GW_BACKOFF"
+        continue
+      fi
+      GW_ACTIVATION_RETRIES=$(( ${GW_ACTIVATION_RETRIES:-0} + 1 ))
+      if [ "${GW_ACTIVATION_RETRIES}" -gt "${GW_ACTIVATION_MAX_RETRIES:-3}" ]; then
+        echo "WARN: the repair did not succeed after ${GW_ACTIVATION_RETRIES} attempts; the gateway stays down."
+        GW_IS_CHILD=false
+        GW_PID=""
+        sleep "$GW_BACKOFF"
+        continue
+      fi
       run_image_activation || true
       if [ "${GW_ACTIVATION_OK}" != "1" ]; then
         echo "WARN: the repair did not finish; the gateway is not started."
@@ -3492,6 +3513,17 @@ the failure streak is kept so the preparation can make progress."
 
   if [ "${GW_ACTIVATION_OK}" != "1" ]; then
     echo "WARN: the retained state has not been repaired yet; retrying the repair."
+    if [ -f "${GATEWAY_MAINTENANCE_FLAG}" ]; then
+      echo "NOTICE: Maintenance latch present; the repair is left to the operator."
+      sleep "$GW_BACKOFF"
+      continue
+    fi
+    GW_ACTIVATION_RETRIES=$(( ${GW_ACTIVATION_RETRIES:-0} + 1 ))
+    if [ "${GW_ACTIVATION_RETRIES}" -gt "${GW_ACTIVATION_MAX_RETRIES:-3}" ]; then
+      echo "WARN: the repair did not succeed after ${GW_ACTIVATION_RETRIES} attempts; the gateway stays down."
+      sleep "$GW_BACKOFF"
+      continue
+    fi
     run_image_activation || true
     if [ "${GW_ACTIVATION_OK}" != "1" ]; then
       echo "WARN: the repair did not finish; the gateway is not started."
