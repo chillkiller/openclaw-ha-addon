@@ -1545,12 +1545,17 @@ const ENV_MECHANISM: Record<
       ],
     ], warnings, ["ANTHROPIC_MODEL", "ANTHROPIC_BASE_URL", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_SMALL_FAST_MODEL", "CLAUDE_MODEL_CONFIG"]);
   },
-  gemini: (e) =>
-    envMapping([
+  gemini: (e) => {
+    const baseUrl = nonEmpty(e.baseUrl);
+    return envMapping([
       ["GEMINI_API_KEY", nonEmpty(e.apiKey)],
       ["GEMINI_MODEL", nonEmpty(e.model)],
-      ["GOOGLE_GEMINI_BASE_URL", nonEmpty(e.baseUrl)],
-    ], [], ["GEMINI_API_KEY", "GEMINI_MODEL", "GOOGLE_GEMINI_BASE_URL"]),
+      ["GOOGLE_GEMINI_BASE_URL", baseUrl],
+    ], baseUrl
+      ? ["gemini: GOOGLE_GEMINI_BASE_URL gesetzt, aber die Gemini-CLI erwartet einen Gemini-Endpunkt (/v1beta); mit einem OpenAI-kompatiblen Backend nicht nutzbar"]
+      : [],
+    ["GEMINI_API_KEY", "GEMINI_MODEL", "GOOGLE_GEMINI_BASE_URL"]);
+  },
   droid: (e) =>
     envMapping([["FACTORY_API_KEY", nonEmpty(e.apiKey)]], [], ["FACTORY_API_KEY"]),
   qwen: (e, catalog) => {
@@ -1564,7 +1569,10 @@ const ENV_MECHANISM: Record<
       ["OPENAI_BASE_URL", !anthropic && baseUrl ? withV1Suffix(baseUrl) : undefined],
       ["OPENAI_MODEL", anthropic ? undefined : nonEmpty(e.model)],
       ["ANTHROPIC_API_KEY", anthropic ? nonEmpty(e.apiKey) : undefined],
-      ["ANTHROPIC_BASE_URL", anthropic && baseUrl ? withV1Suffix(baseUrl) : undefined],
+      // The Anthropic client appends "/v1/messages" to ANTHROPIC_BASE_URL
+      // itself, so the base stays the root here. Adding "/v1" would request
+      // "/v1/v1/messages".
+      ["ANTHROPIC_BASE_URL", anthropic && baseUrl ? normalizeAnthropicBaseUrl(baseUrl) : undefined],
     ], warnings, ["OPENAI_API_KEY", "OPENAI_BASE_URL", "OPENAI_MODEL", "ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"]);
   },
   kimi: (e, catalog) => {
