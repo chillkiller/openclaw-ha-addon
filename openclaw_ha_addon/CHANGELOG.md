@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For a release-facing summary, see the root [CHANGELOG.md](../CHANGELOG.md).
 
+## [0.7.13.50] - 2026-11-27
+
+The Node.js line is derived from the OpenClaw release, the shutdown path stays inside the stop budget, and the configuration writer is installed where the runtime manages its plugins.
+
+### Added
+
+- `oc_node_version.py` resolves the Node.js release to install: it reads the engine range of the pinned OpenClaw release, picks the newest matching stable release and installs that line without a patch pin. The secure patch floor is read from the runtime's own table (`runtime_security_floors`) instead of being maintained twice.
+- The configuration writer is deployed into the runtime's managed plugin install root as well, because the runtime only owns the data and settings migration of plugins it finds as installed.
+
+### Fixed
+
+- The shutdown stops the gateway first within its own budget, folds the write-ahead logs of the state and agent databases while the remaining services stop, and reaps them.
+- A stale loopback relay is stopped before the shutdown trap is installed, and a rejected adopted gateway process is stopped and reaped before a replacement is started.
+- The failure streak is only reset by a clean gateway exit, and the restart delay has a floor of 120 seconds; when the automatic repair budget is used up, the gateway is held down instead of being restarted in a loop.
+
+### Changed
+
+- OpenClaw and the ACPX integration are updated to 2026.11.10.
+- The runtime patch that raised the startup read wait was removed again: the analysis of the upstream container deployment showed that it addresses a different code path than the fatal one.
+
+### Known issues
+
+- The runtime can abort the gateway start with an agent-database admission error on a large installation state. The runtime's own repair run does not resolve it, and the cause is not yet clarified upstream.
+
 ## [0.7.13.49] - 2026-11-27
 
 The log-position helper is defined before its first use.
