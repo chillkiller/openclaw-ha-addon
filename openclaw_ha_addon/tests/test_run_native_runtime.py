@@ -1760,8 +1760,8 @@ class DockerGuardTests(unittest.TestCase):
         helper = run_sh[run_sh.index("OC_GATEWAY_HELPER"):]
         helper = helper[:helper.index("\n# ---") if "\n# ---" in helper else len(helper)]
         self.assertNotIn("GW_ACTIVATION_RETRIES=0", helper)
-        supervisor = run_sh[run_sh.index("GW_BOOT_START=$(date +%s)", run_sh.index("GW_CONSECUTIVE_FAILS=0")):]
-        latch_release = supervisor[:supervisor.index("GW_CONSECUTIVE_FAILS=0", 10) + 60]
+        latch_at = run_sh.index('echo "INFO: Maintenance latch removed; restarting gateway with a fresh state."')
+        latch_release = run_sh[latch_at:latch_at + 700]
         self.assertIn("GW_ACTIVATION_RETRIES=0", latch_release)
 
     def test_image_activation_keeps_the_shutdown_trap_and_the_backoff_defined(self) -> None:
