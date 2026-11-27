@@ -4,6 +4,7 @@
 
 | App Version | OpenClaw Version | Release Date |
 |--------------|------------------|---------------|
+| 0.7.13.43 | 2026.11.10 | 2026-11-27 |
 | 0.7.13.42 | 2026.11.6 | 2026-11-22 |
 | 0.7.13.41 | 2026.11.6 | 2026-11-22 |
 | 0.7.13.40 | 2026.11.3 | 2026-11-22 |
@@ -55,6 +56,15 @@
 | 0.7.5.1 | 2026.4.15 | 2026-04-20 |
 
 ### Version notes
+
+> **Note (0.7.13.43):** the image installs the Node.js line that the shipped OpenClaw
+> release requires, and the runtime's minimum patch level is checked at build time.
+> The command line and the gateway run on that same runtime. Stopping the app shuts
+> the gateway down inside the stop budget and folds the session databases' write-ahead
+> logs back into the databases; no manual steps are needed for an upgrade.
+> A harness command in the Home Assistant configuration that points at a file that no
+> longer exists is removed during startup, after a backup of the configuration is
+> written.
 
 > **Note (0.7.13.42):** MCP auto-configuration supports two independent paths under `auto_configure_mcp=true`: set `ha_oauth_mcp_url` to the official `/api/mcp` or `/api/mcp/<api_id>` endpoint and complete `openclaw mcp login ha_official` interactively, or set the community server's exact `ha_mcp_url` plus optional `ha_mcp_token`. Both may be enabled together. OpenClaw's `mcp.servers.ha_official`/`ha` entries are updated atomically without changing foreign entries; neither path writes a secondary client registry or repairs the bundled MCP ad-hoc tool during startup. Empty URLs are no-ops, failed community probes change no registry, and no path reuses `homeassistant_token`, LLMAT, or another server as a fallback. No new deployment-matrix row is required.
 

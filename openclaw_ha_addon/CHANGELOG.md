@@ -7,6 +7,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For a release-facing summary, see the root [CHANGELOG.md](../CHANGELOG.md).
 
+## [0.7.13.43] - 2026-11-27
+
+The image derives its Node.js line from the OpenClaw release it ships instead of pinning a patch version, the command line and the gateway share one runtime, and the shutdown path stays inside the stop budget.
+
+### Added
+
+- `oc_node_version.py` resolves the Node.js release to install: it reads the engine range of the pinned OpenClaw release, picks the newest matching stable release and installs that line without a patch pin. The mode is derived from the OpenClaw release, and the minimum patch level is read from the runtime's own table at build time and at boot, so a new Node.js line is enforced without a code change. The helper is part of the image and backs the runtime check.
+- The runtime check in `run.sh` verifies the installed Node.js against the engine range of the installed OpenClaw package and against that package's security floors.
+
+### Fixed
+
+- The Homebrew directory is appended to `PATH` instead of prepended, so the command line, the doctor and the backup no longer run on a different, unpatched Node.js release than the gateway.
+- The shutdown stops the gateway first within its own budget, folds the write-ahead logs of the state and agent databases while the remaining services stop, and reaps them. The container therefore exits with status 0 instead of being killed.
+- The bundle target follows the Node.js line the image runs instead of a fixed one.
+- A stale harness command in the configuration is removed when its target no longer exists, after a backup of the configuration has been written; valid commands stay untouched and the backup set is bounded.
+- The Qwen harness receives the Anthropic base URL as the base root, so the client no longer requests `/v1/v1/messages`.
+- A configured Gemini base URL is reported as unusable for the Gemini CLI.
+- The retired Codex harness wrapper of the bundled configuration writer is removed; it was unreachable code that pointed the harness command at a file the add-on cleanup deletes.
+
+### Changed
+
+- OpenClaw and the ACPX integration are updated to 2026.11.10; the Copilot, Qwen, Gemini and Droid command line tools, the local model runtime and pnpm move to current releases.
+- The range check follows npm semantics for caret and tilde ranges, bare major versions, prereleases and `x` ranges, and is verified against `npm semver`.
+
+### Security
+
+- The image build fails when the selected Node.js release is below the minimum patch level the runtime requires.
+
 ## [0.7.13.42] - 2026-11-22
 
 The upgrade path now migrates the retired heartbeat key automatically and performs doctor repairs without racing the gateway supervisor. MCP startup supports the official Home Assistant OAuth endpoint and the community secret-URL server independently, and writes the registry OpenClaw actually reads.

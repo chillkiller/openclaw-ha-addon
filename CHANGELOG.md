@@ -8,6 +8,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Each entry summarizes user-visible changes. Full engineering notes:
 [openclaw_ha_addon/CHANGELOG.md](openclaw_ha_addon/CHANGELOG.md).
 
+## [0.7.13.43] - 2026-11-27
+
+The app now installs the Node.js release that OpenClaw actually requires, the command line and the gateway run on the same Node.js runtime, and stopping the app shuts the gateway down cleanly instead of killing it during its drain.
+
+### Added
+
+- The image derives its Node.js line from the OpenClaw release it ships and installs the newest release of that line, so the app always runs a supported and patched Node.js version. The minimum patch level the runtime requires is enforced at build time and read from the runtime itself, so a new Node.js line is covered without touching the app.
+- The command line, the maintenance doctor and the backup tool run on the same Node.js runtime as the gateway instead of on a separate copy from Homebrew.
+
+### Fixed
+
+- Stopping the app now shuts the gateway down inside the stop budget, folds the write-ahead logs of the session databases back into the databases, and lets the container exit cleanly. Previously the gateway was killed during its drain and the databases had to recover their logs on the next start.
+- A harness command in the Home Assistant configuration that points at a file that no longer exists no longer keeps the Codex harness from starting. The obsolete entry is removed during startup, after a backup of the configuration has been written.
+- The Qwen harness receives the Anthropic base URL without a duplicated `/v1` segment. The previous value made the client request `/v1/v1/messages`.
+- Setting a Gemini base URL reports that the Gemini CLI expects a Gemini endpoint and cannot be used with an OpenAI-compatible backend.
+
+### Changed
+
+- OpenClaw and the ACPX integration are updated to 2026.11.10.
+- The Copilot, Qwen, Gemini and Droid command line tools, the local model runtime and pnpm move to current releases.
+- The retired Codex harness wrapper of the bundled configuration writer is removed.
+
 ## [0.7.13.42] - 2026-11-22
 
 Existing installations upgrade cleanly to OpenClaw 2026.11.6 with automatic retired-configuration migration, safer gateway repair, and independent official-OAuth and community/static Home Assistant MCP paths.
