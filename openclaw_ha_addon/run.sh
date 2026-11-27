@@ -2388,13 +2388,19 @@ stop_gw_relay() {
 gateway_startup_admission_refused() {
   local log_dir="${OPENCLAW_STATE_DIR:-/config/.openclaw}/logs"
   local log_file="${GW_LOG_FILE:-}"
-  [ -n "$log_file" ] || log_file="$(ls -1t "$log_dir"/openclaw-*.log 2>/dev/null | head -1)"
+  [ -n "$log_file" ] || log_file="$(gateway_newest_log_file "$log_dir" || true)"
   [ -n "$log_file" ] || return 1
   [ -f "$log_file" ] || return 1
   # Only the part of the log that this boot produced: the refusal marker of an
-  # older boot must not keep the failure streak alive forever.
-  tail -c "+$(( ${GW_LOG_OFFSET:-0} + 1 ))" "$log_file" 2>/dev/null \
-    | grep -q "has not completed startup inspection and preparation"
+  # older boot must not keep the failure streak alive forever. The tail is read
+  # into a variable: a pipeline with `grep -q` can end in SIGPIPE, and under
+  # `set -euo pipefail` that would abort the whole add-on.
+  local tail_data=""
+  tail_data="$(tail -c "+$(( ${GW_LOG_OFFSET:-0} + 1 ))" "$log_file" 2>/dev/null || true)"
+  case "$tail_data" in
+    *"has not completed startup inspection and preparation"*) return 0 ;;
+  esac
+  return 1
 }
 
 # Remember where the gateway log stands when a boot starts, so the exit
@@ -2402,13 +2408,28 @@ gateway_startup_admission_refused() {
 gateway_log_mark() {
   local log_dir="${OPENCLAW_STATE_DIR:-/config/.openclaw}/logs"
   local log_file
-  log_file="$(ls -1t "$log_dir"/openclaw-*.log 2>/dev/null | head -1)"
+  # No failing pipeline in an assignment: without a log directory (fresh
+  # boot) the glob does not match, `ls` exits non-zero, and under
+  # `set -euo pipefail` that would end the add-on before it ever boots.
+  log_file="$(gateway_newest_log_file "$log_dir" || true)"
   GW_LOG_FILE="$log_file"
+  GW_LOG_OFFSET=0
   if [ -n "$log_file" ] && [ -f "$log_file" ]; then
-    GW_LOG_OFFSET="$(wc -c < "$log_file" 2>/dev/null || echo 0)"
-  else
-    GW_LOG_OFFSET=0
+    GW_LOG_OFFSET="$(wc -c < "$log_file" 2>/dev/null || true)"
+    case "$GW_LOG_OFFSET" in
+      ""|*[!0-9]*) GW_LOG_OFFSET=0 ;;
+    esac
   fi
+}
+
+# Print the newest gateway log file, or nothing. Never fails.
+gateway_newest_log_file() {
+  local log_dir="${1:-}" file
+  [ -n "$log_dir" ] && [ -d "$log_dir" ] || return 0
+  for file in "$log_dir"/openclaw-*.log; do
+    [ -f "$file" ] || continue
+    printf '%s %s\n' "$(stat -c %Y "$file" 2>/dev/null || echo 0)" "$file"
+  done | sort -rn | head -1 | cut -d' ' -f2- || true
 }
 
 oc_gateway_listener_pid() {
@@ -3214,6 +3235,12 @@ while true; do
           GW_ADOPT_CONFIRMED=true
         elif [ $((SECONDS - GW_ADOPT_CLOCK_START)) -ge "$GW_ADOPT_CONFIRM_TIMEOUT" ]; then
           echo "WARN: PID ${GW_PID} did not bind gateway port ${GATEWAY_INTERNAL_PORT} within ${GW_ADOPT_CONFIRM_TIMEOUT}s; it is not the gateway. Relaunching."
+          # The adopted process is not ours to leave running: on a large state
+          # it can still be preparing the agent databases, and a second gateway
+          # would race it for the same state (and the doctor gate must never
+          # run against a live gateway). It is therefore stopped and reaped
+          # before the relaunch.
+          stop_pid_bounded "$GW_PID" "adopted gateway" 10 || true
           GW_DENIED_PIDS="${GW_DENIED_PIDS} ${GW_PID}"
           break
         fi

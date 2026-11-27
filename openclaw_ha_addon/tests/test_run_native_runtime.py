@@ -1288,6 +1288,71 @@ class HaMcpUrlTests(unittest.TestCase):
         self.assertEqual(result.stderr, "")
 
 
+class GatewayLogHelperTests(unittest.TestCase):
+    """The log helpers must never abort the add-on.
+
+    Under `set -euo pipefail` a failing pipeline inside an assignment ends the
+    shell. On a fresh boot there is no log directory yet, so the helpers have
+    to tolerate zero, one and many log files.
+    """
+
+    def _run(self, body: str, env: dict[str, str], args: list[str] | None = None):
+        return run_bash(
+            ["gateway_newest_log_file", "gateway_log_mark", "gateway_startup_admission_refused"],
+            body,
+            env=env,
+            args=args,
+        )
+
+    def test_helpers_survive_a_missing_log_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            env = {"PATH": os.environ["PATH"], "OPENCLAW_STATE_DIR": str(Path(tmp) / "missing")}
+            result = self._run(
+                'gateway_log_mark; echo "REACHED mark=$GW_LOG_FILE/$GW_LOG_OFFSET"; '
+                'if gateway_startup_admission_refused; then echo REFUSED; else echo NOT_REFUSED; fi; '
+                'echo "REACHED-END"',
+                env,
+            )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("REACHED", result.stdout)
+        self.assertIn("NOT_REFUSED", result.stdout)
+
+    def test_helpers_handle_one_log_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            logs = Path(tmp) / "logs"
+            logs.mkdir()
+            (logs / "openclaw-2026-11-27.log").write_text(
+                "Gateway failed to start: Agent main has not completed startup inspection "
+                "and preparation.\n",
+                encoding="utf-8",
+            )
+            env = {"PATH": os.environ["PATH"], "OPENCLAW_STATE_DIR": str(Path(tmp))}
+            result = self._run(
+                'gateway_log_mark; echo "MARK=$GW_LOG_FILE"; '
+                'if gateway_startup_admission_refused; then echo REFUSED; else echo NOT_REFUSED; fi; '
+                'echo "REACHED-END"',
+                env,
+            )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("MARK=", result.stdout)
+        self.assertIn("REFUSED", result.stdout)
+        self.assertIn("REACHED-END", result.stdout)
+
+    def test_helpers_handle_many_log_files(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            logs = Path(tmp) / "logs"
+            logs.mkdir()
+            for index in range(12):
+                (logs / f"openclaw-2026-11-{index:02d}.log").write_text("x\n", encoding="utf-8")
+            env = {"PATH": os.environ["PATH"], "OPENCLAW_STATE_DIR": str(Path(tmp))}
+            result = self._run(
+                'gateway_log_mark; echo "MARKED"; echo "REACHED-END"',
+                env,
+            )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertIn("REACHED-END", result.stdout)
+
+
 class DockerGuardTests(unittest.TestCase):
     def test_image_node_line_is_derived_and_verified_against_the_installed_package(self) -> None:
         dockerfile = (ADDON_DIR / "Dockerfile").read_text(encoding="utf-8")
@@ -1650,6 +1715,11 @@ class DockerGuardTests(unittest.TestCase):
         self.assertIn("gateway_log_mark", run_sh)
         # And the backoff must have a floor well above the old two seconds.
         self.assertIn('if [ "$GW_BACKOFF" -lt 120 ]; then', run_sh)
+        # The log helpers must never abort the add-on under set -euo pipefail.
+        self.assertIn("gateway_newest_log_file()", run_sh)
+        self.assertNotIn('log_file="$(ls -1t "$log_dir"/openclaw-*.log 2>/dev/null | head -1)"', run_sh)
+        # A rejected adopted process must be stopped before a second gateway starts.
+        self.assertIn('stop_pid_bounded "$GW_PID" "adopted gateway"', run_sh)
 
     def test_dockerignore_excludes_vendored_dependency_payloads_only(self) -> None:
         patterns = [
