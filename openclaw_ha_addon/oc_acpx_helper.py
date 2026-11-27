@@ -76,6 +76,13 @@ BUNDLED_PLUGIN_NAMES = [HARNESS_CONFIG_WRITER_PLUGIN_NAME]
 # extensions root: bundled plugins load with full trust and without the
 # TypeScript-stripping startup cost.
 BUNDLED_EXTENSIONS_DIR = Path("/usr/lib/node_modules/openclaw/dist/extensions")
+# The runtime resolves its managed plugin installs through
+# resolveActivePluginInstallDir("extensions", ...) - on an add-on install that
+# is <state>/extensions. Only plugins found there count as *installed*, so the
+# runtime owns their data/settings migration; a plugin that only exists in the
+# package's bundled root has no migration owner and its retained data can
+# never converge. The directory is resolved from CONFIG_DIR at call time so it
+# follows the configuration root of the running installation.
 # esbuild bundles the TS entry into ONE ESM module (relative imports inlined;
 # "openclaw/plugin-sdk/*" stays a bare specifier resolved by the gateway's
 # plugin loader alias, same mechanism that serves the config-origin TS load).
@@ -413,43 +420,46 @@ def _deploy_and_register_plugin(plugin_name: str) -> bool:
         esbuild_bin = _find_esbuild()
         bundle_bytes = _compile_bundled_plugin(src, esbuild_bin) if esbuild_bin else None
         if bundle_bytes is not None:
-            dst = BUNDLED_EXTENSIONS_DIR / plugin_name
-            dst.mkdir(parents=True, exist_ok=True)
             written: list[str] = []
-            _write_bytes_and_cache(dst / "index.mjs", bundle_bytes, written)
-            package_json = json.loads((src / "package.json").read_text())
-            oc_meta = package_json.setdefault("openclaw", {})
-            oc_meta["extensions"] = ["./index.mjs"]
-            _write_bytes_and_cache(dst / "package.json",
-                                   json.dumps(package_json, indent=2).encode() + b"\n",
-                                   written)
-            for copy_name in ("openclaw.plugin.json", "BRIDGE.md", "README.md"):
-                copy_src = src / copy_name
-                if copy_src.is_file():
-                    _write_bytes_and_cache(dst / copy_name, copy_src.read_bytes(), written)
-            # Runtime assets: the bundled extension is a compiled bundle, so
-            # non-source assets are not part of index.mjs and would be lost.
-            # The writer resolves them relative to the module directory
-            # (fixtures/<file> next to index.mjs) - without this copy the
-            # Codex catalog is written without base_instructions.
-            for asset_rel in ("fixtures/codex-base-instructions.txt",):
-                asset_src = src / "src" / asset_rel
-                if asset_src.is_file():
-                    asset_dst = dst / asset_rel
-                    asset_dst.parent.mkdir(parents=True, exist_ok=True)
-                    _write_bytes_and_cache(asset_dst, asset_src.read_bytes(), written)
+            # Two targets: the package's bundled root (trusted runtime API) and
+            # the runtime's managed install root (the runtime only owns the
+            # data/settings migration of plugins it finds as *installed*).
+            for dst in (BUNDLED_EXTENSIONS_DIR / plugin_name,
+                        CONFIG_DIR / "extensions" / plugin_name):
+                dst.mkdir(parents=True, exist_ok=True)
+                _write_bytes_and_cache(dst / "index.mjs", bundle_bytes, written)
+                package_json = json.loads((src / "package.json").read_text())
+                oc_meta = package_json.setdefault("openclaw", {})
+                oc_meta["extensions"] = ["./index.mjs"]
+                _write_bytes_and_cache(dst / "package.json",
+                                       json.dumps(package_json, indent=2).encode() + b"\n",
+                                       written)
+                for copy_name in ("openclaw.plugin.json", "BRIDGE.md", "README.md"):
+                    copy_src = src / copy_name
+                    if copy_src.is_file():
+                        _write_bytes_and_cache(dst / copy_name, copy_src.read_bytes(), written)
+                # Runtime assets: the bundled extension is a compiled bundle, so
+                # non-source assets are not part of index.mjs and would be lost.
+                # The writer resolves them relative to the module directory
+                # (fixtures/<file> next to index.mjs) - without this copy the
+                # Codex catalog is written without base_instructions.
+                for asset_rel in ("fixtures/codex-base-instructions.txt",):
+                    asset_src = src / "src" / asset_rel
+                    if asset_src.is_file():
+                        asset_dst = dst / asset_rel
+                        asset_dst.parent.mkdir(parents=True, exist_ok=True)
+                        _write_bytes_and_cache(asset_dst, asset_src.read_bytes(), written)
+                log(f"Deployed plugin {plugin_name} -> {dst} (esbuild {esbuild_bin})")
             if external_dst.exists():
                 shutil.rmtree(external_dst)
                 log(f"Removed stale external plugin deploy {external_dst} "
                     "(superseded by bundled-root deploy)")
             if written:
-                log(f"Deployed plugin {plugin_name} -> {dst} "
-                    f"(bundled root = trusted runtime API; esbuild {esbuild_bin})")
                 for path in written:
                     log(f"  wrote {path}")
             else:
-                log(f"Plugin {plugin_name} already up to date at {dst} "
-                    "(bundled root, byte-identical — read-only boot)")
+                log(f"Plugin {plugin_name} already up to date "
+                    "(byte-identical - read-only boot)")
             return _register_plugin_entry(plugin_name)
         log(f"WARN: bundled deploy unavailable for {plugin_name} "
             "(esbuild missing or bundle failed) — falling back to external deploy")

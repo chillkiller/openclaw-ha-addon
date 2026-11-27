@@ -1932,5 +1932,59 @@ class RepairAcpxAgentCommandsTest(unittest.TestCase):
         self.assertLessEqual(len(list(self.config_dir.glob("*.pre-acpx-cleanup-*"))), 3)
 
 
+
+class ManagedExtensionsRootDeployTest(unittest.TestCase):
+    """The runtime only migrates plugin data for *installed* plugins.
+
+    Plugins that exist only in the package's bundled root have no migration
+    owner, so their retained data/settings can never converge and the runtime
+    refuses to start. The deploy therefore also writes the plugin into the
+    runtime's managed install root.
+    """
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.root = Path(self.tmp.name)
+        self.src_root = self.root / "plugins"
+        write_minimal_plugin_source(self.src_root)
+        self.config_dir = self.root / "config"
+        self.config_dir.mkdir()
+        self.bundled_dir = self.root / "dist" / "extensions"
+        self.bundled_dir.mkdir(parents=True)
+        for patch in (
+            mock.patch.object(helper, "PLUGIN_SRC_DIR", self.src_root),
+            mock.patch.object(helper, "PLUGIN_SRC_FALLBACK_DIRS", (self.src_root,)),
+            mock.patch.object(helper, "CONFIG_DIR", self.config_dir),
+            mock.patch.object(helper, "BUNDLED_EXTENSIONS_DIR", self.bundled_dir),
+        ):
+            patch.start()
+            self.addCleanup(mock.patch.stopall)
+        mock.patch.object(helper, "_find_esbuild", lambda: "/fake/esbuild").start()
+        self.addCleanup(mock.patch.stopall)
+        mock.patch.object(helper, "_compile_bundled_plugin",
+                          lambda src, _bin: b"BUNDLE-BYTES").start()
+
+    def test_plugin_is_deployed_into_the_managed_install_root(self) -> None:
+        name = helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME
+        self.assertTrue(helper._deploy_and_register_plugin(name))
+        managed = self.config_dir / "extensions" / name
+        self.assertTrue((managed / "index.mjs").is_file(), "managed install root missing index.mjs")
+        self.assertTrue((managed / "openclaw.plugin.json").is_file())
+        package = json.loads((managed / "package.json").read_text())
+        self.assertEqual(package["openclaw"]["extensions"], ["./index.mjs"])
+        # The bundled root keeps its trusted-runtime-API deployment.
+        self.assertTrue((self.bundled_dir / name / "index.mjs").is_file())
+
+    def test_deploy_is_idempotent_and_read_only_on_the_second_run(self) -> None:
+        name = helper.HARNESS_CONFIG_WRITER_PLUGIN_NAME
+        self.assertTrue(helper._deploy_and_register_plugin(name))
+        managed = self.config_dir / "extensions" / name / "index.mjs"
+        before = managed.read_bytes()
+        self.assertTrue(helper._deploy_and_register_plugin(name))
+        self.assertEqual(managed.read_bytes(), before)
+
+
 if __name__ == "__main__":
     unittest.main()

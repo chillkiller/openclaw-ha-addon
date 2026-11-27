@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For a release-facing summary, see the root [CHANGELOG.md](../CHANGELOG.md).
 
+## [0.7.13.44] - 2026-11-27
+
+The configuration writer is deployed into the runtime's managed plugin install root next to the bundled root.
+
+### Fixed
+
+- `oc_acpx_helper.py` writes the bundled plugin payload into `<state>/extensions/<plugin>` as well, because the runtime only owns the data and settings migration of plugins it finds as *installed* (`resolveActivePluginInstallDir("extensions", …)`). Without the managed install root the plugin has no migration owner after a runtime upgrade, its retained data never converges, and the gateway startup is refused with an agent-database admission error. The deploy is idempotent (sha256 per file) and writes nothing when the payload is unchanged.
+
 ## [0.7.13.43] - 2026-11-27
 
 The image derives its Node.js line from the OpenClaw release it ships instead of pinning a patch version, the command line and the gateway share one runtime, and the shutdown path stays inside the stop budget.

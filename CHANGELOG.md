@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Each entry summarizes user-visible changes. Full engineering notes:
 [openclaw_ha_addon/CHANGELOG.md](openclaw_ha_addon/CHANGELOG.md).
 
+## [0.7.13.44] - 2026-11-27
+
+The bundled configuration writer is now installed where the runtime manages its plugins, so the runtime can complete the plugin's data and settings migration on an upgraded installation.
+
+### Fixed
+
+- The configuration writer is deployed into the runtime's managed plugin install root in addition to the package's bundled root. The runtime only treats plugins it finds as installed as the owner of their retained data and settings, so an upgraded installation could not finish the writer's data migration and the gateway refused to start. The deployment stays idempotent and only writes when the payload differs.
+
 ## [0.7.13.43] - 2026-11-27
 
 The app now installs the Node.js release that OpenClaw actually requires, the command line and the gateway run on the same Node.js runtime, and stopping the app shuts the gateway down cleanly instead of killing it during its drain.
