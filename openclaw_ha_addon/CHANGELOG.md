@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For a release-facing summary, see the root [CHANGELOG.md](../CHANGELOG.md).
 
+## [0.7.13.46] - 2026-11-27
+
+The restart delay floor is raised so the agent-database preparation can finish.
+
+### Fixed
+
+- `run.sh` raises the restart-delay floor to 120 seconds. The runtime prepares every agent database (schema, integrity, FTS repair) before it admits the agents; the largest repair needs minutes, and a shorter delay restarted the gateway in the middle of it, so the preparation never completed.
+
 ## [0.7.13.45] - 2026-11-27
 
 The supervisor no longer restarts the gateway in a loop while the runtime prepares the agent databases.

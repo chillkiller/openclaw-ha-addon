@@ -3345,10 +3345,13 @@ the failure streak is kept so the preparation can make progress."
   if [ "$GW_BACKOFF" -gt 60 ]; then
     GW_BACKOFF=60
   fi
-  # The agent-database startup preparation needs minutes; a restart storm
-  # every two seconds starves it, so the floor is well above the old 2s.
-  if [ "$GW_BACKOFF" -lt 30 ]; then
-    GW_BACKOFF=30
+  # The agent-database startup preparation needs minutes: the runtime repairs
+  # every agent database (schema, integrity, FTS) before it admits the agents,
+  # and the repair of the largest databases takes longer than a restart delay.
+  # A restart storm starves it, so the floor is well above the old 2s and
+  # leaves the automatic doctor repair room to finish the preparation.
+  if [ "$GW_BACKOFF" -lt 120 ]; then
+    GW_BACKOFF=120
   fi
   if [ "$GW_CONSECUTIVE_FAILS" -gt 5 ]; then
     echo "NOTICE: Still failing after ${GW_CONSECUTIVE_FAILS} starts. Diagnose via terminal: 'openclaw doctor' and the gateway log under /config/.openclaw/logs."

@@ -1643,7 +1643,7 @@ class DockerGuardTests(unittest.TestCase):
             run_sh,
         )
         # And the backoff must have a floor well above the old two seconds.
-        self.assertIn('if [ "$GW_BACKOFF" -lt 30 ]; then', run_sh)
+        self.assertIn('if [ "$GW_BACKOFF" -lt 120 ]; then', run_sh)
 
     def test_dockerignore_excludes_vendored_dependency_payloads_only(self) -> None:
         patterns = [

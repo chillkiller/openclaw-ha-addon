@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Each entry summarizes user-visible changes. Full engineering notes:
 [openclaw_ha_addon/CHANGELOG.md](openclaw_ha_addon/CHANGELOG.md).
 
+## [0.7.13.46] - 2026-11-27
+
+The gateway is given the time its startup preparation needs instead of being restarted every few seconds.
+
+### Fixed
+
+- The restart delay after a failed gateway start has a floor of 120 seconds. The runtime repairs every agent database before it admits the agents, and the repair of the largest databases takes longer than a short delay, so a restart in between kept the preparation from ever finishing.
+
 ## [0.7.13.45] - 2026-11-27
 
 An upgraded installation now finishes its startup preparation instead of restarting the gateway in a loop.
