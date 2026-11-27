@@ -881,11 +881,11 @@ add-on still writes native Codex configuration for clients that read
 | Harness | npm package | Pin |
 |---|---|---|
 | Pi | `@mariozechner/pi-coding-agent` | `0.73.1` |
-| Copilot | `@github/copilot` | `1.0.114` |
+| Copilot | `@github/copilot` | `1.0.116` |
 | Kilo | `@kilocode/cli` | `7.8.32` |
-| Qwen | `@qwen-code/qwen-code` | `0.28.3` |
-| Gemini | `@google/gemini-cli` | `0.70.0` |
-| Droid | `@factory/cli` | `1.17.2` |
+| Qwen | `@qwen-code/qwen-code` | `0.28.7` |
+| Gemini | `@google/gemini-cli` | `0.71.1` |
+| Droid | `@factory/cli` | `1.21.1` |
 | iFlow | `@iflow-ai/iflow-cli` | `0.5.19` |
 
 #### Codex configuration ownership
@@ -916,8 +916,10 @@ starts and writes the isolated `auth.json`. For a writer-managed Codex entry,
 the plugin supplies its configured API key (or the local-provider placeholder)
 as `CODEX_API_KEY` only when neither operator variable is already present.
 
-OpenClaw 2026.11.6 has no safe plugin-initiated ACPX reload API. After changing
-the harness entry or Gateway provider mapping, restart the gateway so the ACP
+OpenClaw 2026.11.6 (the release that was live when this was last verified) has no
+safe plugin-initiated ACPX reload API. The same was not re-verified for the
+pinned OpenClaw 2026.11.10, so treat a gateway restart as mandatory until it is.
+After changing the harness entry or Gateway provider mapping, restart the gateway so the ACP
 session is rebuilt with the updated selection. A native-TOML-only edit does not
 change the model of an ACP session, because that comes from the picker; the
 provider endpoint of the Codex client does come from this file, and the adapter

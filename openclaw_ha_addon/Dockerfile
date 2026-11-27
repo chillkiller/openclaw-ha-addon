@@ -1,5 +1,5 @@
 # OpenClaw HA-App v0.7.13 — Debian Bookworm Full-Stack
-# OpenClaw 2026.11.6 + node-llama-cpp@3.22.3 + mcporter@0.17.1 + CUPS/Scanner + crawl4ai + Go-PATH-Fix + D-Bus/Avahi
+# OpenClaw 2026.11.10 + node-llama-cpp@3.22.4 + mcporter@0.17.1 + CUPS/Scanner + crawl4ai + Go-PATH-Fix + D-Bus/Avahi
 # Builder stage removed (dead code since v0.7.5.1 — never wired)
 # Build dependencies are kept in the final image so runtime native builds work
 # NOTE: Since HA Supervisor 2026.04, build.yaml is obsolete. Base image must be
@@ -165,18 +165,30 @@ RUN ARCH=$(echo ${TARGETARCH:-$(dpkg --print-architecture)} | sed 's|arm64|aarch
     && uv --version
 
 # =============================================================================
-# Install Node.js 24 LTS from NodeSource
+# Install the Node.js release that the pinned OpenClaw build wants
 # =============================================================================
-ARG OPENCLAW_NODE_VERSION=24.22.3
-RUN mkdir -p /etc/apt/keyrings \
+# The Node.js version is derived from OpenClaw's own engines.node range, so the
+# image always ships the newest release OpenClaw supports (that range moves over
+# time: 24.x -> 26.x -> 27.x). Only the major line is bound to a NodeSource
+# repository; the patch version is always that repository's newest build.
+COPY oc_node_version.py /tmp/oc_node_version.py
+COPY Dockerfile /tmp/Dockerfile
+RUN set -eux; \
+    _oc_exports="$(python3 /tmp/oc_node_version.py --dockerfile /tmp/Dockerfile --export)"; \
+    eval "${_oc_exports}"; \
+    [ -n "${NODE_SOURCE_REPO:-}" ]; \
+    [ -n "${NODE_VERSION:-}" ]; \
+    echo "Node.js line ${NODE_SOURCE_REPO} (release wanted by OpenClaw: ${NODE_VERSION})"; \
+    mkdir -p /etc/apt/keyrings \
     && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
     | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
     && chmod 644 /etc/apt/keyrings/nodesource.gpg \
-    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_24.x nodistro main" \
+    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/${NODE_SOURCE_REPO} nodistro main" \
     > /etc/apt/sources.list.d/nodesource.list \
     && apt-get update \
-    && apt-get install -y --no-install-recommends nodejs="${OPENCLAW_NODE_VERSION}-1nodesource1" \
-    && /usr/bin/node -e "if(process.versions.node!=='${OPENCLAW_NODE_VERSION}'){throw new Error('Node pin mismatch: '+process.versions.node)};console.log('NodeSource pin verified: '+process.versions.node)" \
+    && apt-get install -y --no-install-recommends nodejs \
+    && python3 /tmp/oc_node_version.py --dockerfile /tmp/Dockerfile --verify "$(/usr/bin/node --version | sed 's/^v//')" \
+    && /usr/bin/node -e "console.log('NodeSource line verified: '+process.versions.node+' (line wanted by OpenClaw: '+process.env.NODE_VERSION+')')" \
     && rm -f /etc/apt/sources.list.d/nodesource.list /etc/apt/keyrings/nodesource.gpg \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
@@ -263,7 +275,11 @@ RUN if [ -x /home/linuxbrew/.linuxbrew/bin/brew ]; then \
 
 RUN echo 'eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"' >> /home/linuxbrew/.bashrc
 
-ENV PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}"
+# Homebrew provides extra CLI tools for OpenClaw skills, but its own Node.js
+# release must not shadow the system Node.js: the OpenClaw CLI resolves `node`
+# through PATH and would otherwise run on a different (unpatched) runtime than
+# the Gateway. Brew binaries stay reachable at the end of PATH.
+ENV PATH="${PATH}:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin"
 ENV HOMEBREW_BREW_FILE="/home/linuxbrew/.linuxbrew/Homebrew"
 
 # Chromium is provided by Playwright (see above /opt/ms-playwright)
@@ -278,7 +294,7 @@ RUN ARCH=$(echo ${TARGETARCH:-$(dpkg --print-architecture)} | sed 's|arm64|aarch
     && chmod +x /usr/local/bin/ttyd
 
 # =============================================================================
-# Install OpenClaw 2026.11.6 + node-llama-cpp 3.22.3 + mcporter 0.17.1
+# Install OpenClaw 2026.11.10 + node-llama-cpp 3.22.4 + mcporter 0.17.1
 # Bundle node-llama-cpp in the image so the default local memory/embeddings
 # provider works in HAOS without requiring manual npm installs in /usr/lib.
 #
@@ -294,18 +310,21 @@ ENV NODE_LLAMA_CPP_POSTINSTALL=skip
 # engine bump). npm itself verifies the registry dist.integrity for the pinned
 # version; the post-install gate re-checks the exact installed version so a
 # silently wrong registry manifest fails the build loudly.
-# 2026-11-22 bump to 2026.11.6 (npm latest, stable): tarball-verified — the
-# unicode-guard byte anchors and the sanitize anchor are still present, and
-# @homebridge/ciao stays pinned at 1.3.12, so the mDNS patch anchor is unchanged.
-# node-llama-cpp stays at 3.22.3; mcporter and pnpm move to current latest.
-# OpenClaw engine range: node >=24.16.0 <25 || >=26.1.0.
+# 2026-11-26 bump to 2026.11.10 (npm latest, stable): the Node.js line is now
+# derived from OpenClaw's own engines.node range (see oc_node_version.py), so the
+# image always ships the newest release OpenClaw supports; the unicode-guard byte
+# anchors and the sanitize anchor are still present, and @homebridge/ciao stays
+# pinned at 1.3.12, so the mDNS patch anchor is unchanged.
+# node-llama-cpp and pnpm move to current latest; mcporter stays at 0.17.1.
 RUN export PATH="/usr/bin:/bin:${PATH}"; \
-    npm install -g openclaw@2026.11.6 \
-    && /usr/bin/node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('/usr/lib/node_modules/openclaw/package.json','utf8'));if(p.version!=='2026.11.6'){console.error('ERROR: unexpected OpenClaw version installed: '+p.version);process.exit(1)};console.log('OpenClaw pin verified: '+p.version)" \
-    && /usr/bin/node -e "const [maj,min]=process.versions.node.split('.').map(Number);if(!((maj===24&&min>=16)||(maj===26&&min>=1)||maj>=27)){console.error('ERROR: Node '+process.versions.node+' does not satisfy the OpenClaw engine range: >=24.16.0 <25 or >=26.1.0');process.exit(1)};console.log('Node engine range verified: '+process.versions.node)" \
-    && npm install -g node-llama-cpp@3.22.3 \
+    npm install -g openclaw@2026.11.10 \
+    && /usr/bin/node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('/usr/lib/node_modules/openclaw/package.json','utf8'));if(p.version!=='2026.11.10'){console.error('ERROR: unexpected OpenClaw version installed: '+p.version);process.exit(1)};console.log('OpenClaw pin verified: '+p.version)" \
+    && python3 /tmp/oc_node_version.py --package-json /usr/lib/node_modules/openclaw/package.json --verify "$(/usr/bin/node --version | sed 's/^v//')" \
+    && npm install -g node-llama-cpp@3.22.4 \
     && npm install -g mcporter@0.17.1 \
-    && npm install -g pnpm@12.21.0 \
+    && npm install -g pnpm@12.23.0 \
+    && install -D -m 0755 /tmp/oc_node_version.py /usr/local/lib/openclaw/oc_node_version.py \
+    && rm -f /tmp/oc_node_version.py /tmp/Dockerfile \
     && npm cache clean --force
 
 # OpenClaw 2026.9.9+ keeps the openai-http agentId fix natively (tarball-verified

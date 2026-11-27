@@ -3,7 +3,11 @@ set -euo pipefail
 
 # Ensure Homebrew and brew-installed binaries are in PATH
 # This is needed for OpenClaw skills that depend on CLI tools (gemini, aider, etc.)
-export PATH="/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:${PATH}"
+# The brew directories are appended, not prepended: Homebrew ships its own
+# Node.js release, and the OpenClaw CLI resolves `node` through PATH. With the
+# brew prefix first, the CLI (and therefore `openclaw doctor` and
+# `openclaw backup`) would run on a different runtime than the Gateway.
+export PATH="${PATH}:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin"
 OPENCLAW_NODE_BIN="/usr/bin/node"
 
 # Home Assistant app options are usually rendered to /data/options.json
@@ -705,23 +709,45 @@ fi
 # above which may have been restored from /config. Check that exact binary
 # before any gateway process is launched.
 verify_openclaw_node() {
-  local node_bin="${1:-$OPENCLAW_NODE_BIN}" version
+  local node_bin="${1:-$OPENCLAW_NODE_BIN}" version raw
   if [ ! -x "$node_bin" ]; then
     echo "ERROR: OpenClaw Node runtime is missing or not executable: ${node_bin}"
     return 1
   fi
-  if ! version="$("$node_bin" -e '
-const [major, minor] = process.versions.node.split(".").map(Number);
-const supported = (major === 24 && minor >= 16) ||
-  (major === 26 && minor >= 1) || major >= 27;
-if (!supported) {
-  console.error(`unsupported Node ${process.versions.node}; require >=24.16.0 <25 or >=26.1.0`);
-  process.exit(1);
-  }
-process.stdout.write(process.versions.node);
-' 2>&1)"; then
-    echo "ERROR: OpenClaw Node runtime ${node_bin} failed its engine check: ${version}"
+  if ! raw="$("${node_bin}" --version 2>&1)"; then
+    echo "ERROR: OpenClaw Node runtime ${node_bin} failed its engine check: ${raw}"
     return 1
+  fi
+  version="$(printf '%s' "${raw}" | sed 's/^v//')"
+  if [ -z "${version}" ]; then
+    echo "ERROR: OpenClaw Node runtime ${node_bin} failed its engine check: the Node version could not be read"
+    return 1
+  fi
+  # The engine range and the secure patch floor are checked with the same
+  # helper the image build used, against the *installed* OpenClaw package. No
+  # second copy of the range lives in this script.
+  local helper="/usr/local/lib/openclaw/oc_node_version.py"
+  local package_json="/usr/lib/node_modules/openclaw/package.json"
+  if [ ! -f "${package_json}" ]; then
+    package_json="$(npm root -g 2>/dev/null)/openclaw/package.json"
+  fi
+  if [ -f "${helper}" ] && [ -f "${package_json}" ] && command -v python3 >/dev/null 2>&1; then
+    if ! python3 "${helper}" --package-json "${package_json}" --verify "${version}"; then
+      echo "ERROR: OpenClaw Node runtime ${node_bin} (${version}) does not satisfy the engine range and the secure patch floor of the installed OpenClaw package."
+      return 1
+    fi
+  else
+    # Emergency anchor only. Without the helper the exact engine range and the
+    # secure patch floor cannot be checked at runtime, so this rejects the
+    # obviously wrong majors and leaves the rest to the build-time gate.
+    case "${version}" in
+      2[4-9].*|3[0-9].*) ;;
+      *)
+        echo "ERROR: unsupported Node ${version}; the OpenClaw runtime requires a Node.js release of the 24.x line or newer"
+        return 1
+        ;;
+    esac
+    echo "WARN: the Node engine helper is not installed; the exact engine range and the secure patch floor could not be checked at runtime (the build-time gate still applies)."
   fi
   echo "INFO: OpenClaw Node runtime: ${node_bin} (process.versions.node=${version})"
 }
@@ -939,6 +965,72 @@ release_automatic_doctor_latch() {
   return 1
 }
 
+# Fold the SQLite write-ahead logs back into the databases so the next start
+# does not have to replay them. The gateway is killed by Docker's stop budget
+# long before its own drain finishes, so without this every restart pays for
+# WAL recovery. Best effort: a failure only costs recovery time.
+checkpoint_agent_databases() {
+  local cfg="${OPENCLAW_CONFIG_PATH:-/config/.openclaw/openclaw.json}"
+  command -v python3 >/dev/null 2>&1 || {
+    echo "INFO: python3 unavailable; skipping the SQLite checkpoint."
+    return 0
+  }
+  [ -f "${cfg}" ] || return 0
+  timeout 2 python3 - "${cfg}" <<'PY' || echo "WARN: SQLite checkpoint failed; the next start replays the WAL."
+import glob
+import json
+import os
+import sqlite3
+import sys
+
+config_path = sys.argv[1]
+state_dir = os.path.dirname(config_path)
+paths = [os.path.join(state_dir, "state", "openclaw.sqlite")]
+try:
+    with open(config_path, encoding="utf-8") as handle:
+        config = json.load(handle)
+except Exception:
+    config = {}
+for entry in (config.get("agents", {}).get("entries", {}) or {}).values():
+    agent_dir = (entry or {}).get("agentDir")
+    if agent_dir:
+        paths.append(os.path.join(agent_dir, "openclaw-agent.sqlite"))
+# The default side stores live next to the state directory. They only carry
+# bookkeeping rows, but their write-ahead logs are folded as well.
+paths.extend(
+    sorted(
+        glob.glob(
+            os.path.join(state_dir, "agents", "*", "**", "openclaw-agent.sqlite"),
+            recursive=True,
+        )
+    )
+)
+seen = set()
+checked = 0
+for path in paths:
+    if not path or path in seen:
+        continue
+    seen.add(path)
+    if not os.path.exists(path):
+        continue
+    try:
+        connection = sqlite3.connect(path, timeout=1)
+        try:
+            row = connection.execute("PRAGMA wal_checkpoint(TRUNCATE)").fetchone()
+        finally:
+            connection.close()
+        checked += 1
+        if row and int(row[0]) != 0:
+            print(f"WARN: SQLite checkpoint was busy for {path}; the next start replays its WAL.")
+    except Exception as error:
+        print(f"WARN: SQLite checkpoint failed for {path}: {error}")
+if checked:
+    print(f"INFO: SQLite write-ahead logs folded into {checked} databases.")
+else:
+    print("INFO: no SQLite database needed a checkpoint.")
+PY
+}
+
 shutdown() {
   SHUTTING_DOWN="true"
   # Only a latch acquired by the automatic repair is released here. An
@@ -948,15 +1040,10 @@ shutdown() {
   SHUTDOWN_DEADLINE=$(( $(date +%s) + 8 ))
   echo "Shutdown requested; stopping services..."
 
-  stop_pid_bounded "${NGINX_PID}" "nginx" 2
-
-  stop_pid_bounded "${TTYD_PID}" "ttyd" 2
-
-  # Stop Avahi before D-Bus; reverse startup order.
-  stop_pid_bounded "${AVAHI_PID:-}" "avahi" 1
-
-  # Stop the D-Bus daemon we started, if still running.
-  stop_pid_bounded "${DBUS_PID:-}" "dbus" 1
+  # The Gateway is stopped first (below) so it gets the largest slice of the
+  # budget: its own drain is planned for up to 325 s and Docker's 10 s stop
+  # budget always kills it mid-drain. The other services follow in parallel
+  # afterwards so everything still fits into the stop window.
 
   if [ -n "${GW_PID}" ] && kill -0 "${GW_PID}" >/dev/null 2>&1; then
     kill -TERM "${GW_PID}" >/dev/null 2>&1 || true
@@ -971,7 +1058,7 @@ shutdown() {
     # The previous `wait` blocked for the gateway's 330 s drain, so the
     # escalation below was unreachable and Docker's 10 s budget SIGKILLed us.
     _gw_left=$(shutdown_budget_left)
-    [ "${_gw_left}" -gt 4 ] && _gw_left=4
+    [ "${_gw_left}" -gt 3 ] && _gw_left=3
     for _i in $(seq 1 "${_gw_left}"); do
       kill -0 "${GW_PID}" 2>/dev/null || break
       sleep 1
@@ -979,13 +1066,47 @@ shutdown() {
     if kill -0 "${GW_PID}" 2>/dev/null; then
       echo "WARN: gateway did not exit on SIGTERM; escalating to KILL (shutdown budget)."
       kill -KILL "${GW_PID}" 2>/dev/null || true
-      for _i in 1 2 3; do
+      for _i in 1 2; do
         kill -0 "${GW_PID}" 2>/dev/null || break
         sleep 1
       done
     fi
     wait "${GW_PID}" 2>/dev/null || true
   fi
+
+  # The gateway is gone: fold its write-ahead logs back into the databases so
+  # the next start does not have to replay them. The checkpoint runs in
+  # parallel with the service stop - it only needs the SQLite files and the
+  # gateway (the only writer) is already dead. That keeps the whole shutdown
+  # inside Docker's ~10 s stop budget.
+  checkpoint_agent_databases &
+  _checkpoint_wait=$!
+
+  # nginx and the terminal stop together, Avahi and D-Bus after them: reverse
+  # startup order, but inside Docker's stop budget.
+  stop_pid_bounded "${NGINX_PID}" "nginx" 2 &
+  _nginx_wait=$!
+  stop_pid_bounded "${TTYD_PID}" "ttyd" 2 &
+  _ttyd_wait=$!
+  # Stop Avahi before D-Bus; reverse startup order.
+  stop_pid_bounded "${AVAHI_PID:-}" "avahi" 1 &
+  _avahi_wait=$!
+  # Stop the D-Bus daemon we started, if still running.
+  stop_pid_bounded "${DBUS_PID:-}" "dbus" 1 &
+  _dbus_wait=$!
+  wait "${_nginx_wait}" || true
+  wait "${_ttyd_wait}" || true
+  wait "${_avahi_wait}" || true
+  wait "${_dbus_wait}" || true
+  wait "${_checkpoint_wait}" || true
+
+  # Reap the stopped services: they are children of this shell, so the
+  # background subshells above could not wait for them.
+  for _reap_pid in "${NGINX_PID:-}" "${TTYD_PID:-}" "${AVAHI_PID:-}" "${DBUS_PID:-}"; do
+    if [ -n "${_reap_pid}" ]; then
+      wait "${_reap_pid}" 2>/dev/null || true
+    fi
+  done
 
   stop_gw_relay
 

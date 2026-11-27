@@ -99,7 +99,7 @@ PI_AGENT_DIR = Path("/config/.pi/agent")
 
 # npm package versions (bump when the app image is rebuilt)
 ACPX_PACKAGE = "@openclaw/acpx"
-OPENCLAW_ACPX_VERSION = os.environ.get("OPENCLAW_ACPX_VERSION", "2026.11.6")
+OPENCLAW_ACPX_VERSION = os.environ.get("OPENCLAW_ACPX_VERSION", "2026.11.10")
 OPENCODE_VERSION = os.environ.get("OPENCODE_VERSION", "1.19.6")
 OPENCODE_PACKAGE = os.environ.get("OPENCODE_PACKAGE", "opencode-ai")
 # Vendor package names and versions verified against the packages' own npm
@@ -107,15 +107,15 @@ OPENCODE_PACKAGE = os.environ.get("OPENCODE_PACKAGE", "opencode-ai")
 PI_PACKAGE = "@mariozechner/pi-coding-agent"
 PI_VERSION = os.environ.get("PI_VERSION", "0.73.1")
 COPILOT_PACKAGE = "@github/copilot"
-COPILOT_VERSION = os.environ.get("COPILOT_VERSION", "1.0.114")
+COPILOT_VERSION = os.environ.get("COPILOT_VERSION", "1.0.116")
 KILO_PACKAGE = "@kilocode/cli"
 KILO_VERSION = os.environ.get("KILO_VERSION", "7.8.32")
 QWEN_PACKAGE = "@qwen-code/qwen-code"
-QWEN_VERSION = os.environ.get("QWEN_VERSION", "0.28.3")
+QWEN_VERSION = os.environ.get("QWEN_VERSION", "0.28.7")
 GEMINI_PACKAGE = "@google/gemini-cli"
-GEMINI_VERSION = os.environ.get("GEMINI_VERSION", "0.70.0")
+GEMINI_VERSION = os.environ.get("GEMINI_VERSION", "0.71.1")
 DROID_PACKAGE = "@factory/cli"
-DROID_VERSION = os.environ.get("DROID_VERSION", "1.17.2")
+DROID_VERSION = os.environ.get("DROID_VERSION", "1.21.1")
 IFLOW_PACKAGE = "@iflow-ai/iflow-cli"
 IFLOW_VERSION = os.environ.get("IFLOW_VERSION", "0.5.19")
 REFERENCE_WORKER_AGENTS = frozenset({"codex", "claude", "opencode", "pi"})
@@ -1957,6 +1957,117 @@ def patch_openclaw_config() -> bool:
         log("NOTE: openclaw.json already has acp configuration; agents preserved")
         return True
 
+def repair_acpx_agent_commands() -> bool:
+    """Point ACPX agent commands at files that actually exist.
+
+    The retired Codex wrapper layout left ``plugins.entries.acpx.config.agents``
+    pointing at a wrapper file that this add-on removes. ACPX then refuses to
+    start that harness ("Configured ACP agent commands take precedence over
+    installed defaults"), so the Codex harness never comes up. This repairs such
+    entries to the current wrapper, or drops the broken command so the plugin
+    default applies.
+
+    Safety rules (2026-11-27 review):
+    * a relative command is never touched - its existence cannot be judged
+      without knowing the working directory it is resolved against,
+    * the configuration is backed up before the first write, so a repair is
+      always reversible,
+    * an entry without a usable replacement keeps everything but the broken
+      ``command`` key, so operator settings are not lost.
+    """
+    config_path = CONFIG_DIR / "openclaw.json"
+    if not config_path.exists():
+        return True
+    try:
+        data = read_json(config_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        log(f"ERROR: could not read {config_path}: {exc}")
+        return False
+    config = data.get("plugins", {}).get("entries", {}).get("acpx", {}).get("config", {})
+    agents = config.get("agents")
+    if not isinstance(agents, dict) or not agents:
+        return True
+    candidates = {
+        "codex": ("codex-acp-wrapper.mjs",),
+        "claude": ("claude-agent-acp-wrapper.mjs",),
+    }
+    changed = False
+    for agent_id, entry in list(agents.items()):
+        if not isinstance(entry, dict):
+            continue
+        command = entry.get("command")
+        if not isinstance(command, str) or not command:
+            continue
+        if not os.path.isabs(command):
+            log(
+                f"WARN: ACPX agent command for '{agent_id}' is relative ({command}); "
+                "left untouched because its target cannot be resolved reliably"
+            )
+            continue
+        if Path(command).exists():
+            continue
+        replacement = None
+        for name in candidates.get(agent_id, ()):
+            candidate = ACPX_DIR / name
+            if candidate.exists():
+                replacement = str(candidate)
+                break
+        if replacement:
+            entry["command"] = replacement
+            log(f"Repaired ACPX agent command for '{agent_id}': {command} -> {replacement}")
+        else:
+            # Keep every other setting of the entry; only the broken command
+            # goes away so the plugin default applies again.
+            entry.pop("command", None)
+            log(
+                f"WARN: removed the broken ACPX agent command for '{agent_id}' ({command}); "
+                "no replacement wrapper is installed, the plugin default applies. "
+                "The remaining entry settings were kept."
+            )
+            if not entry:
+                agents.pop(agent_id, None)
+        changed = True
+    if changed:
+        try:
+            backup = config_path.with_name(
+                f"{config_path.name}.pre-acpx-repair-{int(time.time())}"
+            )
+            shutil.copy2(config_path, backup)
+            log(f"Backed up the OpenClaw configuration to {backup}")
+            prune_acpx_repair_backups(config_path)
+        except OSError as exc:
+            log(f"ERROR: could not back up the OpenClaw configuration: {exc}")
+            return False
+        try:
+            write_json(config_path, data)
+        except OSError as exc:
+            log(f"ERROR: could not write the repaired ACPX agent commands: {exc}")
+            return False
+    return True
+
+
+def prune_acpx_repair_backups(config_path: Path, keep: int = 3) -> None:
+    """Keep only the newest repair backups.
+
+    Every boot that repairs something writes a copy of openclaw.json. Without
+    a bound the configuration directory grows with one copy per repair.
+    """
+    try:
+        backups = sorted(
+            config_path.parent.glob(f"{config_path.name}.pre-acpx-repair-*"),
+            key=lambda path: path.stat().st_mtime,
+            reverse=True,
+        )
+    except OSError:
+        return
+    for stale in backups[keep:]:
+        try:
+            stale.unlink()
+            log(f"Removed the outdated repair backup {stale}")
+        except OSError as exc:
+            log(f"WARN: could not remove the outdated repair backup {stale}: {exc}")
+
+
 def main() -> int:
     if sys.argv[1:] == ["--migrate-retired-binding"]:
         log("Migrating/removing retired dashboard binding (ACPX-independent upgrade maintenance)")
@@ -1973,6 +2084,7 @@ def main() -> int:
     ok = deploy_plugins()
     ok = install_acpx_npm_project() and ok
     ok = patch_openclaw_config() and ok
+    ok = repair_acpx_agent_commands() and ok
     # V36.2 (2026-10-13): agents.defaults.utilityModel from the utility_model
     # option — agent entries stay untouched; unset = no write.
     ok = merge_utility_model() and ok

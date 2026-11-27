@@ -14,6 +14,7 @@ import signal
 import socket
 import stat
 import subprocess
+import sys
 import tempfile
 import time
 import unittest
@@ -1279,20 +1280,77 @@ class HaMcpUrlTests(unittest.TestCase):
 
 
 class DockerGuardTests(unittest.TestCase):
-    def test_image_node_is_exactly_pinned_and_used_for_openclaw_build(self) -> None:
+    def test_image_node_line_is_derived_and_verified_against_the_installed_package(self) -> None:
         dockerfile = (ADDON_DIR / "Dockerfile").read_text(encoding="utf-8")
-        self.assertIn("ARG OPENCLAW_NODE_VERSION=24.22.3", dockerfile)
-        self.assertIn('nodejs="${OPENCLAW_NODE_VERSION}-1nodesource1"', dockerfile)
-        self.assertIn("NodeSource pin verified: '+process.versions.node", dockerfile)
-        self.assertIn('RUN export PATH="/usr/bin:/bin:${PATH}";', dockerfile)
+        # The Node.js release is derived from OpenClaw's own engines.node range
+        # instead of a hard-coded patch version: the range moves over time
+        # (24.x -> 26.x -> 27.x) and a fixed pin would need a rebuild per
+        # upstream change.
+        self.assertNotIn("ARG OPENCLAW_NODE_VERSION", dockerfile)
+        self.assertNotIn("nodejs=\"${", dockerfile)
+        self.assertIn("apt-get install -y --no-install-recommends nodejs", dockerfile)
+        # The major line comes from the same derivation, the patch version is
+        # always the newest build of that repository.
+        self.assertIn("oc_node_version.py", dockerfile)
+        self.assertIn("--dockerfile /tmp/Dockerfile --export", dockerfile)
+        self.assertIn("https://deb.nodesource.com/${NODE_SOURCE_REPO}", dockerfile)
+        self.assertIn(
+            "oc_node_version.py --package-json /usr/lib/node_modules/openclaw/package.json --verify",
+            dockerfile,
+        )
+        self.assertTrue((ADDON_DIR / "oc_node_version.py").is_file())
+        self.assertIn("RUN export PATH=\"/usr/bin:/bin:${PATH}\";", dockerfile)
         self.assertNotIn("RUN node ", dockerfile)
-        self.assertIn("npm install -g openclaw@2026.11.6", dockerfile)
+        self.assertIn("npm install -g openclaw@2026.11.10", dockerfile)
 
-    @unittest.skipUnless(NODE, "node is required to execute the engine gate")
-    def test_node_engine_range_and_negative_controls(self) -> None:
+    def test_node_export_is_not_swallowed_by_the_shell(self) -> None:
+        """The export step must fail the build, not silently continue.
+
+        ``eval "$(helper --export)"`` swallows the helper's exit status: the
+        build would continue with an empty NODE_SOURCE_REPO and only fail
+        later with an unrelated apt error.
+        """
         dockerfile = (ADDON_DIR / "Dockerfile").read_text(encoding="utf-8")
-        line = next(line.strip() for line in dockerfile.splitlines() if "const [maj,min]" in line)
-        script = line.split('node -e "', 1)[1].rsplit('"', 1)[0]
+        self.assertNotIn('eval "$(python3 /tmp/oc_node_version.py', dockerfile)
+        self.assertIn('_oc_exports="$(python3 /tmp/oc_node_version.py', dockerfile)
+        self.assertIn('[ -n "${NODE_SOURCE_REPO:-}" ]', dockerfile)
+        self.assertIn('[ -n "${NODE_VERSION:-}" ]', dockerfile)
+
+    def test_node_helper_stays_installed_for_the_runtime_check(self) -> None:
+        """run.sh verifies the runtime Node against the installed package.
+
+        The helper therefore has to survive the build; otherwise the runtime
+        check falls back to a hard-coded range.
+        """
+        dockerfile = (ADDON_DIR / "Dockerfile").read_text(encoding="utf-8")
+        self.assertIn(
+            "install -D -m 0755 /tmp/oc_node_version.py /usr/local/lib/openclaw/oc_node_version.py",
+            dockerfile,
+        )
+        run_sh = (ADDON_DIR / "run.sh").read_text(encoding="utf-8")
+        self.assertIn("/usr/local/lib/openclaw/oc_node_version.py", run_sh)
+        self.assertIn("--package-json", run_sh)
+        self.assertIn("--verify", run_sh)
+        # No second copy of the engine range may live in the shell script.
+        self.assertNotIn("const [major, minor]", run_sh)
+        self.assertNotIn("const [maj,min]", run_sh)
+
+    def test_node_engine_range_and_negative_controls(self) -> None:
+        sys.path.insert(0, str(ADDON_DIR))
+        import oc_node_version
+
+        dockerfile = (ADDON_DIR / "Dockerfile").read_text(encoding="utf-8")
+        # The engine range is no longer hard-coded in the image: it is read
+        # from the installed OpenClaw package at build time.
+        self.assertNotIn("const [maj,min]", dockerfile)
+        self.assertIn(
+            "oc_node_version.py --package-json /usr/lib/node_modules/openclaw/package.json --verify",
+            dockerfile,
+        )
+        # The range comes from a fixture that mirrors the published
+        # engines.node of the pinned OpenClaw release, not from a literal in
+        # this test: a range bump upstream must not need a test rewrite.
+        range_expr = self._fixture_engine_range()
         cases = {
             "23.9.0": False,
             "24.15.9": False,
@@ -1307,14 +1365,155 @@ class DockerGuardTests(unittest.TestCase):
         }
         for version, accepted in cases.items():
             with self.subTest(version=version):
-                executable = script.replace("process.versions.node", json.dumps(version))
-                result = subprocess.run(
-                    [NODE, "-e", executable], text=True, capture_output=True, timeout=10, check=False
+                self.assertEqual(
+                    oc_node_version.satisfies(version, range_expr),
+                    accepted,
+                    f"Node {version} against {range_expr}",
                 )
-                self.assertEqual(result.returncode == 0, accepted, result.stdout + result.stderr)
-                if not accepted:
-                    self.assertIn(">=24.16.0 <25 or >=26.1.0", result.stderr)
-        self.assertIn("npm install -g openclaw@2026.11.6", dockerfile)
+        self.assertIn("npm install -g openclaw@2026.11.10", dockerfile)
+
+    @staticmethod
+    def _fixture_engine_range() -> str:
+        fixture = ADDON_DIR / "tests" / "fixtures" / "openclaw-package.json"
+        return json.loads(fixture.read_text(encoding="utf-8"))["engines"]["node"]
+
+    def test_node_fixture_matches_the_dockerfile_pin(self) -> None:
+        """The fixture must describe the release the image actually installs."""
+        sys.path.insert(0, str(ADDON_DIR))
+        import oc_node_version
+
+        dockerfile = ADDON_DIR / "Dockerfile"
+        pinned = oc_node_version.extract_openclaw_pin(str(dockerfile))
+        fixture = json.loads(
+            (ADDON_DIR / "tests" / "fixtures" / "openclaw-package.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(fixture["version"], pinned)
+
+    def test_node_helper_rejects_versions_below_the_secure_floor(self) -> None:
+        sys.path.insert(0, str(ADDON_DIR))
+        import oc_node_version
+
+        # The runtime refuses Node builds with the WAL-reset bug and reports
+        # the same floor as a security warning; the build must not ship one.
+        for major, floor in (("24", "24.22.1"), ("26", "26.12.1")):
+            with self.subTest(major=major):
+                self.assertEqual(oc_node_version.floor_for(major), floor)
+                below = floor.rsplit(".", 1)[0] + "." + str(int(floor.rsplit(".", 1)[1]) - 1)
+                self.assertTrue(
+                    oc_node_version._cmp(below, floor) < 0,
+                    f"{below} must be below the floor {floor}",
+                )
+                self.assertTrue(
+                    oc_node_version._cmp(floor, floor) == 0,
+                    f"{floor} must satisfy the floor",
+                )
+
+    def test_node_helper_floor_violation_fails_the_verify_gate(self) -> None:
+        helper = ADDON_DIR / "oc_node_version.py"
+        range_expr = ">=24.16.0 <25 || >=26.1.0"
+        for version, expected in (("24.22.0", 6), ("26.12.0", 6), ("24.22.3", 0), ("26.13.1", 0)):
+            with self.subTest(version=version):
+                result = subprocess.run(
+                    [
+                        sys.executable,
+                        str(helper),
+                        "--engines",
+                        range_expr,
+                        "--verify",
+                        version,
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                )
+                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+
+    def test_node_helper_caret_and_tilde_follow_npm_semantics(self) -> None:
+        sys.path.insert(0, str(ADDON_DIR))
+        import oc_node_version
+
+        cases = {
+            # caret: the first non-zero component decides the upper bound
+            ("^24.16.0", "24.99.0"): True,
+            ("^24.16.0", "25.0.0"): False,
+            ("^0.2.3", "0.2.9"): True,
+            ("^0.2.3", "0.3.0"): False,
+            ("^0.0.3", "0.0.3"): True,
+            ("^0.0.3", "0.0.4"): False,
+            # tilde
+            ("~1.2.3", "1.2.9"): True,
+            ("~1.2.3", "1.3.0"): False,
+            ("~1.2", "1.2.9"): True,
+            ("~1.2", "1.3.0"): False,
+            ("~1", "1.9.0"): True,
+            ("~1", "2.0.0"): False,
+            # a bare major means the whole line
+            ("24", "24.22.3"): True,
+            ("24", "25.0.0"): False,
+        }
+        for (range_expr, version), accepted in cases.items():
+            with self.subTest(range_expr=range_expr, version=version):
+                self.assertEqual(oc_node_version.satisfies(version, range_expr), accepted)
+
+    def test_node_helper_matches_npm_semver_on_a_verified_matrix(self) -> None:
+        """The expectations were taken from npm semver 7.6.3 itself.
+
+        Each case was checked with ``semver.satisfies`` from the npm package, so
+        the helper stays aligned with npm's range semantics instead of a
+        hand-written approximation of them.
+        """
+        sys.path.insert(0, str(ADDON_DIR))
+        import oc_node_version
+
+        verified = [
+            # (version, range, npm result)
+            ("26.1.0-rc.9", ">=26.1.0-rc.0 <26.1.0", True),
+            ("26.1.0-rc.9", "<26.1.0", False),
+            ("26.1.0-rc.1", ">=26.1.0", False),
+            ("24.16.0", "^24.16.0", True),
+            ("25.0.0", "^24.16.0", False),
+            ("24.99.0", "^24.16.0", True),
+            ("0.2.9", "^0.2.3", True),
+            ("0.3.0", "^0.2.3", False),
+            ("0.0.3", "^0.0.3", True),
+            ("0.0.4", "^0.0.3", False),
+            ("1.2.9", "~1.2.3", True),
+            ("1.3.0", "~1.2.3", False),
+            ("1.2.9", "~1.2", True),
+            ("1.3.0", "~1.2", False),
+            ("1.9.0", "~1", True),
+            ("2.0.0", "~1", False),
+            ("24.22.3", "24", True),
+            ("25.0.0", "24", False),
+            ("24.22.3", "24.x", True),
+            ("25.0.0", "24.x", False),
+            ("1.2.9", "1.2.x", True),
+            ("1.3.0", "1.2.x", False),
+            ("24.16.0", ">=24.16.0 <25 || >=26.1.0", True),
+            ("25.0.0", ">=24.16.0 <25 || >=26.1.0", False),
+            ("26.1.0", ">=24.16.0 <25 || >=26.1.0", True),
+        ]
+        for version, range_expr, expected in verified:
+            with self.subTest(version=version, range_expr=range_expr):
+                self.assertEqual(
+                    oc_node_version.satisfies(version, range_expr),
+                    expected,
+                    f"Node {version} against {range_expr} (npm semver reference)",
+                )
+
+    def test_node_helper_rejects_prereleases_and_broken_ranges(self) -> None:
+        sys.path.insert(0, str(ADDON_DIR))
+        import oc_node_version
+
+        # npm: a prerelease only matches a range that mentions a prerelease.
+        self.assertFalse(oc_node_version.satisfies("26.1.0-rc.1", ">=26.1.0"))
+        self.assertTrue(oc_node_version.satisfies("26.1.0-rc.1", ">=26.1.0-rc.0"))
+        with self.assertRaises(ValueError):
+            oc_node_version.satisfies("1.0.0", "not-a-version")
+        with self.assertRaises(ValueError):
+            oc_node_version.satisfies("1.0.0", "")
 
     def test_dockerignore_excludes_vendored_dependency_payloads_only(self) -> None:
         patterns = [

@@ -1487,14 +1487,14 @@ class PersistentHarnessInstallTest(unittest.TestCase):
 
     def _expected_dependencies(self):
         return {
-            "@openclaw/acpx": "2026.11.6",
+            "@openclaw/acpx": "2026.11.10",
             "opencode-ai": "1.19.6",
             "@mariozechner/pi-coding-agent": "0.73.1",
-            "@github/copilot": "1.0.114",
+            "@github/copilot": "1.0.116",
             "@kilocode/cli": "7.8.32",
-            "@qwen-code/qwen-code": "0.28.3",
-            "@google/gemini-cli": "0.70.0",
-            "@factory/cli": "1.17.2",
+            "@qwen-code/qwen-code": "0.28.7",
+            "@google/gemini-cli": "0.71.1",
+            "@factory/cli": "1.21.1",
             "@iflow-ai/iflow-cli": "0.5.19",
         }
 
@@ -1714,7 +1714,7 @@ class NativeCodexManagedProjectPruneTest(unittest.TestCase):
             config["plugins"]["allow"] = ["codex", "operator-plugin"]
         (self.config_dir / "openclaw.json").write_text(json.dumps(config))
         self.project.mkdir(parents=True)
-        dependencies = {"@openclaw/acpx": "2026.11.6", "operator-cli": "1.2.3"}
+        dependencies = {"@openclaw/acpx": "2026.11.10", "operator-cli": "1.2.3"}
         if manifest_entry:
             dependencies["@openclaw/codex"] = "2026.7.1-1"
         (self.project / "package.json").write_text(json.dumps({
@@ -1733,7 +1733,7 @@ class NativeCodexManagedProjectPruneTest(unittest.TestCase):
     def assert_pruned_and_preserved(self) -> None:
         manifest = json.loads((self.project / "package.json").read_text())
         self.assertEqual(manifest["dependencies"], {
-            "@openclaw/acpx": "2026.11.6",
+            "@openclaw/acpx": "2026.11.10",
             "operator-cli": "1.2.3",
         })
         self.assertFalse(self.payload.exists())
@@ -1847,6 +1847,88 @@ class ReferenceWorkerRosterTest(unittest.TestCase):
         allowed = json.loads(self.path.read_text())["acp"]["allowedAgents"]
         self.assertEqual(allowed.count("openclaw"), 1)
         self.assertNotIn("coordinator", allowed)
+
+
+class RepairAcpxAgentCommandsTest(unittest.TestCase):
+    """The ACPX command repair must repair without ever losing settings."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.config_dir = Path(self.tmp.name) / "config"
+        self.config_dir.mkdir()
+        self.acpx_dir = self.config_dir / "acpx"
+        self.acpx_dir.mkdir()
+        self.config_path = self.config_dir / "openclaw.json"
+        patches = (
+            mock.patch.object(helper, "CONFIG_DIR", self.config_dir),
+            mock.patch.object(helper, "ACPX_DIR", self.acpx_dir),
+        )
+        for patch in patches:
+            patch.start()
+            self.addCleanup(patch.stop)
+
+    def _write_config(self, agents: dict) -> None:
+        self.config_path.write_text(
+            json.dumps({"plugins": {"entries": {"acpx": {"config": {"agents": agents}}}}})
+        )
+
+    def _agents(self) -> dict:
+        data = json.loads(self.config_path.read_text())
+        return data["plugins"]["entries"]["acpx"]["config"]["agents"]
+
+    def test_existing_command_is_left_untouched_and_writes_no_backup(self) -> None:
+        target = self.acpx_dir / "codex-acp-wrapper.mjs"
+        target.write_text("// wrapper\n")
+        self._write_config({"codex": {"command": str(target)}})
+        before = self.config_path.read_bytes()
+        self.assertTrue(helper.repair_acpx_agent_commands())
+        self.assertEqual(self.config_path.read_bytes(), before)
+        self.assertEqual(list(self.config_dir.glob("*.pre-acpx-repair-*")), [])
+
+    def test_broken_command_is_repointed_to_the_installed_wrapper(self) -> None:
+        target = self.acpx_dir / "codex-acp-wrapper.mjs"
+        target.write_text("// wrapper\n")
+        self._write_config({"codex": {"command": "/config/.openclaw/acpx/gone-wrapper.mjs"}})
+        self.assertTrue(helper.repair_acpx_agent_commands())
+        self.assertEqual(self._agents()["codex"]["command"], str(target))
+        backups = list(self.config_dir.glob("*.pre-acpx-repair-*"))
+        self.assertEqual(len(backups), 1)
+        self.assertEqual(json.loads(backups[0].read_text())["plugins"]["entries"]["acpx"]["config"]["agents"]["codex"]["command"],
+                         "/config/.openclaw/acpx/gone-wrapper.mjs")
+
+    def test_broken_command_without_replacement_keeps_the_other_settings(self) -> None:
+        self._write_config(
+            {"codex": {"command": "/config/.openclaw/acpx/gone-wrapper.mjs", "args": ["--acp"], "env": {"X": "1"}}}
+        )
+        self.assertTrue(helper.repair_acpx_agent_commands())
+        entry = self._agents()["codex"]
+        self.assertNotIn("command", entry)
+        self.assertEqual(entry["args"], ["--acp"])
+        self.assertEqual(entry["env"], {"X": "1"})
+
+    def test_empty_entry_is_removed_when_only_the_command_was_set(self) -> None:
+        self._write_config({"codex": {"command": "/config/.openclaw/acpx/gone-wrapper.mjs"}})
+        self.assertTrue(helper.repair_acpx_agent_commands())
+        self.assertNotIn("codex", self._agents())
+
+    def test_relative_command_is_never_touched(self) -> None:
+        self._write_config({"codex": {"command": "./codex-acp-wrapper.mjs"}})
+        before = self.config_path.read_bytes()
+        self.assertTrue(helper.repair_acpx_agent_commands())
+        self.assertEqual(self.config_path.read_bytes(), before)
+        self.assertEqual(self._agents()["codex"]["command"], "./codex-acp-wrapper.mjs")
+
+    def test_corrupt_configuration_fails_without_a_traceback(self) -> None:
+        self.config_path.write_text("{ not json")
+        self.assertFalse(helper.repair_acpx_agent_commands())
+
+    def test_repair_backups_are_bounded(self) -> None:
+        self._write_config({"codex": {"command": "/config/.openclaw/acpx/gone-wrapper.mjs"}})
+        for _ in range(6):
+            self.assertTrue(helper.repair_acpx_agent_commands())
+            self._write_config({"codex": {"command": "/config/.openclaw/acpx/gone-wrapper.mjs"}})
+        self.assertLessEqual(len(list(self.config_dir.glob("*.pre-acpx-repair-*"))), 3)
 
 
 if __name__ == "__main__":

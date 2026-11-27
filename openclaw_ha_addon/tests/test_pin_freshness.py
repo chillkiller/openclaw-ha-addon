@@ -71,7 +71,7 @@ class PinFreshnessTests(unittest.TestCase):
 
     def test_all_current_passes(self):
         pins = [
-            freshness.PackagePin("openclaw", "2026.11.6", freshness.RUNTIME_FAMILY),
+            freshness.PackagePin("openclaw", "2026.11.10", freshness.RUNTIME_FAMILY),
             freshness.PackagePin("opencode-ai", "1.19.6", freshness.HARNESS_FAMILY),
         ]
         result, output, error = self.check(pins)
@@ -103,14 +103,14 @@ class PinFreshnessTests(unittest.TestCase):
         self.assertEqual(
             actual,
             {
-                "@openclaw/acpx": "2026.11.6",
+                "@openclaw/acpx": "2026.11.10",
                 "opencode-ai": "1.19.6",
                 "@mariozechner/pi-coding-agent": "0.73.1",
-                "@github/copilot": "1.0.114",
+                "@github/copilot": "1.0.116",
                 "@kilocode/cli": "7.8.32",
-                "@qwen-code/qwen-code": "0.28.3",
-                "@google/gemini-cli": "0.70.0",
-                "@factory/cli": "1.17.2",
+                "@qwen-code/qwen-code": "0.28.7",
+                "@google/gemini-cli": "0.71.1",
+                "@factory/cli": "1.21.1",
                 "@iflow-ai/iflow-cli": "0.5.19",
             },
         )
@@ -123,7 +123,7 @@ class PinFreshnessTests(unittest.TestCase):
         runtime = freshness.extract_runtime_pin()
         self.assertEqual(
             runtime,
-            freshness.PackagePin("openclaw", "2026.11.6", freshness.RUNTIME_FAMILY),
+            freshness.PackagePin("openclaw", "2026.11.10", freshness.RUNTIME_FAMILY),
         )
         self.assertEqual(freshness.load_pins()[0], runtime)
 
@@ -132,9 +132,9 @@ class PinFreshnessTests(unittest.TestCase):
         self.assertEqual(
             {pin.package: pin.pin for pin in pins},
             {
-                "node-llama-cpp": "3.22.3",
+                "node-llama-cpp": "3.22.4",
                 "mcporter": "0.17.1",
-                "pnpm": "12.21.0",
+                "pnpm": "12.23.0",
             },
         )
         self.assertEqual({pin.family for pin in pins}, {freshness.IMAGE_FAMILY})
