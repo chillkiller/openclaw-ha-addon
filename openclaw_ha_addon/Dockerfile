@@ -320,7 +320,7 @@ ENV NODE_LLAMA_CPP_POSTINSTALL=skip
 RUN export PATH="/usr/bin:/bin:${PATH}"; \
     npm install -g openclaw@2026.11.10 \
     && /usr/bin/node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('/usr/lib/node_modules/openclaw/package.json','utf8'));if(p.version!=='2026.11.10'){console.error('ERROR: unexpected OpenClaw version installed: '+p.version);process.exit(1)};console.log('OpenClaw pin verified: '+p.version)" \
-    && python3 /tmp/oc_node_version.py --package-json /usr/lib/node_modules/openclaw/package.json --verify "$(/usr/bin/node --version | sed 's/^v//')" \
+    && python3 /tmp/oc_node_version.py --package-json /usr/lib/node_modules/openclaw/package.json --runtime-floors /usr/lib/node_modules/openclaw --verify "$(/usr/bin/node --version | sed 's/^v//')" \
     && npm install -g node-llama-cpp@3.22.4 \
     && npm install -g mcporter@0.17.1 \
     && npm install -g pnpm@12.23.0 \

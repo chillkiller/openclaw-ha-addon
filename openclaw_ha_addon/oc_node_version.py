@@ -312,7 +312,52 @@ def select_release(
     )
 
 
-def floor_for(major: str) -> str | None:
+def runtime_security_floors(package_dir: str) -> dict[str, str] | None:
+    """Read the secure patch floors from an installed OpenClaw package.
+
+    The runtime ships its own floor table (the minimum patch level per Node
+    line that rejects the compromised public keys). Reading it from the
+    installed package keeps the build aligned with the runtime without a
+    second table to maintain: a new Node line is covered as soon as the
+    runtime knows a floor for it.
+
+    Returns None when the table cannot be found (the caller then falls back
+    to the built-in table).
+    """
+    root = Path(package_dir)
+    dist = root / "dist"
+    if not dist.is_dir():
+        return None
+    pattern = re.compile(r"major:\s*(\d+)\s*,\s*minor:\s*(\d+)\s*,\s*patch:\s*(\d+)")
+    for path in sorted(dist.rglob("*.mjs")):
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        marker = text.find("NODE_SECURITY_RELEASE_FLOORS")
+        if marker < 0:
+            continue
+        # The table is the first array literal after the constant name.
+        start = text.find("[", marker)
+        end = text.find("]", start)
+        if start < 0 or end < 0:
+            continue
+        floors: dict[str, str] = {}
+        for major, minor, patch in pattern.findall(text[start:end]):
+            floors[major] = f"{major}.{minor}.{patch}"
+        if floors:
+            return floors
+    return None
+
+
+def floor_for(major: str, runtime_floors: dict[str, str] | None = None) -> str | None:
+    """Return the secure patch floor for a Node major line.
+
+    The runtime's own table wins when it is available; the built-in table is
+    the fallback for the phase before OpenClaw is installed.
+    """
+    if runtime_floors:
+        return runtime_floors.get(major)
     return SECURE_FLOOR.get(major)
 
 
@@ -379,6 +424,11 @@ def main(
         help="read engines.node from this installed package.json instead of npm",
     )
     parser.add_argument("--package", default="openclaw", help="npm package that declares engines.node")
+    parser.add_argument(
+        "--runtime-floors",
+        default="",
+        help="read the secure patch floors from this installed OpenClaw package",
+    )
     parser.add_argument("--engines", default="", help="use this range instead of querying npm")
     parser.add_argument("--verify", default="", help="verify an installed Node version against the range")
     parser.add_argument(
@@ -389,6 +439,16 @@ def main(
     parser.add_argument("--json", action="store_true", help="emit JSON")
     parser.add_argument("--export", action="store_true", help="emit shell exports for the build")
     args = parser.parse_args(argv)
+
+    runtime_floors: dict[str, str] | None = None
+    if args.runtime_floors:
+        runtime_floors = runtime_security_floors(args.runtime_floors)
+        if runtime_floors is None:
+            print(
+                f"NOTE: no secure patch floor table found in {args.runtime_floors}; "
+                "using the built-in floor table.",
+                file=err,
+            )
 
     range_expr = args.engines
     openclaw_version = args.openclaw_version
@@ -438,7 +498,7 @@ def main(
                     file=err,
                 )
                 return EXIT_VERIFY_FAILED
-            verify_floor = floor_for(args.verify.split(".")[0])
+            verify_floor = floor_for(args.verify.split(".")[0], runtime_floors)
             if (
                 verify_floor
                 and not args.no_floor
@@ -477,7 +537,7 @@ def main(
         )
         return EXIT_USAGE
 
-    floor = floor_for(newest.major)
+    floor = floor_for(newest.major, runtime_floors)
     floor_ok = True if floor is None else _cmp(newest.version, floor) >= 0
     if not floor_ok and not args.no_floor:
         print(

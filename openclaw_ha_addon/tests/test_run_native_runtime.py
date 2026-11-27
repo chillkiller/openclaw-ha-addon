@@ -1304,7 +1304,8 @@ class DockerGuardTests(unittest.TestCase):
         self.assertIn("--dockerfile /tmp/Dockerfile --export", dockerfile)
         self.assertIn("https://deb.nodesource.com/${NODE_SOURCE_REPO}", dockerfile)
         self.assertIn(
-            "oc_node_version.py --package-json /usr/lib/node_modules/openclaw/package.json --verify",
+            "oc_node_version.py --package-json /usr/lib/node_modules/openclaw/package.json "
+            "--runtime-floors /usr/lib/node_modules/openclaw --verify",
             dockerfile,
         )
         self.assertTrue((ADDON_DIR / "oc_node_version.py").is_file())
@@ -1340,6 +1341,8 @@ class DockerGuardTests(unittest.TestCase):
         self.assertIn("/usr/local/lib/openclaw/oc_node_version.py", run_sh)
         self.assertIn("--package-json", run_sh)
         self.assertIn("--verify", run_sh)
+        # The runtime check reads the secure floors from the runtime itself.
+        self.assertIn("--runtime-floors", run_sh)
         # No second copy of the engine range may live in the shell script.
         self.assertNotIn("const [major, minor]", run_sh)
         self.assertNotIn("const [maj,min]", run_sh)
@@ -1353,7 +1356,8 @@ class DockerGuardTests(unittest.TestCase):
         # from the installed OpenClaw package at build time.
         self.assertNotIn("const [maj,min]", dockerfile)
         self.assertIn(
-            "oc_node_version.py --package-json /usr/lib/node_modules/openclaw/package.json --verify",
+            "oc_node_version.py --package-json /usr/lib/node_modules/openclaw/package.json "
+            "--runtime-floors /usr/lib/node_modules/openclaw --verify",
             dockerfile,
         )
         # The range comes from a fixture that mirrors the published
@@ -1511,6 +1515,41 @@ class DockerGuardTests(unittest.TestCase):
                     expected,
                     f"Node {version} against {range_expr} (npm semver reference)",
                 )
+
+    def test_node_helper_reads_the_runtime_floor_table(self) -> None:
+        """The secure floors come from the runtime, not from a second table.
+
+        The runtime ships the minimum patch level per Node line; reading it
+        from the installed package keeps a new Node line covered automatically.
+        """
+        sys.path.insert(0, str(ADDON_DIR))
+        import oc_node_version
+
+        with tempfile.TemporaryDirectory() as tmp:
+            package_dir = Path(tmp) / "openclaw"
+            dist = package_dir / "dist"
+            dist.mkdir(parents=True)
+            (dist / "node-version.mjs").write_text(
+                "const NODE_SECURITY_RELEASE_FLOORS = [{major: 24, minor: 22, patch: 1}, "
+                "{major: 26, minor: 12, patch: 1}, {major: 27, minor: 3, patch: 0}];\n",
+                encoding="utf-8",
+            )
+            floors = oc_node_version.runtime_security_floors(str(package_dir))
+            self.assertEqual(
+                floors,
+                {"24": "24.22.1", "26": "26.12.1", "27": "27.3.0"},
+            )
+            # A Node line the runtime knows a floor for is enforced; a line
+            # the runtime does not know keeps the built-in fallback.
+            self.assertEqual(
+                oc_node_version.floor_for("27", floors), "27.3.0"
+            )
+            self.assertEqual(oc_node_version.floor_for("28", floors), None)
+            # Without a readable table the built-in table applies.
+            self.assertIsNone(
+                oc_node_version.runtime_security_floors(str(Path(tmp) / "missing"))
+            )
+            self.assertEqual(oc_node_version.floor_for("24"), "24.22.1")
 
     def test_node_helper_caret_respects_the_component_count(self) -> None:
         """npm derives the caret bound from the number of given components.

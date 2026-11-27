@@ -257,7 +257,42 @@ def _find_esbuild() -> str | None:
     for candidate in ESBUILD_BIN_CANDIDATES:
         if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
             return candidate
+    # Development and checkout hosts: the esbuild that belongs to the
+    # OpenClaw installation next to the running `openclaw` binary. The
+    # package directory is derived from PATH (npm global roots) and from the
+    # `openclaw` binary itself, because the binary can be a wrapper.
+    for package_dir in _openclaw_package_dirs():
+        for relative in (
+            Path("node_modules") / ".bin" / "esbuild",
+            Path("node_modules") / "esbuild" / "bin" / "esbuild",
+        ):
+            candidate = package_dir / relative
+            if candidate.is_file() and os.access(candidate, os.X_OK):
+                return str(candidate)
     return shutil.which("esbuild")
+
+
+def _openclaw_package_dirs() -> list[Path]:
+    """Return the directories that may hold an npm-installed OpenClaw."""
+    dirs: list[Path] = []
+    seen: set[str] = set()
+
+    def add(candidate: Path) -> None:
+        resolved = str(candidate)
+        if resolved not in seen:
+            seen.add(resolved)
+            dirs.append(candidate)
+
+    for entry in os.environ.get("PATH", "").split(os.pathsep):
+        if not entry:
+            continue
+        base = Path(entry)
+        add(base.parent / "lib" / "node_modules" / "openclaw")
+        add(base / "node_modules" / "openclaw")
+    openclaw_bin = shutil.which("openclaw")
+    if openclaw_bin:
+        add(Path(openclaw_bin).resolve().parent.parent)
+    return dirs
 
 
 def _image_node_subprocess_env() -> dict[str, str]:

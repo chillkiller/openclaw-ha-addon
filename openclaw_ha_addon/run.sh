@@ -732,7 +732,7 @@ verify_openclaw_node() {
     package_json="$(npm root -g 2>/dev/null)/openclaw/package.json"
   fi
   if [ -f "${helper}" ] && [ -f "${package_json}" ] && command -v python3 >/dev/null 2>&1; then
-    if ! python3 "${helper}" --package-json "${package_json}" --verify "${version}"; then
+    if ! python3 "${helper}" --package-json "${package_json}" --runtime-floors "$(dirname "${package_json}")" --verify "${version}"; then
       echo "ERROR: OpenClaw Node runtime ${node_bin} (${version}) does not satisfy the engine range and the secure patch floor of the installed OpenClaw package."
       return 1
     fi
