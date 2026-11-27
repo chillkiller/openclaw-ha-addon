@@ -4,6 +4,9 @@
 
 | App Version | OpenClaw Version | Release Date |
 |--------------|------------------|---------------|
+> **Note (0.7.13.50):** releases 0.7.13.47 and 0.7.13.48 must not be installed: they contain a
+> defect of their own that stops the add-on during startup. Use 0.7.13.49 or 0.7.13.50.
+
 | 0.7.13.50 | 2026.11.10 | 2026-11-27 |
 | 0.7.13.49 | 2026.11.10 | 2026-11-27 |
 | 0.7.13.48 | 2026.11.10 | 2026-11-27 |

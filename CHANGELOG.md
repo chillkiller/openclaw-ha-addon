@@ -10,28 +10,18 @@ Each entry summarizes user-visible changes. Full engineering notes:
 
 ## [0.7.13.50] - 2026-11-27
 
-The image installs the Node.js release that OpenClaw requires, the command line and the gateway share one runtime, and stopping the app shuts the gateway down cleanly.
-
-### Added
-
-- The image derives its Node.js line from the OpenClaw release it ships and installs the newest release of that line, so the app always runs a supported and patched Node.js version. The minimum patch level the runtime requires is enforced at build time and read from the runtime itself.
-- The configuration writer is installed where the runtime manages its plugins, so the runtime can complete the writer's data and settings migration on an upgraded installation.
+The add-on no longer mistakes a gateway start that never finished for a healthy boot, and a gateway that was adopted from a previous run is stopped before a replacement is started.
 
 ### Fixed
 
-- Stopping the app now shuts the gateway down inside the stop budget, folds the write-ahead logs of the session databases back into the databases, and lets the container exit cleanly instead of being killed during the gateway drain.
-- A harness command in the Home Assistant configuration that points at a file that no longer exists no longer keeps the Codex harness from starting. The obsolete entry is removed during startup, after a backup of the configuration has been written.
-- The command line, the maintenance doctor and the backup tool run on the same Node.js runtime as the gateway instead of on a separate copy.
-- The Qwen harness receives the Anthropic base URL without a duplicated `/v1` segment, and a Gemini base URL is reported as unusable for the Gemini CLI.
-
-### Changed
-
-- OpenClaw and the ACPX integration are updated to 2026.11.10; the Copilot, Qwen, Gemini and Droid command line tools, the local model runtime and pnpm move to current releases.
-- The retired Codex harness wrapper of the bundled configuration writer is removed.
+- A gateway run that ended with an error now counts as a failed start even when it ran for a long time. Only a clean exit resets the failure streak, and the restart delay has a floor of 120 seconds, so a repeated startup failure is not retried in a tight loop.
+- A gateway process that was adopted from a previous run and never opened the gateway port is now stopped and reaped before the add-on starts a replacement, so two gateways can no longer compete for the same state.
+- A stale loopback relay is stopped before the shutdown handler is installed, so a leftover relay can no longer keep the new gateway from binding its port.
+- The helper that records the position in the gateway log no longer aborts the add-on when the log directory does not exist yet, which could happen on the very first start.
 
 ### Known issues
 
-- On a large installation state, the runtime can abort the gateway start with an agent-database admission error while it prepares the session databases. The runtime's own repair run does not resolve it, and the cause is not yet clarified upstream. Installations with a large state should stay on the previous release until the runtime issue is fixed.
+- On a large installation state, the runtime can abort the gateway start with an agent-database admission error while it prepares the session databases. The runtime's own repair run does not resolve it, and the cause is not yet clarified upstream. The releases 0.7.13.47 and 0.7.13.48 are affected by a defect of their own and must not be installed; 0.7.13.49 is the last release that starts on a large state.
 
 ## [0.7.13.49] - 2026-11-27
 
