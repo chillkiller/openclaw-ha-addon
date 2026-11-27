@@ -317,8 +317,9 @@ def runtime_security_floors(package_dir: str) -> dict[str, str] | None:
     second table to maintain: a new Node line is covered as soon as the
     runtime knows a floor for it.
 
-    Returns None when the table cannot be found (the caller then falls back
-    to the built-in table).
+    Returns None when the table cannot be found. There is no built-in
+    fallback: the runtime is the single source of the floor, so a caller that
+    asked for the runtime table must fail rather than continue unchecked.
     """
     root = Path(package_dir)
     dist = root / "dist"
@@ -441,11 +442,15 @@ def main(
     if args.runtime_floors:
         runtime_floors = runtime_security_floors(args.runtime_floors)
         if runtime_floors is None:
+            # The runtime is the single source of the secure patch floor. If
+            # its table cannot be read, the floor would be silently dropped -
+            # that must fail the build instead.
             print(
-                f"NOTE: no secure patch floor table found in {args.runtime_floors}; "
-                "using the built-in floor table.",
+                f"ERROR: no secure patch floor table found in {args.runtime_floors}; "
+                "the runtime is the only source of the floor, so the check is aborted.",
                 file=err,
             )
+            return EXIT_REGISTRY_ERROR
 
     range_expr = args.engines
     openclaw_version = args.openclaw_version
@@ -496,6 +501,12 @@ def main(
                 )
                 return EXIT_VERIFY_FAILED
             verify_floor = floor_for(args.verify.split(".")[0], runtime_floors)
+            if verify_floor is None:
+                print(
+                    f"NOTE: the runtime declares no secure patch floor for the Node "
+                    f"{args.verify.split('.')[0]}.x line; only the engine range is checked.",
+                    file=err,
+                )
             if (
                 verify_floor
                 and not args.no_floor

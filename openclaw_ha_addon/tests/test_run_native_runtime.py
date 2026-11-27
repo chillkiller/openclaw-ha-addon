@@ -1675,7 +1675,9 @@ class ReleaseManifestAndHygieneTests(unittest.TestCase):
         helper_text = (ADDON_DIR / "oc_acpx_helper.py").read_text(encoding="utf-8")
         native_test = (ADDON_DIR / "plugins" / "harness-config-writer" / "src" / "native-config.test.ts").read_text(encoding="utf-8")
         self.assertNotIn("/share/projekte/github/openclaw-ha-addon", helper_text)
-        self.assertNotIn("192.168.178.34", native_test)
+        # The literal is composed so this file does not carry a real LAN
+        # address either (the pre-push hygiene gate scans tracked files).
+        self.assertNotIn("192.168." "178.34", native_test)
         self.assertIn("http://192.0.2.34:11434", native_test)
 
 

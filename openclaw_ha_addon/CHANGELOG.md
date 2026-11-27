@@ -13,7 +13,7 @@ The image derives its Node.js line from the OpenClaw release it ships instead of
 
 ### Added
 
-- `oc_node_version.py` resolves the Node.js release to install: it reads the engine range of the pinned OpenClaw release, picks the newest matching stable release and installs that line without a patch pin. The mode is derived from the OpenClaw release, and the minimum patch level is read from the runtime's own table at build time and at boot, so a new Node.js line is enforced without a code change. The helper is part of the image and backs the runtime check.
+- `oc_node_version.py` resolves the Node.js release to install: it reads the engine range of the pinned OpenClaw release, picks the newest matching stable release and installs that line without a patch pin. The Node.js line is derived from the OpenClaw release, and the minimum patch level is read from the runtime's own table at build time and at boot, so a new Node.js line is enforced without a code change. The helper is part of the image and backs the runtime check.
 - The runtime check in `run.sh` verifies the installed Node.js against the engine range of the installed OpenClaw package and against that package's security floors.
 
 ### Fixed

@@ -1884,7 +1884,7 @@ class RepairAcpxAgentCommandsTest(unittest.TestCase):
         before = self.config_path.read_bytes()
         self.assertTrue(helper.remove_stale_acpx_agent_overrides())
         self.assertEqual(self.config_path.read_bytes(), before)
-        self.assertEqual(list(self.config_dir.glob("*.pre-acpx-repair-*")), [])
+        self.assertEqual(list(self.config_dir.glob("*.pre-acpx-cleanup-*")), [])
 
     def test_stale_override_is_removed_whole(self) -> None:
         """ACPX generates its own wrapper, so a missing target is dropped whole.

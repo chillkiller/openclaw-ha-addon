@@ -2072,7 +2072,9 @@ def remove_stale_acpx_agent_overrides() -> bool:
         # stale override is dropped as a whole - its arguments belong to the
         # missing wrapper. Such overrides were written by the retired
         # harness-config-writer codex wrapper of this add-on.
-        removed = ", ".join(f"{key}={value!r}" for key, value in entry.items())
+        # Only the key names: an override can carry credentials, and those
+        # must not end up in the add-on log.
+        removed = ", ".join(sorted(entry.keys()))
         agents.pop(agent_id, None)
         log(
             f"WARN: removed the stale ACPX agent override for '{agent_id}' "
@@ -2107,7 +2109,15 @@ def prune_acpx_cleanup_backups(config_path: Path, keep: int = 3) -> None:
     """
     try:
         backups = sorted(
-            config_path.parent.glob(f"{config_path.name}.pre-acpx-cleanup-*"),
+            [
+                path
+                for pattern in (
+                    f"{config_path.name}.pre-acpx-cleanup-*",
+                    # backups of the earlier repair naming
+                    f"{config_path.name}.pre-acpx-repair-*",
+                )
+                for path in config_path.parent.glob(pattern)
+            ],
             key=lambda path: path.stat().st_mtime,
             reverse=True,
         )
