@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For a release-facing summary, see the root [CHANGELOG.md](../CHANGELOG.md).
 
+## [0.7.13.51] - 2026-11-27
+
+The add-on clears state locks left behind by a crashed gateway before it repairs the retained state, so the state repair is no longer blocked by a lock of a process that no longer exists.
+
+### Fixed
+
+- Before the state repair, the add-on now removes ownership locks whose owner process no longer exists. The runtime refuses to enter maintenance while such a lock is present, so on an installation that had a crashed gateway the repair could never run and the gateway stayed down. Only locks with a provably dead owner are removed; a lock of a live process or an unreadable lock is left untouched, and the removed file is kept next to the original with the suffix `.bak-deadowner`.
+
 ## [0.7.13.50] - 2026-11-27
 
 The Node.js line is derived from the OpenClaw release, the shutdown path stays inside the stop budget, and the configuration writer is installed where the runtime manages its plugins.

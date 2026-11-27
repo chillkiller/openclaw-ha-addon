@@ -3077,6 +3077,31 @@ install_oc_gateway_helper || echo "WARN: could not install oc-gateway helper; th
 # with an activation marker that lets a later run reuse the sealed capture
 # instead of taking a new one. We do the same, so the repair happens once
 # while no gateway is running instead of after failed starts.
+# A crashed gateway can leave an ownership lock whose owner process no longer
+# exists. The runtime refuses to enter maintenance while such a lock is
+# present, so the state repair could never run and the gateway stayed down.
+# Only locks with a provably dead owner are removed; a live owner or an
+# unreadable lock is left untouched.
+cleanup_dead_state_locks() {
+  local lock_dir lock_file pid
+  [ -d "$OPENCLAW_CONFIG_DIR" ] || return 0
+  for lock_dir in "$OPENCLAW_CONFIG_DIR"/tmp/openclaw-*; do
+    [ -d "$lock_dir" ] || continue
+    for lock_file in "$lock_dir"/*.lock; do
+      [ -f "$lock_file" ] || continue
+      pid="$(sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9]\{1,\}\).*/\1/p' "$lock_file" 2>/dev/null | head -n 1)"
+      [ -n "$pid" ] || continue
+      if [ -d "/proc/$pid" ]; then
+        continue
+      fi
+      echo "NOTICE: removing a state lock whose owner (pid $pid) no longer exists: $lock_file"
+      if ! mv -f "$lock_file" "$lock_file.bak-deadowner" 2>/dev/null; then
+        rm -f "$lock_file" 2>/dev/null || true
+      fi
+    done
+  done
+}
+
 run_image_activation() {
   local marker key root_dir
   # In remote mode there is no local gateway and therefore no local state to
@@ -3090,6 +3115,9 @@ run_image_activation() {
   key="$(printf '%s|%s' "${root_dir}" "${GATEWAY_INTERNAL_PORT}" | sha256sum | cut -c1-32)"
   marker="/tmp/openclaw-image-activation-$(id -u)-${key}"
   echo "INFO: image activation: repairing the retained state before the first gateway start"
+  # The repair can only enter maintenance when no lock of a dead owner is left
+  # over from an earlier crashed run.
+  cleanup_dead_state_locks || true
   # The marker applies to this repair run only. Exported globally it would
   # leak into the gateway and into every later doctor run, which would then
   # skip their fresh capture.
