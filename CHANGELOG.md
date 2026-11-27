@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Each entry summarizes user-visible changes. Full engineering notes:
 [openclaw_ha_addon/CHANGELOG.md](openclaw_ha_addon/CHANGELOG.md).
 
+## [0.7.13.45] - 2026-11-27
+
+An upgraded installation now finishes its startup preparation instead of restarting the gateway in a loop.
+
+### Fixed
+
+- A gateway run that ended in the agent-database startup admission no longer resets the failure streak. The runtime prepares every agent database before it admits the agents, and that work needs minutes on a large state; resetting the streak made the supervisor restart the gateway every two seconds, so the preparation could never finish. The restart delay now also has a floor of 30 seconds.
+
 ## [0.7.13.44] - 2026-11-27
 
 The bundled configuration writer is now installed where the runtime manages its plugins, so the runtime can complete the plugin's data and settings migration on an upgraded installation.

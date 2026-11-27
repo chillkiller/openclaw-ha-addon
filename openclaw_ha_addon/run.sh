@@ -3082,6 +3082,21 @@ GW_DOCTOR_REPAIR_RUNS=0
 GW_ADOPT_CONFIRM_TIMEOUT=300
 GW_DENIED_PIDS=""
 
+# A gateway run that died in the agent-database startup admission never
+# finished its startup: the runtime prepares every agent database (schema,
+# integrity, FTS repair) before it can admit the agents, and that work needs
+# minutes on a large state. Such a run must count as a failed start - if it
+# reset the failure streak, the supervisor would restart the gateway every
+# couple of seconds and the preparation could never finish.
+gateway_startup_admission_refused() {
+  local log_dir="${OPENCLAW_STATE_DIR:-/config/.openclaw}/logs"
+  local log_file
+  log_file="$(ls -1t "$log_dir"/openclaw-*.log 2>/dev/null | head -1)"
+  [ -n "$log_file" ] || return 1
+  tail -400 "$log_file" 2>/dev/null \
+    | grep -q "has not completed startup inspection and preparation"
+}
+
 run_bounded_doctor_repair() {
   local label="$1"
   shift
@@ -3282,9 +3297,13 @@ while true; do
   # blocked by the upgrade-backup gate) must NOT reset it, or the streak could
   # never trigger the doctor repair or grow the backoff.
   GW_BOOT_SECONDS=$(( $(date +%s) - ${GW_BOOT_START:-0} ))
-  if [ "${GW_PREV_BOOT_ALIVE:-0}" = "1" ] && [ "$GW_BOOT_SECONDS" -ge 120 ]; then
+  if [ "${GW_PREV_BOOT_ALIVE:-0}" = "1" ] && [ "$GW_BOOT_SECONDS" -ge 120 ] \
+     && ! gateway_startup_admission_refused; then
     GW_CONSECUTIVE_FAILS=0
     echo "INFO: Previous gateway boot survived ${GW_BOOT_SECONDS}s; failure streak reset."
+  elif gateway_startup_admission_refused; then
+    echo "INFO: Previous gateway boot did not finish the agent-database startup admission; \
+the failure streak is kept so the preparation can make progress."
   fi
   GW_PREV_BOOT_ALIVE=0
   GW_CONSECUTIVE_FAILS=$((GW_CONSECUTIVE_FAILS + 1))
@@ -3325,6 +3344,11 @@ while true; do
   fi
   if [ "$GW_BACKOFF" -gt 60 ]; then
     GW_BACKOFF=60
+  fi
+  # The agent-database startup preparation needs minutes; a restart storm
+  # every two seconds starves it, so the floor is well above the old 2s.
+  if [ "$GW_BACKOFF" -lt 30 ]; then
+    GW_BACKOFF=30
   fi
   if [ "$GW_CONSECUTIVE_FAILS" -gt 5 ]; then
     echo "NOTICE: Still failing after ${GW_CONSECUTIVE_FAILS} starts. Diagnose via terminal: 'openclaw doctor' and the gateway log under /config/.openclaw/logs."

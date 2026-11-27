@@ -1623,6 +1623,28 @@ class DockerGuardTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             oc_node_version.satisfies("1.0.0", "")
 
+    def test_failed_agent_database_admission_does_not_reset_the_failure_streak(self) -> None:
+        """A run that never finished the agent-database preparation is a failed start.
+
+        The runtime prepares every agent database before it admits the agents;
+        that needs minutes. If such a run reset the failure streak, the
+        supervisor would restart the gateway every two seconds and the
+        preparation could never finish.
+        """
+        run_sh = (ADDON_DIR / "run.sh").read_text(encoding="utf-8")
+        self.assertIn("gateway_startup_admission_refused", run_sh)
+        self.assertIn(
+            "has not completed startup inspection and preparation",
+            run_sh,
+        )
+        # The reset condition must be guarded by the refusal check.
+        self.assertIn(
+            "&& ! gateway_startup_admission_refused; then",
+            run_sh,
+        )
+        # And the backoff must have a floor well above the old two seconds.
+        self.assertIn('if [ "$GW_BACKOFF" -lt 30 ]; then', run_sh)
+
     def test_dockerignore_excludes_vendored_dependency_payloads_only(self) -> None:
         patterns = [
             line.strip()

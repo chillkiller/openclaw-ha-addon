@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For a release-facing summary, see the root [CHANGELOG.md](../CHANGELOG.md).
 
+## [0.7.13.45] - 2026-11-27
+
+The supervisor no longer restarts the gateway in a loop while the runtime prepares the agent databases.
+
+### Fixed
+
+- `run.sh` keeps the failure streak when the previous gateway run ended in the agent-database startup admission (`has not completed startup inspection and preparation`). Such a run never finished its startup, so it must not count as a healthy boot: with the streak reset, the backoff stayed at two seconds and the agent-database preparation was restarted before it could make progress. The restart delay also gets a floor of 30 seconds, because the preparation needs minutes rather than seconds.
+
 ## [0.7.13.44] - 2026-11-27
 
 The configuration writer is deployed into the runtime's managed plugin install root next to the bundled root.
