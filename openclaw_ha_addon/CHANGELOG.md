@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For a release-facing summary, see the root [CHANGELOG.md](../CHANGELOG.md).
 
+## [0.7.13.49] - 2026-11-27
+
+The log-position helper is defined before its first use.
+
+### Fixed
+
+- `run.sh` defines `gateway_log_mark()` before the first call. The previous release called it earlier, and with `set -e` the add-on stopped at startup.
+
 ## [0.7.13.48] - 2026-11-27
 
 The failure streak is only reset by a clean gateway exit.

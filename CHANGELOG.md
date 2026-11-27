@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Each entry summarizes user-visible changes. Full engineering notes:
 [openclaw_ha_addon/CHANGELOG.md](openclaw_ha_addon/CHANGELOG.md).
 
+## [0.7.13.49] - 2026-11-27
+
+The add-on starts again after the startup-detection change.
+
+### Fixed
+
+- The helper that records the gateway log position is defined before its first use. The previous release called it earlier, which stopped the add-on at startup.
+
 ## [0.7.13.48] - 2026-11-27
 
 A gateway that did not finish its startup now counts as a failed start, so the automatic repair runs and the preparation can finish.

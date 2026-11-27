@@ -2379,6 +2379,38 @@ stop_gw_relay() {
 # A listening socket is useful evidence only when its owner also passes the
 # daemon-argv check. Otherwise scan each numeric /proc entry exactly once.
 # Known wrapper PIDs and previously rejected candidates are never returned.
+# A gateway run that died in the agent-database startup admission never
+# finished its startup: the runtime prepares every agent database (schema,
+# integrity, FTS repair) before it can admit the agents, and that work needs
+# minutes on a large state. Such a run must count as a failed start - if it
+# reset the failure streak, the supervisor would restart the gateway every
+# couple of seconds and the preparation could never finish.
+gateway_startup_admission_refused() {
+  local log_dir="${OPENCLAW_STATE_DIR:-/config/.openclaw}/logs"
+  local log_file="${GW_LOG_FILE:-}"
+  [ -n "$log_file" ] || log_file="$(ls -1t "$log_dir"/openclaw-*.log 2>/dev/null | head -1)"
+  [ -n "$log_file" ] || return 1
+  [ -f "$log_file" ] || return 1
+  # Only the part of the log that this boot produced: the refusal marker of an
+  # older boot must not keep the failure streak alive forever.
+  tail -c "+$(( ${GW_LOG_OFFSET:-0} + 1 ))" "$log_file" 2>/dev/null \
+    | grep -q "has not completed startup inspection and preparation"
+}
+
+# Remember where the gateway log stands when a boot starts, so the exit
+# detection can look at exactly the lines this boot wrote.
+gateway_log_mark() {
+  local log_dir="${OPENCLAW_STATE_DIR:-/config/.openclaw}/logs"
+  local log_file
+  log_file="$(ls -1t "$log_dir"/openclaw-*.log 2>/dev/null | head -1)"
+  GW_LOG_FILE="$log_file"
+  if [ -n "$log_file" ] && [ -f "$log_file" ]; then
+    GW_LOG_OFFSET="$(wc -c < "$log_file" 2>/dev/null || echo 0)"
+  else
+    GW_LOG_OFFSET=0
+  fi
+}
+
 oc_gateway_listener_pid() {
   ss -tlnpH 2>/dev/null | awk -v port="${GATEWAY_INTERNAL_PORT}" '
     $4 ~ (":" port "$") {
@@ -3082,38 +3114,6 @@ GW_DOCTOR_REPAIR_RUNS=0
 # gateway. Denied PIDs stay out of all subsequent discovery passes.
 GW_ADOPT_CONFIRM_TIMEOUT=300
 GW_DENIED_PIDS=""
-
-# A gateway run that died in the agent-database startup admission never
-# finished its startup: the runtime prepares every agent database (schema,
-# integrity, FTS repair) before it can admit the agents, and that work needs
-# minutes on a large state. Such a run must count as a failed start - if it
-# reset the failure streak, the supervisor would restart the gateway every
-# couple of seconds and the preparation could never finish.
-gateway_startup_admission_refused() {
-  local log_dir="${OPENCLAW_STATE_DIR:-/config/.openclaw}/logs"
-  local log_file="${GW_LOG_FILE:-}"
-  [ -n "$log_file" ] || log_file="$(ls -1t "$log_dir"/openclaw-*.log 2>/dev/null | head -1)"
-  [ -n "$log_file" ] || return 1
-  [ -f "$log_file" ] || return 1
-  # Only the part of the log that this boot produced: the refusal marker of an
-  # older boot must not keep the failure streak alive forever.
-  tail -c "+$(( ${GW_LOG_OFFSET:-0} + 1 ))" "$log_file" 2>/dev/null \
-    | grep -q "has not completed startup inspection and preparation"
-}
-
-# Remember where the gateway log stands when a boot starts, so the exit
-# detection can look at exactly the lines this boot wrote.
-gateway_log_mark() {
-  local log_dir="${OPENCLAW_STATE_DIR:-/config/.openclaw}/logs"
-  local log_file
-  log_file="$(ls -1t "$log_dir"/openclaw-*.log 2>/dev/null | head -1)"
-  GW_LOG_FILE="$log_file"
-  if [ -n "$log_file" ] && [ -f "$log_file" ]; then
-    GW_LOG_OFFSET="$(wc -c < "$log_file" 2>/dev/null || echo 0)"
-  else
-    GW_LOG_OFFSET=0
-  fi
-}
 
 run_bounded_doctor_repair() {
   local label="$1"
