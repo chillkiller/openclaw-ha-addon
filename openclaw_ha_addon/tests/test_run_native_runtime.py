@@ -1748,6 +1748,27 @@ class DockerGuardTests(unittest.TestCase):
                     break
         self.assertEqual(offenders, [], f"functions used before defined: {offenders}")
 
+    def test_image_activation_keeps_the_shutdown_trap_and_the_backoff_defined(self) -> None:
+        """The activation must not disarm the shutdown path or trip `set -u`.
+
+        Replacing the shell's signal handlers during the repair makes the whole
+        shutdown sequence ineffective; using the restart delay before it is
+        assigned aborts the add-on under `set -u`.
+        """
+        run_sh = (ADDON_DIR / "run.sh").read_text(encoding="utf-8")
+        activation = run_sh[run_sh.index("run_image_activation() {"):]
+        activation = activation[:activation.index("\n}\n")]
+        # The repair runs in a subshell, so the parent's handlers stay in place.
+        self.assertIn("(", activation)
+        self.assertNotIn("trap - TERM INT HUP QUIT", activation)
+        self.assertNotIn("trap - TERM", run_sh)
+        # The restart delay is defined before any use.
+        self.assertIn("GW_BACKOFF=2", run_sh)
+        delay_at = run_sh.index("GW_BACKOFF=2")
+        self.assertLess(delay_at, run_sh.index('sleep "$GW_BACKOFF"'))
+        # Remote mode has no local state to repair.
+        self.assertIn('if [ "${GATEWAY_MODE:-local}" = "remote" ]; then', activation)
+
     def test_image_activation_repairs_the_state_before_the_first_gateway_start(self) -> None:
         """The upstream container activation step runs before the gateway.
 

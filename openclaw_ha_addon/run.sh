@@ -3079,6 +3079,13 @@ install_oc_gateway_helper || echo "WARN: could not install oc-gateway helper; th
 # while no gateway is running instead of after failed starts.
 run_image_activation() {
   local marker key root_dir
+  # In remote mode there is no local gateway and therefore no local state to
+  # repair; the remote host owns that.
+  if [ "${GATEWAY_MODE:-local}" = "remote" ]; then
+    echo "INFO: remote gateway mode; the state repair is done by the remote host."
+    GW_ACTIVATION_OK=1
+    return 0
+  fi
   root_dir="$(dirname "$(dirname "$(readlink -f "$(command -v openclaw 2>/dev/null || echo /usr/lib/node_modules/openclaw/bin/openclaw)")")")"
   key="$(printf '%s|%s' "${root_dir}" "${GATEWAY_INTERNAL_PORT}" | sha256sum | cut -c1-32)"
   marker="/tmp/openclaw-image-activation-$(id -u)-${key}"
@@ -3086,14 +3093,17 @@ run_image_activation() {
   # The marker applies to this repair run only. Exported globally it would
   # leak into the gateway and into every later doctor run, which would then
   # skip their fresh capture.
-  OPENCLAW_IMAGE_ACTIVATION_CAPTURE_MARKER="${marker}" \
-    timeout --kill-after=30s "$GW_DOCTOR_REPAIR_TIMEOUT" openclaw doctor --fix --non-interactive &
-  local child=$! rc=0
-  # Forward the stop signals to the repair run so a shutdown does not wait for
-  # the full repair budget.
-  trap 'kill -TERM "${child}" 2>/dev/null' TERM INT HUP QUIT
-  wait "${child}" || rc=$?
-  trap - TERM INT HUP QUIT
+  local rc=0
+  # The repair runs in a subshell with its own signal handling: forwarding the
+  # stop signals to the repair run must not replace the shutdown trap of this
+  # shell, which owns the whole shutdown sequence.
+  (
+    trap 'kill -TERM "${child}" 2>/dev/null' TERM INT HUP QUIT
+    OPENCLAW_IMAGE_ACTIVATION_CAPTURE_MARKER="${marker}" \
+      timeout --kill-after=30s "$GW_DOCTOR_REPAIR_TIMEOUT" openclaw doctor --fix --non-interactive &
+    child=$!
+    wait "${child}"
+  ) || rc=$?
   if [ "$rc" -ne 0 ]; then
     echo "ERROR: image activation did not finish (exit ${rc}); the gateway stays down until the state is repaired."
     return 1
@@ -3175,6 +3185,9 @@ GW_BOOT_START=$(date +%s)
 : "${GW_PREV_BOOT_ALIVE:=0}"   # was the last gateway attempt a boot that actually ran? (kept if the initial boot already came up)
 GW_CONSECUTIVE_FAILS=0
 GW_DOCTOR_REPAIR_RUNS=0
+# The restart delay is used before it is assigned in some paths; keep it
+# defined from the start so `set -u` cannot abort the add-on.
+GW_BACKOFF=2
 # The upstream activation repairs the retained state before the first gateway
 # start. Until that succeeded, no gateway start is attempted.
 GW_ACTIVATION_OK=0
@@ -3370,11 +3383,15 @@ while true; do
     GW_PREV_BOOT_ALIVE=0
     GW_CONSECUTIVE_FAILS=0
     if [ "${GW_ACTIVATION_OK}" != "1" ]; then
-      echo "WARN: the retained state has not been repaired yet; the gateway is not started."
-      GW_IS_CHILD=false
-      GW_PID=""
-      sleep "$GW_BACKOFF"
-      continue
+      echo "WARN: the retained state has not been repaired yet; retrying the repair."
+      run_image_activation || true
+      if [ "${GW_ACTIVATION_OK}" != "1" ]; then
+        echo "WARN: the repair did not finish; the gateway is not started."
+        GW_IS_CHILD=false
+        GW_PID=""
+        sleep "$GW_BACKOFF"
+        continue
+      fi
     fi
     if start_openclaw_runtime; then
       GW_IS_CHILD=true
@@ -3474,9 +3491,13 @@ the failure streak is kept so the preparation can make progress."
   stop_gw_relay
 
   if [ "${GW_ACTIVATION_OK}" != "1" ]; then
-    echo "WARN: the retained state has not been repaired yet; the gateway is not started."
-    sleep "$GW_BACKOFF"
-    continue
+    echo "WARN: the retained state has not been repaired yet; retrying the repair."
+    run_image_activation || true
+    if [ "${GW_ACTIVATION_OK}" != "1" ]; then
+      echo "WARN: the repair did not finish; the gateway is not started."
+      sleep "$GW_BACKOFF"
+      continue
+    fi
   fi
   if ! start_openclaw_runtime; then
     echo "ERROR: Failed to restart OpenClaw runtime; retrying in ${GW_BACKOFF}s..."
