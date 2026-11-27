@@ -1748,6 +1748,18 @@ class DockerGuardTests(unittest.TestCase):
                     break
         self.assertEqual(offenders, [], f"functions used before defined: {offenders}")
 
+    def test_resume_resets_the_repair_budget(self) -> None:
+        """Releasing the operator hold starts the repair budget over.
+
+        With an exhausted counter the repair would never run again and the
+        gateway would stay down for good.
+        """
+        run_sh = (ADDON_DIR / "run.sh").read_text(encoding="utf-8")
+        resume = run_sh[run_sh.index("  resume)"):]
+        resume = resume[:resume.index("\n    ;;")]
+        self.assertIn("GW_ACTIVATION_RETRIES=0", resume)
+        self.assertIn("GW_ACTIVATION_OK=0", resume)
+
     def test_image_activation_keeps_the_shutdown_trap_and_the_backoff_defined(self) -> None:
         """The activation must not disarm the shutdown path or trip `set -u`.
 
