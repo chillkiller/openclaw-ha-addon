@@ -865,6 +865,27 @@ describe("copilot env extended provider variables", () => {
     expect(report.results.find((r) => r.harnessId === "copilot")?.files[0]?.action).toBe("unchanged");
   });
 
+  it("gemini warns when a base URL is set that the Gemini CLI cannot use", () => {
+    const p = paths();
+    const report = DEPLOY(
+      { harnesses: { gemini: { model: "g", baseUrl: "http://gb:1", apiKey: "gk" } } },
+      p,
+    );
+    const gemini = report.results.find((r) => r.harnessId === "gemini");
+    // The Gemini CLI talks to a Gemini endpoint (/v1beta), so an
+    // OpenAI-compatible base URL is set but unusable - that has to be
+    // reported instead of silently written into the environment.
+    expect(gemini?.warnings.join(" ")).toContain("GOOGLE_GEMINI_BASE_URL");
+    expect(gemini?.warnings.join(" ")).toContain("/v1beta");
+    // Without a base URL there is nothing to warn about.
+    const clean = DEPLOY(
+      { harnesses: { gemini: { model: "g", apiKey: "gk" } } },
+      p,
+    );
+    const cleanGemini = clean.results.find((r) => r.harnessId === "gemini");
+    expect(cleanGemini?.warnings.join(" ")).not.toContain("GOOGLE_GEMINI_BASE_URL");
+  });
+
   it("qwen gets the Anthropic base root, not a /v1-suffixed base", () => {
     const p = paths();
     const catalog = buildModelCatalog(
