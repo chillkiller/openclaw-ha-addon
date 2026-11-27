@@ -21,6 +21,8 @@ Add-on build patch (Dockerfile, heredoc pattern like the node-llama-cpp patch) a
 
 `apply-unicode-guard-patch.mjs` is idempotent, asserts exact anchors (byte-exact with tab semantics for top-level; whitespace/parameter-tolerant for minified copies) and verifies every patched file with `node --check`. Gateway config (`openclaw.json`) is not required by this mechanism.
 
+**Export contract, two spellings:** the patched module must keep exporting the function under the name the runtime imports. The source build writes `export { stripInvisibleUnicode as t };`, the minified dist writes `export{stripInvisibleUnicode as t};` — the same contract, two spellings. The check accepts both (OpenClaw 2026.11.10 ships the minified form; the build failed loudly on it before the check learned the second spelling). A module without the export still stops the build.
+
 ## Stripped ranges (always — no legitimate rendering-relevant context)
 
 | Codepoints | Name | Rationale |

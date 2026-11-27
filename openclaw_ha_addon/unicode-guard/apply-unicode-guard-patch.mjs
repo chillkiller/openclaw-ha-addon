@@ -86,6 +86,7 @@ const RE_NAIVE_SANITIZE = /function\s+sanitizeExternalContentText\(\s*(\w+)\s*\)
 // would silently leave the sanitize call unbound (runtime ReferenceError).
 const RE_STRIP_IMPORT_BINDING = /import\s*\{\s*t\s+as\s+stripInvisibleUnicode\s*\}\s*from\s*"\.\/unicode-visibility-/;
 const RE_LOCAL_STRIP_DEF = /function\s+stripInvisibleUnicode\s*\(/;
+const RE_EXPORT_CONTRACT = /export\s*\{\s*stripInvisibleUnicode\s+as\s+t\s*\}/;
 const RE_PATCHED_SANITIZE_CALL = /replaceMarkers\(\s*stripInvisibleUnicode\s*\(/;
 // Universality-sweep markers (non-quantor safety: /g only via String.match).
 const RE_SWEEP_STRIP_CALL = /\.replace\(\s*INVISIBLE_UNICODE_RE\b/g;
@@ -220,8 +221,12 @@ for (const filePath of distFiles) {
 	if (!changed) continue;
 
 	// --- Contract checks before writing. ---
-	if (rel === unicodeVisibilityRel[0] && !content.includes("export { stripInvisibleUnicode as t };")) {
-		fail(`${rel}: export contract 'export { stripInvisibleUnicode as t };' lost after patching`);
+	// The export spelling differs between the upstream layouts: the source
+	// build writes "export { stripInvisibleUnicode as t };" while the
+	// minified dist writes "export{stripInvisibleUnicode as t};". Both are
+	// the same contract, so the check accepts either spelling.
+	if (rel === unicodeVisibilityRel[0] && !RE_EXPORT_CONTRACT.test(content)) {
+		fail(`${rel}: export contract 'stripInvisibleUnicode as t' lost after patching`);
 	}
 	writeFileSync(filePath, content);
 	modified.push(rel);
