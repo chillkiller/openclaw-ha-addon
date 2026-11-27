@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Each entry summarizes user-visible changes. Full engineering notes:
 [openclaw_ha_addon/CHANGELOG.md](openclaw_ha_addon/CHANGELOG.md).
 
+## [0.7.13.47] - 2026-11-27
+
+The startup failure is now recognised reliably, so the automatic repair can finally run.
+
+### Fixed
+
+- The check for a gateway run that ended in the agent-database startup admission now only looks at the log lines that the boot itself wrote. Before, the refusal of an older boot could keep the failure streak from growing, and the automatic repair never ran.
+
 ## [0.7.13.46] - 2026-11-27
 
 The gateway is given the time its startup preparation needs instead of being restarted every few seconds.

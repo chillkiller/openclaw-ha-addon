@@ -1642,6 +1642,10 @@ class DockerGuardTests(unittest.TestCase):
             "&& ! gateway_startup_admission_refused; then",
             run_sh,
         )
+        # The refusal marker must be looked up only in the log lines this boot
+        # wrote, otherwise an old refusal keeps the streak alive forever.
+        self.assertIn("GW_LOG_OFFSET", run_sh)
+        self.assertIn("gateway_log_mark", run_sh)
         # And the backoff must have a floor well above the old two seconds.
         self.assertIn('if [ "$GW_BACKOFF" -lt 120 ]; then', run_sh)
 

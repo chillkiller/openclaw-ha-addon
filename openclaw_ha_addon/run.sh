@@ -3031,6 +3031,7 @@ else
   # failed initial start (empty GW_PID) can never kill the supervisor shell.
   if [ -n "${GW_PID:-}" ]; then
     GW_BOOT_START=$(date +%s)
+    gateway_log_mark
     GW_PREV_BOOT_ALIVE=1   # the initial boot actually came up (audit P2-1)
   fi
 fi
@@ -3090,11 +3091,28 @@ GW_DENIED_PIDS=""
 # couple of seconds and the preparation could never finish.
 gateway_startup_admission_refused() {
   local log_dir="${OPENCLAW_STATE_DIR:-/config/.openclaw}/logs"
+  local log_file="${GW_LOG_FILE:-}"
+  [ -n "$log_file" ] || log_file="$(ls -1t "$log_dir"/openclaw-*.log 2>/dev/null | head -1)"
+  [ -n "$log_file" ] || return 1
+  [ -f "$log_file" ] || return 1
+  # Only the part of the log that this boot produced: the refusal marker of an
+  # older boot must not keep the failure streak alive forever.
+  tail -c "+$(( ${GW_LOG_OFFSET:-0} + 1 ))" "$log_file" 2>/dev/null \
+    | grep -q "has not completed startup inspection and preparation"
+}
+
+# Remember where the gateway log stands when a boot starts, so the exit
+# detection can look at exactly the lines this boot wrote.
+gateway_log_mark() {
+  local log_dir="${OPENCLAW_STATE_DIR:-/config/.openclaw}/logs"
   local log_file
   log_file="$(ls -1t "$log_dir"/openclaw-*.log 2>/dev/null | head -1)"
-  [ -n "$log_file" ] || return 1
-  tail -400 "$log_file" 2>/dev/null \
-    | grep -q "has not completed startup inspection and preparation"
+  GW_LOG_FILE="$log_file"
+  if [ -n "$log_file" ] && [ -f "$log_file" ]; then
+    GW_LOG_OFFSET="$(wc -c < "$log_file" 2>/dev/null || echo 0)"
+  else
+    GW_LOG_OFFSET=0
+  fi
 }
 
 run_bounded_doctor_repair() {
@@ -3231,6 +3249,7 @@ while true; do
     GW_PID="$RESTARTED_PID"
     GW_IS_CHILD=false
     GW_BOOT_START=$(date +%s)
+    gateway_log_mark
     GW_PREV_BOOT_ALIVE=1
     continue
   fi
@@ -3248,6 +3267,7 @@ while true; do
     GW_PID="${PORT_PID:-$GW_PID}"
     GW_IS_CHILD=false
     GW_BOOT_START=$(date +%s)
+    gateway_log_mark
     GW_PREV_BOOT_ALIVE=1
     continue
   fi
@@ -3272,11 +3292,13 @@ while true; do
     GW_PID=""
     GW_IS_CHILD=false
     GW_BOOT_START=$(date +%s)
+    gateway_log_mark
     GW_PREV_BOOT_ALIVE=0
     GW_CONSECUTIVE_FAILS=0
     if start_openclaw_runtime; then
       GW_IS_CHILD=true
       GW_BOOT_START=$(date +%s)
+    gateway_log_mark
       GW_PREV_BOOT_ALIVE=1
       start_gw_relay
     else
@@ -3376,6 +3398,7 @@ the failure streak is kept so the preparation can make progress."
   else
     GW_IS_CHILD=true
     GW_BOOT_START=$(date +%s)
+    gateway_log_mark
     GW_PREV_BOOT_ALIVE=1
     start_gw_relay
   fi

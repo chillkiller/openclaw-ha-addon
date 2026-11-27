@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For a release-facing summary, see the root [CHANGELOG.md](../CHANGELOG.md).
 
+## [0.7.13.47] - 2026-11-27
+
+The startup-admission detection is scoped to the boot that produced it.
+
+### Fixed
+
+- `run.sh` records the gateway log offset when a boot starts and looks for the agent-database startup refusal only in the lines written by that boot. The refusal marker of an older boot could otherwise keep the failure streak from growing, so the automatic doctor repair never ran and the preparation could not finish.
+
 ## [0.7.13.46] - 2026-11-27
 
 The restart delay floor is raised so the agent-database preparation can finish.
