@@ -138,22 +138,30 @@ def _token_matches(token: str, version: str) -> bool:
         return version == prefix or version.startswith(prefix + ".")
     if op in ("^", "~"):
         parts = _numeric_parts(raw)
+        specified = len(parts)
         while len(parts) < 3:
             parts.append(0)
         major, minor, patch = parts[0], parts[1], parts[2]
         floor = (major, minor, patch)
         if op == "^":
             # npm caret semantics: the first non-zero component decides the
-            # upper bound (^1.2.3 -> <2.0.0, ^0.2.3 -> <0.3.0, ^0.0.3 -> <0.0.4).
+            # upper bound, and the number of specified components matters:
+            # ^1.2.3 -> <2.0.0, ^1.2 -> <2.0.0, ^1 -> <2.0.0,
+            # ^0.2.3 -> <0.3.0, ^0.2 -> <0.3.0, ^0 -> <1.0.0,
+            # ^0.0.3 -> <0.0.4, ^0.0 -> <0.1.0.
             if major > 0:
                 upper = (major + 1, 0, 0)
-            elif minor > 0:
+            elif specified >= 2 and minor > 0:
                 upper = (0, minor + 1, 0)
-            else:
+            elif specified >= 3:
                 upper = (0, 0, patch + 1)
+            elif specified == 2:
+                upper = (0, 1, 0)
+            else:
+                upper = (1, 0, 0)
         else:
             # npm tilde semantics: ~1.2.3 -> <1.3.0, ~1.2 -> <1.3.0, ~1 -> <2.0.0.
-            if len(parts) >= 2 and raw.count(".") >= 1:
+            if specified >= 2:
                 upper = (major, minor + 1, 0)
             else:
                 upper = (major + 1, 0, 0)
@@ -495,6 +503,12 @@ def main(
         print(f"export NODE_MAJOR={newest.major}")
         print(f"export NODE_VERSION={newest.version}")
         print(f"export NODE_SOURCE_REPO=node_{newest.major}.x")
+        if floor is None:
+            print(
+                f"NOTE: no secure patch floor is known for the Node {newest.major}.x line; "
+                "only the engine range is enforced for this line.",
+                file=err,
+            )
     else:
         print(f"OpenClaw {openclaw_version or ''} engines.node: {range_expr}")
         print(f"newest matching Node.js: {newest.version} (line {newest.major})")

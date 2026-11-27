@@ -178,6 +178,7 @@ RUN set -eux; \
     eval "${_oc_exports}"; \
     [ -n "${NODE_SOURCE_REPO:-}" ]; \
     [ -n "${NODE_VERSION:-}" ]; \
+    [ -n "${NODE_MAJOR:-}" ]; \
     echo "Node.js line ${NODE_SOURCE_REPO} (release wanted by OpenClaw: ${NODE_VERSION})"; \
     mkdir -p /etc/apt/keyrings \
     && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \

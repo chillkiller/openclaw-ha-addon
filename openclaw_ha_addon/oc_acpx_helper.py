@@ -291,7 +291,7 @@ def _compile_bundled_plugin(src_dir: Path, esbuild_bin: str) -> bytes | None:
         cmd = [
             esbuild_bin,
             str(entry),
-            "--bundle", "--format=esm", "--platform=node", "--target=node26",
+            "--bundle", "--format=esm", "--platform=node", f"--target={_esbuild_node_target()}",
             "--external:openclaw", "--external:openclaw/*", "--external:@openclaw/*",
             f"--outfile={outfile}",
         ]
@@ -1957,6 +1957,33 @@ def patch_openclaw_config() -> bool:
         log("NOTE: openclaw.json already has acp configuration; agents preserved")
         return True
 
+def _esbuild_node_target() -> str:
+    """Return the esbuild target for the Node line the image actually runs.
+
+    The image derives its Node line from OpenClaw's engine range, so a fixed
+    target would emit syntax the running Node cannot parse as soon as that
+    line moves. Without a readable Node version the conservative default is
+    used and the mismatch is logged.
+    """
+    node = os.environ.get("OPENCLAW_NODE_BIN") or "/usr/bin/node"
+    version = ""
+    try:
+        proc = subprocess.run(
+            [node, "--version"], capture_output=True, text=True, timeout=15
+        )
+        version = (proc.stdout or "").strip().lstrip("v")
+    except (OSError, subprocess.SubprocessError):
+        version = ""
+    major = version.split(".")[0]
+    if major.isdigit():
+        return f"node{major}"
+    log(
+        f"WARN: could not read the Node version from {node}; "
+        "bundling for the conservative node26 target"
+    )
+    return "node26"
+
+
 def repair_acpx_agent_commands() -> bool:
     """Point ACPX agent commands at files that actually exist.
 
@@ -2019,10 +2046,11 @@ def repair_acpx_agent_commands() -> bool:
             # Keep every other setting of the entry; only the broken command
             # goes away so the plugin default applies again.
             entry.pop("command", None)
+            remaining = ", ".join(sorted(key for key in entry if key != "command")) or "none"
             log(
                 f"WARN: removed the broken ACPX agent command for '{agent_id}' ({command}); "
                 "no replacement wrapper is installed, the plugin default applies. "
-                "The remaining entry settings were kept."
+                f"Kept entry settings: {remaining}."
             )
             if not entry:
                 agents.pop(agent_id, None)

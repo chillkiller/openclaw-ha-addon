@@ -21,6 +21,15 @@ import unittest
 
 
 ADDON_DIR = Path(__file__).resolve().parents[1]
+
+
+def helper_module():
+    """Import the ACPX helper module from the add-on directory."""
+    if str(ADDON_DIR) not in sys.path:
+        sys.path.insert(0, str(ADDON_DIR))
+    import oc_acpx_helper
+
+    return oc_acpx_helper
 RUN_SH = ADDON_DIR / "run.sh"
 RUN_TEXT = RUN_SH.read_text(encoding="utf-8")
 NODE = shutil.which("node")
@@ -1502,6 +1511,47 @@ class DockerGuardTests(unittest.TestCase):
                     expected,
                     f"Node {version} against {range_expr} (npm semver reference)",
                 )
+
+    def test_node_helper_caret_respects_the_component_count(self) -> None:
+        """npm derives the caret bound from the number of given components.
+
+        ``^0`` means the whole 0.x line, ``^0.0`` the whole 0.0.x line. The
+        expectations come from npm semver 7.6.3.
+        """
+        sys.path.insert(0, str(ADDON_DIR))
+        import oc_node_version
+
+        cases = [
+            ("^0", "0.9.0", True),
+            ("^0", "1.0.0", False),
+            ("^0.0", "0.0.9", True),
+            ("^0.0", "0.1.0", False),
+            ("^0.2", "0.2.9", True),
+            ("^0.2", "0.3.0", False),
+            ("^1", "1.9.0", True),
+            ("^1", "2.0.0", False),
+            ("^1.2", "1.9.0", True),
+            ("^1.2", "2.0.0", False),
+        ]
+        for range_expr, version, expected in cases:
+            with self.subTest(range_expr=range_expr, version=version):
+                self.assertEqual(
+                    oc_node_version.satisfies(version, range_expr),
+                    expected,
+                    f"Node {version} against {range_expr} (npm semver reference)",
+                )
+
+    def test_bundle_target_follows_the_running_node_line(self) -> None:
+        """The esbuild target must not be pinned to a fixed Node line.
+
+        The image derives its Node line from OpenClaw's engine range, so a
+        fixed target would emit syntax the running Node cannot parse as soon
+        as that line moves.
+        """
+        source = (ADDON_DIR / "oc_acpx_helper.py").read_text(encoding="utf-8")
+        self.assertNotIn('"--target=node26"', source)
+        self.assertIn("_esbuild_node_target()", source)
+        self.assertTrue(hasattr(helper_module(), "_esbuild_node_target"))
 
     def test_node_helper_rejects_prereleases_and_broken_ranges(self) -> None:
         sys.path.insert(0, str(ADDON_DIR))

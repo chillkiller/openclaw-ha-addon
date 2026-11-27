@@ -738,16 +738,17 @@ verify_openclaw_node() {
     fi
   else
     # Emergency anchor only. Without the helper the exact engine range and the
-    # secure patch floor cannot be checked at runtime, so this rejects the
-    # obviously wrong majors and leaves the rest to the build-time gate.
+    # secure patch floor cannot be checked at runtime. This rejects a Node
+    # that is clearly older than every supported line; everything else is
+    # left to the build-time gate, which verified the range and the floor.
     case "${version}" in
-      2[4-9].*|3[0-9].*) ;;
+      24.*|25.*|26.*|27.*|28.*|29.*|3[0-9].*) ;;
       *)
         echo "ERROR: unsupported Node ${version}; the OpenClaw runtime requires a Node.js release of the 24.x line or newer"
         return 1
         ;;
     esac
-    echo "WARN: the Node engine helper is not installed; the exact engine range and the secure patch floor could not be checked at runtime (the build-time gate still applies)."
+    echo "WARN: the Node engine helper is not installed; the exact engine range and the secure patch floor were NOT checked at runtime (the build-time gate verified them)."
   fi
   echo "INFO: OpenClaw Node runtime: ${node_bin} (process.versions.node=${version})"
 }
@@ -1032,6 +1033,10 @@ PY
 }
 
 shutdown() {
+  if [ "${SHUTTING_DOWN:-}" = "true" ]; then
+    echo "INFO: shutdown is already in progress; ignoring the additional signal."
+    return 0
+  fi
   SHUTTING_DOWN="true"
   # Only a latch acquired by the automatic repair is released here. An
   # operator-owned maintenance hold is deliberately preserved across shutdown.
@@ -2417,11 +2422,11 @@ find_gateway_daemon_pid() {
 # dbus-daemon is not started by systemd in Docker — we start it manually.
 #
 # CAUTION: Homebrew may install its own dbus-daemon under
-# /home/linuxbrew/.linuxbrew/bin, which appears earlier in PATH via the
-# export at the top of this script. That build is compiled for a different
-# prefix and will fail to start the Debian system bus. We therefore use
-# absolute Debian paths and remove stale PID files that survive an unclean
-# container restart.
+# /home/linuxbrew/.linuxbrew/bin. The Homebrew directories are appended at the
+# end of PATH (see the export at the top of this script), so that build comes
+# after the system binaries. It is compiled for a different prefix and would
+# fail to start the Debian system bus, so we use absolute Debian paths and
+# remove stale PID files that survive an unclean container restart.
 # ------------------------------------------------------------------------------
 DBUS_SYSTEM_BIN="/usr/bin/dbus-daemon"
 AVAHI_SYSTEM_BIN="/usr/sbin/avahi-daemon"
