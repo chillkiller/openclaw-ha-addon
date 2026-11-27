@@ -1638,8 +1638,10 @@ class DockerGuardTests(unittest.TestCase):
             run_sh,
         )
         # The reset condition must be guarded by the refusal check.
+        # Only a clean exit may reset the failure streak: a non-zero exit
+        # means the startup never finished, however long the process lived.
         self.assertIn(
-            "&& ! gateway_startup_admission_refused; then",
+            '[ "${GW_EXIT_CODE:-1}" -eq 0 ] && [ "${GW_PREV_BOOT_ALIVE:-0}" = "1" ]',
             run_sh,
         )
         # The refusal marker must be looked up only in the log lines this boot

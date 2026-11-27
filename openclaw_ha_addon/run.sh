@@ -3319,10 +3319,16 @@ while true; do
   # blocked by the upgrade-backup gate) must NOT reset it, or the streak could
   # never trigger the doctor repair or grow the backoff.
   GW_BOOT_SECONDS=$(( $(date +%s) - ${GW_BOOT_START:-0} ))
-  if [ "${GW_PREV_BOOT_ALIVE:-0}" = "1" ] && [ "$GW_BOOT_SECONDS" -ge 120 ] \
-     && ! gateway_startup_admission_refused; then
+  # Only a clean exit resets the streak. A gateway that ends with a non-zero
+  # exit code never finished its startup - the runtime exits with 1 while the
+  # agent-database admission is still pending - so it counts as a failed start
+  # no matter how long it lived. Resetting the streak there restarted the
+  # gateway every few seconds and starved the preparation.
+  if [ "${GW_EXIT_CODE:-1}" -eq 0 ] && [ "${GW_PREV_BOOT_ALIVE:-0}" = "1" ]; then
     GW_CONSECUTIVE_FAILS=0
-    echo "INFO: Previous gateway boot survived ${GW_BOOT_SECONDS}s; failure streak reset."
+    echo "INFO: Previous gateway boot ended cleanly after ${GW_BOOT_SECONDS}s; failure streak reset."
+  elif [ "${GW_EXIT_CODE:-1}" -ne 0 ]; then
+    echo "INFO: Previous gateway boot ended with code ${GW_EXIT_CODE:-1} after ${GW_BOOT_SECONDS}s; failure streak is kept."
   elif gateway_startup_admission_refused; then
     echo "INFO: Previous gateway boot did not finish the agent-database startup admission; \
 the failure streak is kept so the preparation can make progress."

@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For a release-facing summary, see the root [CHANGELOG.md](../CHANGELOG.md).
 
+## [0.7.13.48] - 2026-11-27
+
+The failure streak is only reset by a clean gateway exit.
+
+### Fixed
+
+- `run.sh` resets the failure streak only when the previous gateway run ended with exit code 0. A run that ends with an error never finished its startup - the runtime exits with 1 while the agent-database admission is pending - so it counts as a failed start regardless of its lifetime. Resetting the streak there kept the restart delay at its minimum and kept the automatic doctor repair from ever running.
+
 ## [0.7.13.47] - 2026-11-27
 
 The startup-admission detection is scoped to the boot that produced it.

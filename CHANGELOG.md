@@ -8,6 +8,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Each entry summarizes user-visible changes. Full engineering notes:
 [openclaw_ha_addon/CHANGELOG.md](openclaw_ha_addon/CHANGELOG.md).
 
+## [0.7.13.48] - 2026-11-27
+
+A gateway that did not finish its startup now counts as a failed start, so the automatic repair runs and the preparation can finish.
+
+### Fixed
+
+- Only a gateway that ends cleanly resets the failure streak. A gateway that exits with an error never finished its startup, however long it ran, so it now counts as a failed start. Before, the streak was reset after every long-lived run, the restart delay stayed at its minimum, and the automatic repair never ran.
+
 ## [0.7.13.47] - 2026-11-27
 
 The startup failure is now recognised reliably, so the automatic repair can finally run.
