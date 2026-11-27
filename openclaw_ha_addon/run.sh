@@ -2392,6 +2392,15 @@ server.listen(TARGET_PORT, '127.0.0.1');" &
 # minutes on a large state. Such a run must count as a failed start - if it
 # reset the failure streak, the supervisor would restart the gateway every
 # couple of seconds and the preparation could never finish.
+gateway_newest_log_file() {
+  local log_dir="${1:-}" file
+  [ -n "$log_dir" ] && [ -d "$log_dir" ] || return 0
+  for file in "$log_dir"/openclaw-*.log; do
+    [ -f "$file" ] || continue
+    printf '%s %s\n' "$(stat -c %Y "$file" 2>/dev/null || echo 0)" "$file"
+  done | sort -rn | head -1 | cut -d' ' -f2- || true
+}
+
 gateway_startup_admission_refused() {
   local log_dir="${OPENCLAW_STATE_DIR:-/config/.openclaw}/logs"
   local log_file="${GW_LOG_FILE:-}"
@@ -2430,14 +2439,6 @@ gateway_log_mark() {
 }
 
 # Print the newest gateway log file, or nothing. Never fails.
-gateway_newest_log_file() {
-  local log_dir="${1:-}" file
-  [ -n "$log_dir" ] && [ -d "$log_dir" ] || return 0
-  for file in "$log_dir"/openclaw-*.log; do
-    [ -f "$file" ] || continue
-    printf '%s %s\n' "$(stat -c %Y "$file" 2>/dev/null || echo 0)" "$file"
-  done | sort -rn | head -1 | cut -d' ' -f2- || true
-}
 
 oc_gateway_listener_pid() {
   ss -tlnpH 2>/dev/null | awk -v port="${GATEWAY_INTERNAL_PORT}" '
@@ -3070,6 +3071,27 @@ OC_GATEWAY_HELPER
 }
 install_oc_gateway_helper || echo "WARN: could not install oc-gateway helper; the maintenance latch still works via the flag file."
 
+# --- Upstream image activation (mirrors openclaw/openclaw docker-entrypoint) ---
+# The upstream container image repairs the retained state before the gateway
+# starts: its entrypoint runs `openclaw doctor --fix --non-interactive` once,
+# with an activation marker that lets a later run reuse the sealed capture
+# instead of taking a new one. We do the same, so the repair happens once
+# while no gateway is running instead of after failed starts.
+run_image_activation() {
+  local marker key root_dir
+  root_dir="$(dirname "$(dirname "$(readlink -f "$(command -v openclaw 2>/dev/null || echo /usr/lib/node_modules/openclaw/bin/openclaw)")")")"
+  key="$(printf '%s|%s' "${root_dir}" "${GATEWAY_INTERNAL_PORT}" | sha256sum | cut -c1-32)"
+  marker="/tmp/openclaw-image-activation-$(id -u)-${key}"
+  export OPENCLAW_IMAGE_ACTIVATION_CAPTURE_MARKER="${marker}"
+  echo "INFO: image activation: repairing the retained state before the first gateway start"
+  if ! timeout --kill-after=30s "$GW_DOCTOR_REPAIR_TIMEOUT" openclaw doctor --fix --non-interactive; then
+    echo "ERROR: image activation did not finish; the gateway stays down until the state is repaired."
+    return 1
+  fi
+  echo "INFO: image activation finished"
+  return 0
+}
+
 # Boot-time latch check: the flag survives add-on restarts on purpose, so a
 # boot that starts WITH the flag present must not even attempt the initial
 # start (doctor sessions survive an operator's container restart). The
@@ -3082,7 +3104,11 @@ if [ -f "${GATEWAY_MAINTENANCE_FLAG}" ]; then
   GW_IS_CHILD=false
   GW_PID=""
 else
-  if ! start_openclaw_runtime; then
+  if ! run_image_activation; then
+    echo "WARN: image activation did not finish; the gateway stays down until the state is repaired."
+    GW_IS_CHILD=false
+    GW_PID=""
+  elif ! start_openclaw_runtime; then
     echo "WARN: OpenClaw runtime failed to start; ingress UI stays up, retrying in the supervisor loop."
     GW_IS_CHILD=false
     GW_PID=""

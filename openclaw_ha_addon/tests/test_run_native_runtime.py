@@ -1721,6 +1721,47 @@ class DockerGuardTests(unittest.TestCase):
         # A rejected adopted process must be stopped before a second gateway starts.
         self.assertIn('stop_pid_bounded "$GW_PID" "adopted gateway"', run_sh)
 
+    def test_shell_functions_are_defined_before_their_first_use(self) -> None:
+        """A function called before its definition aborts the add-on.
+
+        Under `set -euo pipefail` an unknown command ends the shell, which
+        stopped the add-on during startup in earlier releases. The check
+        covers every function the supervisor calls.
+        """
+        run_sh = (ADDON_DIR / "run.sh").read_text(encoding="utf-8")
+        lines = run_sh.splitlines()
+        defined: dict[str, int] = {}
+        for number, line in enumerate(lines, 1):
+            stripped = line.strip()
+            if stripped.endswith("() {") and not stripped.startswith("#"):
+                defined.setdefault(stripped[:-4], number)
+        offenders = []
+        for number, line in enumerate(lines, 1):
+            stripped = line.strip()
+            if stripped.endswith("() {") or stripped.startswith("#"):
+                continue
+            for name, at in defined.items():
+                if at < number:
+                    continue
+                if f"{name};" in stripped or f"{name} " in stripped:
+                    offenders.append(f"{name} (def {at}, use {number})")
+                    break
+        self.assertEqual(offenders, [], f"functions used before defined: {offenders}")
+
+    def test_image_activation_repairs_the_state_before_the_first_gateway_start(self) -> None:
+        """The upstream container activation step runs before the gateway.
+
+        The upstream image repairs the retained state while no gateway is
+        running; our add-on must do the same before its first start.
+        """
+        run_sh = (ADDON_DIR / "run.sh").read_text(encoding="utf-8")
+        self.assertIn("run_image_activation() {", run_sh)
+        self.assertIn("OPENCLAW_IMAGE_ACTIVATION_CAPTURE_MARKER", run_sh)
+        self.assertIn("openclaw doctor --fix --non-interactive", run_sh)
+        activation_at = run_sh.index("run_image_activation;")
+        first_start_at = run_sh.index("start_openclaw_runtime;")
+        self.assertLess(activation_at, first_start_at)
+
     def test_dockerignore_excludes_vendored_dependency_payloads_only(self) -> None:
         patterns = [
             line.strip()
