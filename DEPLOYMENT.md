@@ -7,7 +7,12 @@
 > **Note (0.7.13.50):** the add-on repairs the retained state before the first gateway start,
 > the way the runtime's own container image does it. The repair runs while no gateway is running
 > and is retried up to three times; an operator maintenance hold takes precedence over the
-> automatic retry. While the repair has not succeeded, the gateway stays down.
+> automatic retry. While the repair has not succeeded, the gateway stays down. Releasing the
+> maintenance hold restarts the repair budget.
+>
+> **Known issue (open):** on a large installation state the runtime can abort the gateway start
+> with an agent-database admission error while it prepares the session databases. The runtime's
+> own repair run does not resolve it and the cause is not yet clarified upstream.
 
 > **Note (0.7.13.50):** releases 0.7.13.47 and 0.7.13.48 must not be installed: they contain a
 > defect of their own that stops the add-on during startup. Use 0.7.13.49 or 0.7.13.50.

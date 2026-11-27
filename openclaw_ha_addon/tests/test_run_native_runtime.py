@@ -1755,10 +1755,14 @@ class DockerGuardTests(unittest.TestCase):
         gateway would stay down for good.
         """
         run_sh = (ADDON_DIR / "run.sh").read_text(encoding="utf-8")
-        resume = run_sh[run_sh.index("  resume)"):]
-        resume = resume[:resume.index("\n    ;;")]
-        self.assertIn("GW_ACTIVATION_RETRIES=0", resume)
-        self.assertIn("GW_ACTIVATION_OK=0", resume)
+        # The counter lives in the supervisor process. The `oc-gateway` helper is
+        # a short-lived separate process, so a reset there has no effect.
+        helper = run_sh[run_sh.index("OC_GATEWAY_HELPER"):]
+        helper = helper[:helper.index("\n# ---") if "\n# ---" in helper else len(helper)]
+        self.assertNotIn("GW_ACTIVATION_RETRIES=0", helper)
+        supervisor = run_sh[run_sh.index("GW_BOOT_START=$(date +%s)", run_sh.index("GW_CONSECUTIVE_FAILS=0")):]
+        latch_release = supervisor[:supervisor.index("GW_CONSECUTIVE_FAILS=0", 10) + 60]
+        self.assertIn("GW_ACTIVATION_RETRIES=0", latch_release)
 
     def test_image_activation_keeps_the_shutdown_trap_and_the_backoff_defined(self) -> None:
         """The activation must not disarm the shutdown path or trip `set -u`.

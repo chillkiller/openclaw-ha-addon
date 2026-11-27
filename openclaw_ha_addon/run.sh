@@ -3016,10 +3016,6 @@ case "${1:-}" in
   resume)
     if [ -f "$FLAG" ]; then
       rm -f "$FLAG" && echo "Maintenance latch removed; gateway respawns within ~5 s."
-      # The operator released the hold: the repair budget starts over, otherwise
-      # an exhausted counter would keep the gateway down for good.
-      GW_ACTIVATION_RETRIES=0
-      GW_ACTIVATION_OK=0
     else
       echo "No maintenance latch present (gateway supervision is active)."
     fi
@@ -3391,6 +3387,9 @@ while true; do
     gateway_log_mark
     GW_PREV_BOOT_ALIVE=0
     GW_CONSECUTIVE_FAILS=0
+    # The operator released the hold: the repair budget starts over. Without
+    # this the exhausted counter would keep the gateway down for good.
+    GW_ACTIVATION_RETRIES=0
     if [ "${GW_ACTIVATION_OK}" != "1" ]; then
       echo "WARN: the retained state has not been repaired yet; retrying the repair."
       # An operator-held latch wins: the repair belongs to the operator then.
