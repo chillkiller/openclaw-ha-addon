@@ -865,6 +865,35 @@ describe("copilot env extended provider variables", () => {
     expect(report.results.find((r) => r.harnessId === "copilot")?.files[0]?.action).toBe("unchanged");
   });
 
+  it("qwen gets the Anthropic base root, not a /v1-suffixed base", () => {
+    const p = paths();
+    const catalog = buildModelCatalog(
+      {
+        models: {
+          providers: {
+            anthropic: {
+              baseUrl: "http://localhost:11434",
+              api: "anthropic-messages",
+              models: [{ id: "q-model", contextWindow: 128000 }],
+            },
+          },
+        },
+      },
+      [],
+    );
+    DEPLOY(
+      { harnesses: { qwen: { model: "q-model", baseUrl: "http://localhost:11434", apiKey: "qk" } } },
+      p,
+      catalog,
+    );
+    const env = readText(join(p.acpxDir, "harness-env", "qwen.env"));
+    expect(env).toContain("ANTHROPIC_API_KEY='qk'");
+    // The Anthropic client appends "/v1/messages" to ANTHROPIC_BASE_URL itself, so
+    // the base must stay the root: a "/v1" here would request "/v1/v1/messages".
+    expect(env).toContain("ANTHROPIC_BASE_URL='http://localhost:11434'");
+    expect(env).not.toContain("ANTHROPIC_BASE_URL='http://localhost:11434/v1'");
+  });
+
   it("copilot derives Anthropic transport from catalog metadata and explicit overrides win", () => {
     const p = paths();
     const catalog = buildModelCatalog(
