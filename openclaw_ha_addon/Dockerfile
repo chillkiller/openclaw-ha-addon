@@ -345,6 +345,15 @@ RUN export PATH="/usr/bin:/bin:${PATH}"; \
 # from unicode-guard/strip-invisible-unicode.mjs into the dist and fails the
 # build LOUDLY when upstream anchors change (never silently lose a security
 # control). Behavior matrix + tradeoffs: unicode-guard/README.md.
+# The runtime prepares every agent database (schema, integrity, FTS repair)
+# before it admits the agents. On a large state that work needs minutes, but
+# the startup read path only waited 20 s and then refused the read, which
+# aborted the gateway before it bound its listener. The budget becomes
+# configurable (OPENCLAW_STARTUP_READ_WAIT_MS, set by run.sh); the patch fails
+# loudly when the upstream anchor is gone, so it can never be skipped silently.
+COPY agent-db-admission-guard /openclaw_ha_addon/agent-db-admission-guard
+RUN /usr/bin/node /openclaw_ha_addon/agent-db-admission-guard/apply-agent-db-admission-guard-patch.mjs /usr/lib/node_modules/openclaw
+
 COPY unicode-guard /openclaw_ha_addon/unicode-guard
 RUN /usr/bin/node /openclaw_ha_addon/unicode-guard/apply-unicode-guard-patch.mjs /usr/lib/node_modules/openclaw
 
