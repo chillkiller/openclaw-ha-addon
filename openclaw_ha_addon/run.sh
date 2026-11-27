@@ -3077,29 +3077,21 @@ install_oc_gateway_helper || echo "WARN: could not install oc-gateway helper; th
 # with an activation marker that lets a later run reuse the sealed capture
 # instead of taking a new one. We do the same, so the repair happens once
 # while no gateway is running instead of after failed starts.
-# A crashed gateway can leave an ownership lock whose owner process no longer
-# exists. The runtime refuses to enter maintenance while such a lock is
-# present, so the state repair could never run and the gateway stayed down.
-# Only locks with a provably dead owner are removed; a live owner or an
-# unreadable lock is left untouched.
-cleanup_dead_state_locks() {
-  local lock_dir lock_file pid
-  [ -d "$OPENCLAW_CONFIG_DIR" ] || return 0
-  for lock_dir in "$OPENCLAW_CONFIG_DIR"/tmp/openclaw-*; do
-    [ -d "$lock_dir" ] || continue
-    for lock_file in "$lock_dir"/*.lock; do
-      [ -f "$lock_file" ] || continue
-      pid="$(sed -n 's/.*"pid"[[:space:]]*:[[:space:]]*\([0-9]\{1,\}\).*/\1/p' "$lock_file" 2>/dev/null | head -n 1)"
-      [ -n "$pid" ] || continue
-      if [ -d "/proc/$pid" ]; then
-        continue
-      fi
-      echo "NOTICE: removing a state lock whose owner (pid $pid) no longer exists: $lock_file"
-      if ! mv -f "$lock_file" "$lock_file.bak-deadowner" 2>/dev/null; then
-        rm -f "$lock_file" 2>/dev/null || true
-      fi
-    done
-  done
+# The runtime keeps a SQLite Gateway owner lease. A crashed gateway leaves that
+# lease behind with an owner that no longer exists, and the runtime then refuses
+# to enter maintenance, so the state repair could never run. The runtime offers
+# a supported recovery path for exactly this case; the add-on uses it instead of
+# guessing at lock ownership on its own.
+recover_stale_gateway_lock() {
+  local out fingerprint
+  out="$(openclaw gateway recover-lock --json 2>/dev/null)" || return 0
+  printf '%s' "$out" | grep -q '"present":[[:space:]]*true' || return 0
+  fingerprint="$(printf '%s' "$out" | sed -n 's/.*"confirmation"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' | head -n 1)"
+  [ -n "$fingerprint" ] || return 0
+  echo "NOTICE: recovering the gateway state lock left behind by an earlier run."
+  if ! openclaw gateway recover-lock --confirm "$fingerprint"; then
+    echo "WARN: the gateway state lock could not be recovered; the state repair may stay blocked."
+  fi
 }
 
 run_image_activation() {
@@ -3115,9 +3107,9 @@ run_image_activation() {
   key="$(printf '%s|%s' "${root_dir}" "${GATEWAY_INTERNAL_PORT}" | sha256sum | cut -c1-32)"
   marker="/tmp/openclaw-image-activation-$(id -u)-${key}"
   echo "INFO: image activation: repairing the retained state before the first gateway start"
-  # The repair can only enter maintenance when no lock of a dead owner is left
-  # over from an earlier crashed run.
-  cleanup_dead_state_locks || true
+  # The repair can only enter maintenance when no owner lease of an earlier
+  # crashed run is left over.
+  recover_stale_gateway_lock || true
   # The marker applies to this repair run only. Exported globally it would
   # leak into the gateway and into every later doctor run, which would then
   # skip their fresh capture.
@@ -3257,6 +3249,9 @@ run_automatic_doctor_repair() {
 
   echo "NOTICE: Gateway failed ${GW_CONSECUTIVE_FAILS} times in a row; running 'openclaw doctor --fix' (attempt ${GW_DOCTOR_REPAIR_RUNS}/${GW_DOCTOR_REPAIR_MAX})..."
   echo "INFO: Automatic doctor repair holds maintenance latch ($GATEWAY_MAINTENANCE_FLAG); gateway stays down."
+  # The repair cannot enter maintenance while an owner lease of an earlier
+  # crashed run is left over.
+  recover_stale_gateway_lock || true
 
   # Snapshot the live config first so the automatic repair stays reversible.
   DOCTOR_STAMP="$(date -u +%Y%m%d-%H%M%S)"

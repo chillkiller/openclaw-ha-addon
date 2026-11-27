@@ -1748,16 +1748,17 @@ class DockerGuardTests(unittest.TestCase):
                     break
         self.assertEqual(offenders, [], f"functions used before defined: {offenders}")
 
-    def test_dead_state_locks_are_cleared_before_the_activation(self) -> None:
-        """A lock of a crashed owner must not block the state repair."""
+    def test_stale_gateway_lock_is_recovered_before_the_activation(self) -> None:
+        """The state repair must not be blocked by an owner lease of a crashed run."""
         run_sh = (ADDON_DIR / "run.sh").read_text(encoding="utf-8")
-        self.assertIn("cleanup_dead_state_locks() {", run_sh)
-        # Only a provably dead owner is removed; a live owner stays untouched.
-        self.assertIn('/proc/$pid', run_sh)
-        self.assertIn("bak-deadowner", run_sh)
-        # The cleanup runs before the repair is started.
+        self.assertIn("recover_stale_gateway_lock() {", run_sh)
+        # The runtime provides the recovery; the add-on must not guess ownership.
+        self.assertIn("openclaw gateway recover-lock --json", run_sh)
+        self.assertIn("--confirm", run_sh)
+        self.assertNotIn("cleanup_dead_state_locks", run_sh)
+        # The recovery runs before the repair is started.
         act = run_sh[run_sh.index("run_image_activation() {"):]
-        self.assertLess(act.index("cleanup_dead_state_locks || true"),
+        self.assertLess(act.index("recover_stale_gateway_lock || true"),
                         act.index("openclaw doctor"))
 
     def test_resume_resets_the_repair_budget(self) -> None:

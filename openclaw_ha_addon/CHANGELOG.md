@@ -13,7 +13,7 @@ The add-on clears state locks left behind by a crashed gateway before it repairs
 
 ### Fixed
 
-- Before the state repair, the add-on now removes ownership locks whose owner process no longer exists. The runtime refuses to enter maintenance while such a lock is present, so on an installation that had a crashed gateway the repair could never run and the gateway stayed down. Only locks with a provably dead owner are removed; a lock of a live process or an unreadable lock is left untouched, and the removed file is kept next to the original with the suffix `.bak-deadowner`.
+- Before the state repair, the add-on now recovers a gateway state lock that an earlier crashed run left behind. The runtime keeps a lease of the gateway that owned the state; while such a lease is present the runtime refuses to enter maintenance, so on an installation that had a crashed gateway the repair could never run and the gateway stayed down. The add-on uses the runtime's own recovery command for this case and only acts when the runtime reports an owner lease that is present.
 
 ## [0.7.13.50] - 2026-11-27
 
