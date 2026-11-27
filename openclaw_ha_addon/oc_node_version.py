@@ -41,15 +41,11 @@ EXIT_VERIFY_FAILED = 4
 EXIT_NO_MATCH = 5
 EXIT_FLOOR_VIOLATION = 6
 
-# Minimum patch level per Node major line. The runtime refuses Node builds whose
-# bundled SQLite is affected by the upstream WAL-reset corruption bug and
-# reports the same floor as a security warning. We mirror it here so the image
-# build never ships a Node that the runtime will reject; the newest patch of a
-# line satisfies it in practice.
-SECURE_FLOOR = {
-    "24": "24.22.1",
-    "26": "26.12.1",
-}
+# The secure patch floor per Node major line is NOT kept here: the runtime
+# ships that table itself (NODE_SECURITY_RELEASE_FLOORS in the installed
+# OpenClaw package) and the helper reads it from there
+# (runtime_security_floors()). A second copy would only have to be maintained
+# by hand and would be stale as soon as the runtime learns a new line.
 
 
 class RegistryError(RuntimeError):
@@ -353,12 +349,13 @@ def runtime_security_floors(package_dir: str) -> dict[str, str] | None:
 def floor_for(major: str, runtime_floors: dict[str, str] | None = None) -> str | None:
     """Return the secure patch floor for a Node major line.
 
-    The runtime's own table wins when it is available; the built-in table is
-    the fallback for the phase before OpenClaw is installed.
+    The floor comes from the runtime's own table. Without it there is no floor
+    to enforce: the range check still applies, and the post-install gate
+    verifies the installed Node against the runtime's floors.
     """
     if runtime_floors:
         return runtime_floors.get(major)
-    return SECURE_FLOOR.get(major)
+    return None
 
 
 def extract_openclaw_pin(dockerfile_path: str) -> str:
@@ -565,8 +562,8 @@ def main(
         print(f"export NODE_SOURCE_REPO=node_{newest.major}.x")
         if floor is None:
             print(
-                f"NOTE: no secure patch floor is known for the Node {newest.major}.x line; "
-                "only the engine range is enforced for this line.",
+                f"NOTE: the secure patch floor for the Node {newest.major}.x line is "
+                "checked after the install, against the runtime's own floor table.",
                 file=err,
             )
     else:

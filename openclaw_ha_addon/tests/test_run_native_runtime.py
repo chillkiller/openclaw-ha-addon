@@ -1410,9 +1410,11 @@ class DockerGuardTests(unittest.TestCase):
 
         # The runtime refuses Node builds with the WAL-reset bug and reports
         # the same floor as a security warning; the build must not ship one.
-        for major, floor in (("24", "24.22.1"), ("26", "26.12.1")):
+        # The floors come from the runtime's own table.
+        runtime_floors = {"24": "24.22.1", "26": "26.12.1"}
+        for major, floor in runtime_floors.items():
             with self.subTest(major=major):
-                self.assertEqual(oc_node_version.floor_for(major), floor)
+                self.assertEqual(oc_node_version.floor_for(major, runtime_floors), floor)
                 below = floor.rsplit(".", 1)[0] + "." + str(int(floor.rsplit(".", 1)[1]) - 1)
                 self.assertTrue(
                     oc_node_version._cmp(below, floor) < 0,
@@ -1424,24 +1426,36 @@ class DockerGuardTests(unittest.TestCase):
                 )
 
     def test_node_helper_floor_violation_fails_the_verify_gate(self) -> None:
+        """The gate enforces the floor that the runtime itself ships."""
         helper = ADDON_DIR / "oc_node_version.py"
         range_expr = ">=24.16.0 <25 || >=26.1.0"
-        for version, expected in (("24.22.0", 6), ("26.12.0", 6), ("24.22.3", 0), ("26.13.1", 0)):
-            with self.subTest(version=version):
-                result = subprocess.run(
-                    [
-                        sys.executable,
-                        str(helper),
-                        "--engines",
-                        range_expr,
-                        "--verify",
-                        version,
-                    ],
-                    capture_output=True,
-                    text=True,
-                    timeout=60,
-                )
-                self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
+        with tempfile.TemporaryDirectory() as tmp:
+            package_dir = Path(tmp) / "openclaw"
+            dist = package_dir / "dist"
+            dist.mkdir(parents=True)
+            (dist / "node-version.mjs").write_text(
+                "const NODE_SECURITY_RELEASE_FLOORS = [{major: 24, minor: 22, patch: 1}, "
+                "{major: 26, minor: 12, patch: 1}];\n",
+                encoding="utf-8",
+            )
+            for version, expected in (("24.22.0", 6), ("26.12.0", 6), ("24.22.3", 0), ("26.13.1", 0)):
+                with self.subTest(version=version):
+                    result = subprocess.run(
+                        [
+                            sys.executable,
+                            str(helper),
+                            "--engines",
+                            range_expr,
+                            "--runtime-floors",
+                            str(package_dir),
+                            "--verify",
+                            version,
+                        ],
+                        capture_output=True,
+                        text=True,
+                        timeout=60,
+                    )
+                    self.assertEqual(result.returncode, expected, result.stdout + result.stderr)
 
     def test_node_helper_caret_and_tilde_follow_npm_semantics(self) -> None:
         sys.path.insert(0, str(ADDON_DIR))
@@ -1540,16 +1554,21 @@ class DockerGuardTests(unittest.TestCase):
                 {"24": "24.22.1", "26": "26.12.1", "27": "27.3.0"},
             )
             # A Node line the runtime knows a floor for is enforced; a line
-            # the runtime does not know keeps the built-in fallback.
+            # the runtime does not know has no floor.
             self.assertEqual(
                 oc_node_version.floor_for("27", floors), "27.3.0"
             )
             self.assertEqual(oc_node_version.floor_for("28", floors), None)
-            # Without a readable table the built-in table applies.
+            # Without a readable table there is no floor at all: the range
+            # check still applies and the post-install gate verifies the
+            # installed Node against the runtime's table.
             self.assertIsNone(
                 oc_node_version.runtime_security_floors(str(Path(tmp) / "missing"))
             )
-            self.assertEqual(oc_node_version.floor_for("24"), "24.22.1")
+            self.assertIsNone(oc_node_version.floor_for("24"))
+            # The helper keeps no own floor table, so the runtime stays the
+            # single source of truth.
+            self.assertFalse(hasattr(oc_node_version, "SECURE_FLOOR"))
 
     def test_node_helper_caret_respects_the_component_count(self) -> None:
         """npm derives the caret bound from the number of given components.

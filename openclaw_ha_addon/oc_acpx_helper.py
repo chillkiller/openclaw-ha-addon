@@ -2019,23 +2019,25 @@ def _esbuild_node_target() -> str:
     return "node26"
 
 
-def repair_acpx_agent_commands() -> bool:
-    """Point ACPX agent commands at files that actually exist.
+def remove_stale_acpx_agent_overrides() -> bool:
+    """Drop ACPX agent overrides whose target file does not exist.
 
-    The retired Codex wrapper layout left ``plugins.entries.acpx.config.agents``
-    pointing at a wrapper file that this add-on removes. ACPX then refuses to
-    start that harness ("Configured ACP agent commands take precedence over
-    installed defaults"), so the Codex harness never comes up. This repairs such
-    entries to the current wrapper, or drops the broken command so the plugin
-    default applies.
+    ACPX itself only *reads* ``plugins.entries.acpx.config.agents`` as an
+    override; it generates its own wrapper scripts and falls back to its own
+    default when no override is configured. The stale overrides come from the
+    retired harness-config-writer codex wrapper of this add-on, which wrote
+    ``agents.codex.command`` pointing at a file that the add-on cleanup
+    removes. As long as such an override exists it takes precedence over the
+    ACPX default ("Configured ACP agent commands take precedence over
+    installed defaults") and the Codex harness never comes up.
 
     Safety rules (2026-11-27 review):
+    * only overrides whose absolute target file is missing are removed - a
+      valid override (and everything else in the config) stays untouched,
     * a relative command is never touched - its existence cannot be judged
       without knowing the working directory it is resolved against,
-    * the configuration is backed up before the first write, so a repair is
-      always reversible,
-    * an entry without a usable replacement keeps everything but the broken
-      ``command`` key, so operator settings are not lost.
+    * the configuration is backed up before the first write, so the cleanup is
+      always reversible.
     """
     config_path = CONFIG_DIR / "openclaw.json"
     if not config_path.exists():
@@ -2049,10 +2051,6 @@ def repair_acpx_agent_commands() -> bool:
     agents = config.get("agents")
     if not isinstance(agents, dict) or not agents:
         return True
-    candidates = {
-        "codex": ("codex-acp-wrapper.mjs",),
-        "claude": ("claude-agent-acp-wrapper.mjs",),
-    }
     changed = False
     for agent_id, entry in list(agents.items()):
         if not isinstance(entry, dict):
@@ -2068,36 +2066,28 @@ def repair_acpx_agent_commands() -> bool:
             continue
         if Path(command).exists():
             continue
-        replacement = None
-        for name in candidates.get(agent_id, ()):
-            candidate = ACPX_DIR / name
-            if candidate.exists():
-                replacement = str(candidate)
-                break
-        if replacement:
-            entry["command"] = replacement
-            log(f"Repaired ACPX agent command for '{agent_id}': {command} -> {replacement}")
-        else:
-            # Keep every other setting of the entry; only the broken command
-            # goes away so the plugin default applies again.
-            entry.pop("command", None)
-            remaining = ", ".join(sorted(key for key in entry if key != "command")) or "none"
-            log(
-                f"WARN: removed the broken ACPX agent command for '{agent_id}' ({command}); "
-                "no replacement wrapper is installed, the plugin default applies. "
-                f"Kept entry settings: {remaining}."
-            )
-            if not entry:
-                agents.pop(agent_id, None)
+        # The override points at a file that does not exist, so it can only
+        # break the harness. ACPX generates its own wrapper scripts and
+        # falls back to its own default when no override is configured, so the
+        # stale override is dropped as a whole - its arguments belong to the
+        # missing wrapper. Such overrides were written by the retired
+        # harness-config-writer codex wrapper of this add-on.
+        removed = ", ".join(f"{key}={value!r}" for key, value in entry.items())
+        agents.pop(agent_id, None)
+        log(
+            f"WARN: removed the stale ACPX agent override for '{agent_id}' "
+            f"(target {command} does not exist); ACPX uses its own default again. "
+            f"Removed: {removed}."
+        )
         changed = True
     if changed:
         try:
             backup = config_path.with_name(
-                f"{config_path.name}.pre-acpx-repair-{int(time.time())}"
+                f"{config_path.name}.pre-acpx-cleanup-{int(time.time())}"
             )
             shutil.copy2(config_path, backup)
             log(f"Backed up the OpenClaw configuration to {backup}")
-            prune_acpx_repair_backups(config_path)
+            prune_acpx_cleanup_backups(config_path)
         except OSError as exc:
             log(f"ERROR: could not back up the OpenClaw configuration: {exc}")
             return False
@@ -2109,15 +2099,15 @@ def repair_acpx_agent_commands() -> bool:
     return True
 
 
-def prune_acpx_repair_backups(config_path: Path, keep: int = 3) -> None:
-    """Keep only the newest repair backups.
+def prune_acpx_cleanup_backups(config_path: Path, keep: int = 3) -> None:
+    """Keep only the newest cleanup backups.
 
-    Every boot that repairs something writes a copy of openclaw.json. Without
-    a bound the configuration directory grows with one copy per repair.
+    Every boot that changes something writes a copy of openclaw.json. Without
+    a bound the configuration directory grows with one copy per cleanup.
     """
     try:
         backups = sorted(
-            config_path.parent.glob(f"{config_path.name}.pre-acpx-repair-*"),
+            config_path.parent.glob(f"{config_path.name}.pre-acpx-cleanup-*"),
             key=lambda path: path.stat().st_mtime,
             reverse=True,
         )
@@ -2147,7 +2137,7 @@ def main() -> int:
     ok = deploy_plugins()
     ok = install_acpx_npm_project() and ok
     ok = patch_openclaw_config() and ok
-    ok = repair_acpx_agent_commands() and ok
+    ok = remove_stale_acpx_agent_overrides() and ok
     # V36.2 (2026-10-13): agents.defaults.utilityModel from the utility_model
     # option — agent entries stay untouched; unset = no write.
     ok = merge_utility_model() and ok
