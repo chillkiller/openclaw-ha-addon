@@ -18,6 +18,7 @@ The add-on no longer mistakes a gateway start that never finished for a healthy 
 - A gateway process that was adopted from a previous run and never opened the gateway port is now stopped and reaped before the add-on starts a replacement, so two gateways can no longer compete for the same state.
 - A stale loopback relay is stopped before the shutdown handler is installed, so a leftover relay can no longer keep the new gateway from binding its port.
 - The helper that records the position in the gateway log no longer aborts the add-on when the log directory does not exist yet, which could happen on the very first start.
+- The retained state is now repaired before the gateway starts, the way the runtime's own container image does it: the add-on runs the runtime's repair once while no gateway is running and waits for its result. If the repair does not finish, the gateway stays down until it does.
 
 ### Known issues
 

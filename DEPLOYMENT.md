@@ -4,6 +4,10 @@
 
 | App Version | OpenClaw Version | Release Date |
 |--------------|------------------|---------------|
+> **Note (0.7.13.50):** the add-on repairs the retained state before the first gateway start,
+> the way the runtime's own container image does it. The repair runs once while no gateway is
+> running; while it has not succeeded, the gateway stays down.
+
 > **Note (0.7.13.50):** releases 0.7.13.47 and 0.7.13.48 must not be installed: they contain a
 > defect of their own that stops the add-on during startup. Use 0.7.13.49 or 0.7.13.50.
 

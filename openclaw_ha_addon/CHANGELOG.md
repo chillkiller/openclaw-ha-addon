@@ -21,6 +21,7 @@ The Node.js line is derived from the OpenClaw release, the shutdown path stays i
 - The shutdown stops the gateway first within its own budget, folds the write-ahead logs of the state and agent databases while the remaining services stop, and reaps them.
 - A stale loopback relay is stopped before the shutdown trap is installed, and a rejected adopted gateway process is stopped and reaped before a replacement is started.
 - The failure streak is only reset by a clean gateway exit, and the restart delay has a floor of 120 seconds. When the automatic repair budget is used up, the add-on keeps restarting the gateway with that delay and logs the exhaustion.
+- `run.sh` now performs the runtime's own image activation before the first gateway start: `openclaw doctor --fix --non-interactive` runs once while no gateway is running, with the activation marker scoped to that repair run only. While the repair has not succeeded, no gateway start is attempted. Stop signals are forwarded to the repair run instead of waiting for the full repair budget.
 
 ### Changed
 

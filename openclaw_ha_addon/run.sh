@@ -3082,13 +3082,24 @@ run_image_activation() {
   root_dir="$(dirname "$(dirname "$(readlink -f "$(command -v openclaw 2>/dev/null || echo /usr/lib/node_modules/openclaw/bin/openclaw)")")")"
   key="$(printf '%s|%s' "${root_dir}" "${GATEWAY_INTERNAL_PORT}" | sha256sum | cut -c1-32)"
   marker="/tmp/openclaw-image-activation-$(id -u)-${key}"
-  export OPENCLAW_IMAGE_ACTIVATION_CAPTURE_MARKER="${marker}"
   echo "INFO: image activation: repairing the retained state before the first gateway start"
-  if ! timeout --kill-after=30s "$GW_DOCTOR_REPAIR_TIMEOUT" openclaw doctor --fix --non-interactive; then
-    echo "ERROR: image activation did not finish; the gateway stays down until the state is repaired."
+  # The marker applies to this repair run only. Exported globally it would
+  # leak into the gateway and into every later doctor run, which would then
+  # skip their fresh capture.
+  OPENCLAW_IMAGE_ACTIVATION_CAPTURE_MARKER="${marker}" \
+    timeout --kill-after=30s "$GW_DOCTOR_REPAIR_TIMEOUT" openclaw doctor --fix --non-interactive &
+  local child=$! rc=0
+  # Forward the stop signals to the repair run so a shutdown does not wait for
+  # the full repair budget.
+  trap 'kill -TERM "${child}" 2>/dev/null' TERM INT HUP QUIT
+  wait "${child}" || rc=$?
+  trap - TERM INT HUP QUIT
+  if [ "$rc" -ne 0 ]; then
+    echo "ERROR: image activation did not finish (exit ${rc}); the gateway stays down until the state is repaired."
     return 1
   fi
   echo "INFO: image activation finished"
+  GW_ACTIVATION_OK=1
   return 0
 }
 
@@ -3164,6 +3175,9 @@ GW_BOOT_START=$(date +%s)
 : "${GW_PREV_BOOT_ALIVE:=0}"   # was the last gateway attempt a boot that actually ran? (kept if the initial boot already came up)
 GW_CONSECUTIVE_FAILS=0
 GW_DOCTOR_REPAIR_RUNS=0
+# The upstream activation repairs the retained state before the first gateway
+# start. Until that succeeded, no gateway start is attempted.
+GW_ACTIVATION_OK=0
 # Give an adopted process five minutes to prove that it is the serving
 # gateway. Denied PIDs stay out of all subsequent discovery passes.
 GW_ADOPT_CONFIRM_TIMEOUT=300
@@ -3355,6 +3369,13 @@ while true; do
     gateway_log_mark
     GW_PREV_BOOT_ALIVE=0
     GW_CONSECUTIVE_FAILS=0
+    if [ "${GW_ACTIVATION_OK}" != "1" ]; then
+      echo "WARN: the retained state has not been repaired yet; the gateway is not started."
+      GW_IS_CHILD=false
+      GW_PID=""
+      sleep "$GW_BACKOFF"
+      continue
+    fi
     if start_openclaw_runtime; then
       GW_IS_CHILD=true
       GW_BOOT_START=$(date +%s)
@@ -3452,6 +3473,11 @@ the failure streak is kept so the preparation can make progress."
   # to detect the port as occupied and exit with code 1, re-entering the loop.
   stop_gw_relay
 
+  if [ "${GW_ACTIVATION_OK}" != "1" ]; then
+    echo "WARN: the retained state has not been repaired yet; the gateway is not started."
+    sleep "$GW_BACKOFF"
+    continue
+  fi
   if ! start_openclaw_runtime; then
     echo "ERROR: Failed to restart OpenClaw runtime; retrying in ${GW_BACKOFF}s..."
     sleep "$GW_BACKOFF"
