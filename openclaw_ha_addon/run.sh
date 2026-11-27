@@ -1032,6 +1032,14 @@ else:
 PY
 }
 
+stop_gw_relay() {
+  if [ -n "${GW_RELAY_PID}" ] && kill -0 "${GW_RELAY_PID}" >/dev/null 2>&1; then
+    kill -TERM "${GW_RELAY_PID}" >/dev/null 2>&1 || true
+    wait "${GW_RELAY_PID}" 2>/dev/null || true
+    GW_RELAY_PID=""
+  fi
+}
+
 shutdown() {
   if [ "${SHUTTING_DOWN:-}" = "true" ]; then
     echo "INFO: shutdown is already in progress; ignoring the additional signal."
@@ -1125,6 +1133,11 @@ shutdown() {
 
   cleanup_session_locks || true # 0.7.12.4: always on
 }
+
+# A relay left over from a previous run still holds the loopback port and
+# would keep the new gateway from binding it. It is stopped before the trap
+# is installed, so no start attempt can run into a stale relay.
+stop_gw_relay || true
 
 trap shutdown INT TERM
 
@@ -2364,13 +2377,6 @@ server.listen(TARGET_PORT, '127.0.0.1');" &
   fi
 }
 
-stop_gw_relay() {
-  if [ -n "${GW_RELAY_PID}" ] && kill -0 "${GW_RELAY_PID}" >/dev/null 2>&1; then
-    kill -TERM "${GW_RELAY_PID}" >/dev/null 2>&1 || true
-    wait "${GW_RELAY_PID}" 2>/dev/null || true
-    GW_RELAY_PID=""
-  fi
-}
 
 # Find a running gateway daemon's PID using multiple detection methods.
 # Used by the supervisor loop to detect self-restarts (SIGUSR1) without
