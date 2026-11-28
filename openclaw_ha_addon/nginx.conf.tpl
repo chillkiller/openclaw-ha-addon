@@ -90,9 +90,7 @@ http {
     location = /icon.png {
       alias /etc/nginx/html/icon.png;
       default_type image/png;
-      # Revalidate on every load: the file changes with each release and the
-      # HTML is no-cache, so an immutable max-age only serves stale artwork.
-      add_header Cache-Control "no-cache";
+      add_header Cache-Control "public, max-age=86400";
     }
 
     # CA certificate download
