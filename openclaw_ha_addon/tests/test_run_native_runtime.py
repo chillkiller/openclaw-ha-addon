@@ -1376,7 +1376,7 @@ class DockerGuardTests(unittest.TestCase):
         self.assertTrue((ADDON_DIR / "oc_node_version.py").is_file())
         self.assertIn("RUN export PATH=\"/usr/bin:/bin:${PATH}\";", dockerfile)
         self.assertNotIn("RUN node ", dockerfile)
-        self.assertIn("npm install -g openclaw@2026.11.10", dockerfile)
+        self.assertIn("npm install -g openclaw@2026.11.11", dockerfile)
 
     def test_node_export_is_not_swallowed_by_the_shell(self) -> None:
         """The export step must fail the build, not silently continue.
@@ -1448,7 +1448,7 @@ class DockerGuardTests(unittest.TestCase):
                     accepted,
                     f"Node {version} against {range_expr}",
                 )
-        self.assertIn("npm install -g openclaw@2026.11.10", dockerfile)
+        self.assertIn("npm install -g openclaw@2026.11.11", dockerfile)
 
     @staticmethod
     def _fixture_engine_range() -> str:
