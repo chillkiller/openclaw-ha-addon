@@ -25,13 +25,14 @@
     html,body{margin:0;padding:0;height:100%;overflow:hidden}
     body{background:var(--bg);color:var(--text);font-family:Roboto,"Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;display:flex;flex-direction:column;-webkit-font-smoothing:antialiased}
 
-    .topbar{display:flex;align-items:center;gap:12px;padding:8px 14px;background:var(--surface);border-bottom:1px solid var(--border);min-height:54px;flex-shrink:0}
+    .topbar{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;padding:8px 14px;background:var(--surface);border-bottom:1px solid var(--border);min-height:54px;flex-shrink:0}
+    .topbar-left{display:flex;align-items:center;gap:12px;justify-self:start;min-width:0}
     .logo{width:32px;height:32px;border-radius:8px;flex-shrink:0;object-fit:contain}
     .title{display:flex;flex-direction:column;line-height:1.15;min-width:0}
     .title h1{margin:0;font-size:15px;font-weight:600;white-space:nowrap}
     .title p{margin:0;font-size:11px;color:var(--text-dim);white-space:nowrap}
 
-    .tabs{display:flex;gap:8px;margin-left:auto;align-items:center}
+    .tabs{display:flex;gap:8px;justify-self:center;align-items:center}
     .tab{appearance:none;border:1px solid var(--border);background:var(--surface-2);color:var(--text);
       border-radius:10px;padding:7px 13px;font-size:13px;font-weight:500;cursor:pointer;
       display:inline-flex;align-items:center;gap:7px;text-decoration:none;transition:background .15s,border-color .15s,color .15s;white-space:nowrap}
@@ -40,7 +41,7 @@
     .tab.ghost{color:var(--text-dim)}
     .tab svg{display:block}
 
-    .status{display:flex;align-items:center;gap:8px;padding-left:10px;border-left:1px solid var(--border);margin-left:6px}
+    .status{display:flex;align-items:center;gap:8px;justify-self:end;padding-left:10px;border-left:1px solid var(--border)}
     .pill{display:inline-flex;align-items:center;gap:7px;padding:6px 12px;border-radius:999px;font-size:12px;font-weight:500;
       background:var(--surface-2);border:1px solid var(--border);color:var(--text-dim);white-space:nowrap}
     .pill .dot{width:8px;height:8px;border-radius:50%;background:var(--text-dim);transition:background .25s}
@@ -57,8 +58,8 @@
 
     @media (max-width:760px){
       .title p{display:none}
-      .tabs{gap:6px;margin-left:0;flex-wrap:wrap}
-      .topbar{flex-wrap:wrap;padding:8px 10px}
+      .tabs{gap:6px;flex-wrap:wrap;justify-self:start;grid-column:1 / -1;order:3}
+      .topbar{grid-template-columns:1fr auto;padding:8px 10px}
       .status{border-left:none;padding-left:0;margin-left:0}
     }
     @media (prefers-reduced-motion: reduce){*{transition:none !important}}
@@ -66,10 +67,12 @@
 </head>
 <body>
   <header class="topbar">
-    <img class="logo" src="./icon.png" alt="OpenClaw" onerror="this.style.visibility='hidden'">
-    <div class="title">
-      <h1>OpenClaw Assistant</h1>
-      <p>Version __OPENCLAW_VERSION__ · Home Assistant Ingress</p>
+    <div class="topbar-left">
+      <img class="logo" src="./icon.png" alt="OpenClaw" onerror="this.style.visibility='hidden'">
+      <div class="title">
+        <h1>OpenClaw Assistant</h1>
+        <p>Version __OPENCLAW_VERSION__ · Home Assistant Ingress</p>
+      </div>
     </div>
     <nav class="tabs" id="tabs" aria-label="Ansicht wählen">
       <button class="tab" id="tabWebui" data-pane="webui" type="button">
@@ -84,12 +87,12 @@
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 4h6a4 4 0 0 1 4 4v12a3 3 0 0 0-3-3H2z"/><path d="M22 4h-6a4 4 0 0 0-4 4v12a3 3 0 0 1 3-3h7z"/></svg>
         Docs
       </button>
+      <a class="tab ghost" id="linkWebuiExternal" href="./webui/" target="_blank" rel="noopener noreferrer" title="Control UI in neuem Tab öffnen">
+        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+      </a>
       <a class="tab ghost" id="btnCert" href="./cert/ca.crt" download="openclaw-ca.crt" title="CA-Zertifikat herunterladen">
         <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-3.6 8-10V5l-8-3-8 3v7c0 6.4 8 10 8 10z"/></svg>
         CA
-      </a>
-      <a class="tab ghost" id="linkWebuiExternal" href="./webui/" target="_blank" rel="noopener noreferrer" title="Control UI in neuem Tab öffnen">
-        <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
       </a>
     </nav>
     <div class="status">
