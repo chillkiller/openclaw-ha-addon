@@ -61,8 +61,17 @@ http {
     allow 172.30.32.0/23;
     deny all;
 
-    # Landing page (shown inside HA Ingress)
+    # Home of the app: the OpenClaw landing page (HA-styled launcher with
+    # gateway status + deep links into Control UI, Terminal, Docs and cert).
+    # It is static and renders even when the gateway is down — the WebUI
+    # itself stays at /webui/ for the panel and direct links.
     location = / {
+      root /etc/nginx/html;
+      default_type text/html;
+      try_files /index.html =404;
+      add_header Cache-Control "no-cache";
+    }
+    location = /landing {
       root /etc/nginx/html;
       default_type text/html;
       try_files /index.html =404;
@@ -160,6 +169,10 @@ http {
       proxy_buffering off;
       proxy_hide_header X-Frame-Options;
       proxy_hide_header Content-Security-Policy;
+      # The gateway emits an unprefixed Link: </webui/...>; rel=preload header
+      # that the browser resolves against the HA origin root. The HTML already
+      # carries the correctly prefixed preload, so drop the header.
+      proxy_hide_header Link;
       add_header X-Frame-Options "SAMEORIGIN" always;
       add_header Content-Security-Policy "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https:; media-src 'self' data: blob:; font-src 'self' https://fonts.gstatic.com; worker-src 'self'; connect-src 'self' ws: wss: data: https://api.openai.com https://tweakcn.com; frame-src 'self' http: https:" always;
     }
@@ -200,6 +213,10 @@ http {
       # frame-ancestors so same-origin framing works.
       proxy_hide_header X-Frame-Options;
       proxy_hide_header Content-Security-Policy;
+      # The gateway emits an unprefixed Link: </webui/...>; rel=preload header
+      # that the browser resolves against the HA origin root. The HTML already
+      # carries the correctly prefixed preload, so drop the header.
+      proxy_hide_header Link;
       add_header X-Frame-Options "SAMEORIGIN" always;
 
       # Rewrite OpenClaw's CSP so that only frame-ancestors is relaxed to 'self'.
@@ -219,6 +236,20 @@ http {
       sub_filter 'href="/webui/' 'href="$ingress_path_norm/webui/';
       sub_filter 'src="/webui/' 'src="$ingress_path_norm/webui/';
       sub_filter '<base href="/webui/"' '<base href="$ingress_path_norm/webui/"';
+      # The gateway bakes build-time root-absolute asset URLs into its inline
+      # import map / module manifest. Rewrite those too (plain and
+      # entity-encoded forms), otherwise the browser fetches /webui/... from
+      # the HA origin root and every dynamic chunk 404s.
+      sub_filter '"/webui/' '"$ingress_path_norm/webui/';
+      sub_filter '&quot;/webui/' '&quot;$ingress_path_norm/webui/';
+      # The bootstrap config carries basePath:"/webui" (plain and
+      # entity-encoded); the runtime builds asset URLs from it, so it must
+      # point at the ingress-prefixed path as well.
+      sub_filter '"basePath":"/webui"' '"basePath":"$ingress_path_norm/webui"';
+      sub_filter '&quot;basePath&quot;:&quot;/webui&quot;' '&quot;basePath&quot;:&quot;$ingress_path_norm/webui&quot;';
+
+      # No injected sidebar chrome: the HA panel chrome (collapsible sidebar
+      # rail, like the rest of HA) is the intended navigation. See REPAIR_STATUS.
 
       # Purging stale localStorage entries left by pre-basePath builds
       # (gatewayUrl/bootRecord pointing at 127.0.0.1:18789 or at an ingress
