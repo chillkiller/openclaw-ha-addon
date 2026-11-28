@@ -1487,7 +1487,7 @@ class PersistentHarnessInstallTest(unittest.TestCase):
 
     def _expected_dependencies(self):
         return {
-            "@openclaw/acpx": "2026.11.10",
+            "@openclaw/acpx": "2026.11.11",
             "opencode-ai": "1.19.6",
             "@mariozechner/pi-coding-agent": "0.73.1",
             "@github/copilot": "1.0.116",
@@ -1714,7 +1714,7 @@ class NativeCodexManagedProjectPruneTest(unittest.TestCase):
             config["plugins"]["allow"] = ["codex", "operator-plugin"]
         (self.config_dir / "openclaw.json").write_text(json.dumps(config))
         self.project.mkdir(parents=True)
-        dependencies = {"@openclaw/acpx": "2026.11.10", "operator-cli": "1.2.3"}
+        dependencies = {"@openclaw/acpx": "2026.11.11", "operator-cli": "1.2.3"}
         if manifest_entry:
             dependencies["@openclaw/codex"] = "2026.7.1-1"
         (self.project / "package.json").write_text(json.dumps({
@@ -1733,7 +1733,7 @@ class NativeCodexManagedProjectPruneTest(unittest.TestCase):
     def assert_pruned_and_preserved(self) -> None:
         manifest = json.loads((self.project / "package.json").read_text())
         self.assertEqual(manifest["dependencies"], {
-            "@openclaw/acpx": "2026.11.10",
+            "@openclaw/acpx": "2026.11.11",
             "operator-cli": "1.2.3",
         })
         self.assertFalse(self.payload.exists())

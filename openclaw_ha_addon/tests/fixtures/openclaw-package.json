@@ -1,7 +1,7 @@
 {
   "_comment": "Mirrors the engines.node of the OpenClaw release pinned in openclaw_ha_addon/Dockerfile. The node range test reads it from here so an upstream range bump does not need a rewritten test literal. Keep the version in sync with the Dockerfile pin (checked by test_node_fixture_matches_the_dockerfile_pin).",
   "name": "openclaw",
-  "version": "2026.11.10",
+  "version": "2026.11.11",
   "engines": {
     "node": ">=24.16.0 <25 || >=26.1.0"
   }

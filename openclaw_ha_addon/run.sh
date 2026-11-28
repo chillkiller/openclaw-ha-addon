@@ -1663,6 +1663,15 @@ PY
     echo "WARN: Could not set controlUi settings — gateway may reject the Control UI"
 fi
 
+# Serve the Control UI under /webui (gateway.controlUi.basePath). The HA
+# ingress panel opens /webui/ directly; nginx proxies it 1:1 and re-prefixes
+# asset/bootstrap URLs with the ingress path before sending HTML to browsers.
+# The gateway requires a restart to pick this up (read at startup).
+if [ -f "$HELPER_PATH" ] && [ -f "$OPENCLAW_CONFIG_PATH" ]; then
+  python3 "$HELPER_PATH" set-control-ui-base-path "/webui" || \
+    echo "WARN: Could not set controlUi.basePath — gateway will serve the Control UI at /"
+fi
+
 # Apply mDNS settings (OpenClaw native bonjour plugin)
 if [ -f "$HELPER_PATH" ] && [ -f "$OPENCLAW_CONFIG_PATH" ]; then
   python3 "$HELPER_PATH" set-mdns-settings "$MDNS_MODE" || \
@@ -2768,7 +2777,7 @@ print(json.load(open(p)).get('gateway',{}).get('auth',{}).get('token',''), end='
   GW_PUBLIC_URL="$GW_PUBLIC_URL" GW_TOKEN="$token" TERMINAL_PORT="$TERMINAL_PORT" \
     ENABLE_HTTPS_PROXY="$ENABLE_HTTPS_PROXY" HTTPS_PROXY_PORT="$HTTPS_PROXY_PORT" \
     GATEWAY_INTERNAL_PORT="$GATEWAY_INTERNAL_PORT" ACCESS_MODE="$ACCESS_MODE" \
-    NETWORK_MODE="$NETWORK_MODE" \
+    NETWORK_MODE="$NETWORK_MODE" GATEWAY_MODE="$GATEWAY_MODE" \
     DISK_TOTAL="$disk_total" DISK_USED="$disk_used" DISK_AVAIL="$disk_avail" DISK_PCT="$disk_pct" \
     NGINX_LOG_LEVEL="$NGINX_LOG_LEVEL" \
     python3 /render_nginx.py

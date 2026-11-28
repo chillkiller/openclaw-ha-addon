@@ -8,13 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 Each entry summarizes user-visible changes. Full engineering notes:
 [openclaw_ha_addon/CHANGELOG.md](openclaw_ha_addon/CHANGELOG.md).
 
-## [0.7.13.51] - 2026-11-27
+## [0.7.13.51] - 2026-11-28
 
-The add-on clears state locks left behind by a crashed gateway before it repairs the retained state, so the state repair is no longer blocked by a lock of a process that no longer exists.
+The add-on clears state locks left behind by a crashed gateway before it repairs the retained state, so the state repair is no longer blocked by a lock of a process that no longer exists. The sidebar panel now opens a built-in tabbed launcher that follows the Home Assistant theme, and the add-on ships the official OpenClaw artwork.
+
+### Added
+
+- The sidebar panel opens a tabbed landing page with Control UI, Terminal and Docs views instead of jumping straight into the Control UI. The page pairs with the gateway automatically on first open, shows a live gateway health indicator, and also offers the CA certificate download and an external Control UI link. The Control UI stays available directly at /webui/. When a remote gateway is configured, the landing starts on the Terminal view and reports the remote gateway instead of an empty Control UI.
+- The landing page follows the active Home Assistant theme (light or dark) via the parent document, falling back to the operating system color scheme when no parent document is reachable. It uses the bundled documentation (served at /docs).
+- The add-on now ships the official OpenClaw artwork as its app icon.
+- The sidebar panel is visible to all Home Assistant users by default; administrators can restrict it per user in Home Assistant (panel visibility is governed by HA, not by this add-on).
+
+### Changed
+
+- OpenClaw and the bundled ACP runtime are updated to 2026.11.11.
 
 ### Fixed
 
 - Before the state repair, the add-on now recovers a gateway state lock that an earlier crashed run left behind. The runtime keeps a lease of the gateway that owned the state; while such a lease is present the runtime refuses to enter maintenance, so on an installation that had a crashed gateway the repair could never run and the gateway stayed down. The add-on uses the runtime's own recovery command for this case and only acts when the runtime reports an owner lease that is present.
+- The landing page references the app icon with a release version query, so artwork updates are visible from the next page load without waiting for the browser cache to expire. The icon file itself is cached for a day as before.
 
 ## [0.7.13.50] - 2026-11-27
 

@@ -71,7 +71,7 @@ class PinFreshnessTests(unittest.TestCase):
 
     def test_all_current_passes(self):
         pins = [
-            freshness.PackagePin("openclaw", "2026.11.10", freshness.RUNTIME_FAMILY),
+            freshness.PackagePin("openclaw", "2026.11.11", freshness.RUNTIME_FAMILY),
             freshness.PackagePin("opencode-ai", "1.19.6", freshness.HARNESS_FAMILY),
         ]
         result, output, error = self.check(pins)
@@ -103,7 +103,7 @@ class PinFreshnessTests(unittest.TestCase):
         self.assertEqual(
             actual,
             {
-                "@openclaw/acpx": "2026.11.10",
+                "@openclaw/acpx": "2026.11.11",
                 "opencode-ai": "1.19.6",
                 "@mariozechner/pi-coding-agent": "0.73.1",
                 "@github/copilot": "1.0.116",
@@ -123,7 +123,7 @@ class PinFreshnessTests(unittest.TestCase):
         runtime = freshness.extract_runtime_pin()
         self.assertEqual(
             runtime,
-            freshness.PackagePin("openclaw", "2026.11.10", freshness.RUNTIME_FAMILY),
+            freshness.PackagePin("openclaw", "2026.11.11", freshness.RUNTIME_FAMILY),
         )
         self.assertEqual(freshness.load_pins()[0], runtime)
 

@@ -106,7 +106,7 @@ PI_AGENT_DIR = Path("/config/.pi/agent")
 
 # npm package versions (bump when the app image is rebuilt)
 ACPX_PACKAGE = "@openclaw/acpx"
-OPENCLAW_ACPX_VERSION = os.environ.get("OPENCLAW_ACPX_VERSION", "2026.11.10")
+OPENCLAW_ACPX_VERSION = os.environ.get("OPENCLAW_ACPX_VERSION", "2026.11.11")
 OPENCODE_VERSION = os.environ.get("OPENCODE_VERSION", "1.19.6")
 OPENCODE_PACKAGE = os.environ.get("OPENCODE_PACKAGE", "opencode-ai")
 # Vendor package names and versions verified against the packages' own npm

@@ -1,5 +1,5 @@
 # OpenClaw HA-App v0.7.13 — Debian Bookworm Full-Stack
-# OpenClaw 2026.11.10 + node-llama-cpp@3.22.4 + mcporter@0.17.1 + CUPS/Scanner + crawl4ai + Go-PATH-Fix + D-Bus/Avahi
+# OpenClaw 2026.11.11 + node-llama-cpp@3.22.4 + mcporter@0.17.1 + CUPS/Scanner + crawl4ai + Go-PATH-Fix + D-Bus/Avahi
 # Builder stage removed (dead code since v0.7.5.1 — never wired)
 # Build dependencies are kept in the final image so runtime native builds work
 # NOTE: Since HA Supervisor 2026.04, build.yaml is obsolete. Base image must be
@@ -295,7 +295,7 @@ RUN ARCH=$(echo ${TARGETARCH:-$(dpkg --print-architecture)} | sed 's|arm64|aarch
     && chmod +x /usr/local/bin/ttyd
 
 # =============================================================================
-# Install OpenClaw 2026.11.10 + node-llama-cpp 3.22.4 + mcporter 0.17.1
+# Install OpenClaw 2026.11.11 + node-llama-cpp 3.22.4 + mcporter 0.17.1
 # Bundle node-llama-cpp in the image so the default local memory/embeddings
 # provider works in HAOS without requiring manual npm installs in /usr/lib.
 #
@@ -311,15 +311,15 @@ ENV NODE_LLAMA_CPP_POSTINSTALL=skip
 # engine bump). npm itself verifies the registry dist.integrity for the pinned
 # version; the post-install gate re-checks the exact installed version so a
 # silently wrong registry manifest fails the build loudly.
-# 2026-11-26 bump to 2026.11.10 (npm latest, stable): the Node.js line is now
+# 2026-11-28 bump to 2026.11.11 (npm latest, stable): the Node.js line is now
 # derived from OpenClaw's own engines.node range (see oc_node_version.py), so the
 # image always ships the newest release OpenClaw supports; the unicode-guard byte
 # anchors and the sanitize anchor are still present, and @homebridge/ciao stays
 # pinned at 1.3.12, so the mDNS patch anchor is unchanged.
 # node-llama-cpp and pnpm move to current latest; mcporter stays at 0.17.1.
 RUN export PATH="/usr/bin:/bin:${PATH}"; \
-    npm install -g openclaw@2026.11.10 \
-    && /usr/bin/node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('/usr/lib/node_modules/openclaw/package.json','utf8'));if(p.version!=='2026.11.10'){console.error('ERROR: unexpected OpenClaw version installed: '+p.version);process.exit(1)};console.log('OpenClaw pin verified: '+p.version)" \
+    npm install -g openclaw@2026.11.11 \
+    && /usr/bin/node -e "const fs=require('fs');const p=JSON.parse(fs.readFileSync('/usr/lib/node_modules/openclaw/package.json','utf8'));if(p.version!=='2026.11.11'){console.error('ERROR: unexpected OpenClaw version installed: '+p.version);process.exit(1)};console.log('OpenClaw pin verified: '+p.version)" \
     && python3 /tmp/oc_node_version.py --package-json /usr/lib/node_modules/openclaw/package.json --runtime-floors /usr/lib/node_modules/openclaw --verify "$(/usr/bin/node --version | sed 's/^v//')" \
     && npm install -g node-llama-cpp@3.22.4 \
     && npm install -g mcporter@0.17.1 \
