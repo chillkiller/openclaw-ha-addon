@@ -17,6 +17,7 @@ The add-on clears state locks left behind by a crashed gateway before it repairs
 - The sidebar panel opens a tabbed landing page with Control UI, Terminal and Docs views instead of jumping straight into the Control UI. The page pairs with the gateway automatically on first open, shows a live gateway health indicator, and also offers the CA certificate download and an external Control UI link. The Control UI stays available directly at /webui/. When a remote gateway is configured, the landing starts on the Terminal view and reports the remote gateway instead of an empty Control UI.
 - The landing page follows the active Home Assistant theme (light or dark) via the parent document, falling back to the operating system color scheme when no parent document is reachable. It uses the bundled documentation (served at /docs).
 - The add-on now ships the official OpenClaw artwork as its app icon.
+- The sidebar panel is visible to all Home Assistant users by default; administrators can restrict it per user in Home Assistant (panel visibility is governed by HA, not by this add-on).
 
 ### Changed
 
