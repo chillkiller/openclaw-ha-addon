@@ -3,57 +3,128 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-  <meta name="color-scheme" content="dark">
+  <meta name="color-scheme" content="dark light">
+  <script>
+  (function () {
+    'use strict';
+    // Follow the Home Assistant parent theme when running inside the ingress iframe.
+    // Falls back to OS preference otherwise.
+    var isDark = true;
+    try {
+      if (window.parent && window.parent !== window) {
+        var cs = window.parent.getComputedStyle(window.parent.document.documentElement);
+        var bg = (cs.getPropertyValue('--primary-background-color') || '').trim();
+        var txt = (cs.getPropertyValue('--primary-text-color') || '').trim();
+        var card = (cs.getPropertyValue('--card-background-color') || '').trim();
+        var dim = (cs.getPropertyValue('--secondary-text-color') || '').trim();
+        var accent = (cs.getPropertyValue('--primary-color') || '').trim();
+        var divider = (cs.getPropertyValue('--divider-color') || '').trim();
+        if (bg) { document.documentElement.style.setProperty('--ha-bg', bg); }
+        if (card) { document.documentElement.style.setProperty('--ha-card', card); }
+        if (card) { document.documentElement.style.setProperty('--ha-card-2', darken(card, 6)); }
+        if (txt) { document.documentElement.style.setProperty('--ha-text', txt); }
+        if (dim) { document.documentElement.style.setProperty('--ha-text-dim', dim); }
+        if (accent) { document.documentElement.style.setProperty('--ha-accent', accent); }
+        if (divider) { document.documentElement.style.setProperty('--ha-border', divider); }
+        isDark = isDarkColor(bg);
+      } else {
+        isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      }
+    } catch (e) {
+      try { isDark = window.matchMedia('(prefers-color-scheme: dark)').matches; } catch (e2) {}
+    }
+    document.documentElement.setAttribute('data-ha-theme', isDark ? 'dark' : 'light');
+    function parseColor(c) {
+      if (!c) return null;
+      c = String(c).trim().toLowerCase();
+      var m = c.match(/^#([0-9a-f]{3,8})$/i);
+      if (m) {
+        var h = m[1];
+        if (h.length === 3 || h.length === 4) h = h.split('').map(function (x) { return x + x; }).join('');
+        if (h.length >= 6) return [parseInt(h.substr(0, 2), 16), parseInt(h.substr(2, 2), 16), parseInt(h.substr(4, 2), 16)];
+        return null;
+      }
+      m = c.match(/^rgba?\(\s*([\d.]+)[, ]+([\d.]+)[, ]+([\d.]+)/);
+      if (m) return [Math.round(+m[1]), Math.round(+m[2]), Math.round(+m[3])];
+      return null;
+    }
+    function isDarkColor(c) {
+      var rgb = parseColor(c);
+      if (!rgb) return true;
+      var lum = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
+      return lum < 0.5;
+    }
+    function darken(c, pct) {
+      var rgb = parseColor(c);
+      if (!rgb) return c;
+      var f = Math.max(0, 1 - pct / 100);
+      return 'rgb(' + Math.round(rgb[0]*f) + ',' + Math.round(rgb[1]*f) + ',' + Math.round(rgb[2]*f) + ')';
+    }
+  })();
+  </script>
   <title>OpenClaw Assistant</title>
     <style>
     :root{
-      --bg:#101318;
-      --surface:#1a1d24;
-      --surface-2:#22262f;
-      --border:rgba(255,255,255,.07);
-      --border-strong:rgba(255,255,255,.12);
-      --text:#e8eaed;
-      --text-dim:#9aa3b2;
-      --accent:#03a9f4;
-      --accent-soft:rgba(3,169,244,.16);
-      --ok:#2fd46a;
-      --warn:#f5b53f;
-      --err:#f26d6d;
-      --radius:14px;
+      --ha-bg:#fafafa;
+      --ha-card:#ffffff;
+      --ha-card-2:#f0f2f5;
+      --ha-border:rgba(0,0,0,.09);
+      --ha-text:#141414;
+      --ha-text-dim:#5e5e5e;
+      --ha-accent:#009ac7;
+      --ha-accent-soft:rgba(0,154,199,.12);
+      --ha-ok:#1f9e4d;
+      --ha-err:#d64848;
+      --shadow:0 6px 24px rgba(20,20,30,.10);
+      color-scheme: light;
+    }
+    html[data-ha-theme="dark"]{
+      --ha-bg:#111418;
+      --ha-card:#1b1f26;
+      --ha-card-2:#232833;
+      --ha-border:rgba(255,255,255,.09);
+      --ha-text:#e8eaed;
+      --ha-text-dim:#9aa3b2;
+      --ha-accent:#03a9f4;
+      --ha-accent-soft:rgba(3,169,244,.16);
+      --ha-ok:#2fd46a;
+      --ha-err:#f26d6d;
+      --shadow:0 6px 24px rgba(0,0,0,.35);
+      color-scheme: dark;
     }
     *{box-sizing:border-box}
     html,body{margin:0;padding:0;height:100%;overflow:hidden}
-    body{background:var(--bg);color:var(--text);font-family:Roboto,"Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;display:flex;flex-direction:column;-webkit-font-smoothing:antialiased}
+    body{background:var(--ha-bg);color:var(--ha-text);font-family:Roboto,"Segoe UI",system-ui,-apple-system,"Helvetica Neue",Arial,sans-serif;display:flex;flex-direction:column;-webkit-font-smoothing:antialiased}
 
-    .topbar{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;padding:8px 14px;background:var(--surface);border-bottom:1px solid var(--border);min-height:54px;flex-shrink:0}
+    .topbar{display:grid;grid-template-columns:1fr auto 1fr;align-items:center;gap:12px;padding:8px 14px;background:var(--ha-card);border-bottom:1px solid var(--ha-border);min-height:54px;flex-shrink:0}
     .topbar-left{display:flex;align-items:center;gap:12px;justify-self:start;min-width:0}
     .logo{width:32px;height:32px;border-radius:8px;flex-shrink:0;object-fit:contain}
     .title{display:flex;flex-direction:column;line-height:1.15;min-width:0}
     .title h1{margin:0;font-size:15px;font-weight:600;white-space:nowrap}
-    .title p{margin:0;font-size:11px;color:var(--text-dim);white-space:nowrap}
+    .title p{margin:0;font-size:11px;color:var(--ha-text-dim);white-space:nowrap}
 
     .tabs{display:flex;gap:8px;justify-self:center;align-items:center}
-    .tab{appearance:none;border:1px solid var(--border);background:var(--surface-2);color:var(--text);
+    .tab{appearance:none;border:1px solid var(--ha-border);background:var(--ha-card-2);color:var(--ha-text);
       border-radius:10px;padding:7px 13px;font-size:13px;font-weight:500;cursor:pointer;
       display:inline-flex;align-items:center;gap:7px;text-decoration:none;transition:background .15s,border-color .15s,color .15s;white-space:nowrap}
-    .tab:hover{background:#262b34;border-color:var(--border-strong)}
-    .tab.active{background:var(--accent-soft);border-color:rgba(3,169,244,.45);color:var(--accent)}
-    .tab.ghost{color:var(--text-dim)}
+    .tab:hover{background:var(--ha-card-2);border-color:var(--ha-border)}
+    .tab.active{background:var(--ha-accent-soft);border-color:var(--ha-accent);color:var(--ha-accent)}
+    .tab.ghost{color:var(--ha-text-dim)}
     .tab svg{display:block}
 
-    .status{display:flex;align-items:center;gap:8px;justify-self:end;padding-left:10px;border-left:1px solid var(--border)}
+    .status{display:flex;align-items:center;gap:8px;justify-self:end;padding-left:10px;border-left:1px solid var(--ha-border)}
     .pill{display:inline-flex;align-items:center;gap:7px;padding:6px 12px;border-radius:999px;font-size:12px;font-weight:500;
-      background:var(--surface-2);border:1px solid var(--border);color:var(--text-dim);white-space:nowrap}
-    .pill .dot{width:8px;height:8px;border-radius:50%;background:var(--text-dim);transition:background .25s}
-    .pill.ok{color:#8ef0bb;border-color:rgba(47,212,106,.35)}
-    .pill.ok .dot{background:var(--ok);box-shadow:0 0 8px rgba(47,212,106,.55)}
-    .pill.err{color:#ffb0b0;border-color:rgba(242,109,109,.35)}
-    .pill.err .dot{background:var(--err)}
+      background:var(--ha-card-2);border:1px solid var(--ha-border);color:var(--ha-text-dim);white-space:nowrap}
+    .pill .dot{width:8px;height:8px;border-radius:50%;background:var(--ha-text-dim);transition:background .25s}
+    .pill.ok{color:var(--ha-ok);border-color:color-mix(in srgb, var(--ha-ok) 35%, transparent)}
+    .pill.ok .dot{background:var(--ha-ok);box-shadow:0 0 8px color-mix(in srgb, var(--ha-ok) 55%, transparent)}
+    .pill.err{color:var(--ha-err);border-color:color-mix(in srgb, var(--ha-err) 35%, transparent)}
+    .pill.err .dot{background:var(--ha-err)}
 
     .stage{flex:1;position:relative;min-height:0}
-    .pane{position:absolute;inset:0;border:0;width:100%;height:100%;background:#000;display:none}
+    .pane{position:absolute;inset:0;border:0;width:100%;height:100%;background:var(--ha-bg);display:none}
     .pane.active{display:block}
-    .pane.none{display:none;align-items:center;justify-content:center;color:var(--text-dim);font-size:14px;background:var(--bg)}
+    .pane.none{display:none;align-items:center;justify-content:center;color:var(--ha-text-dim);font-size:14px;background:var(--bg)}
     .pane.none.active{display:flex}
 
     @media (max-width:760px){
