@@ -68,7 +68,7 @@
 <body>
   <header class="topbar">
     <div class="topbar-left">
-      <img class="logo" src="./icon.png" alt="OpenClaw" onerror="this.style.visibility='hidden'">
+      <img class="logo" src="./icon.png?v=__OPENCLAW_VERSION__" alt="OpenClaw" onerror="this.style.visibility='hidden'">
       <div class="title">
         <h1>OpenClaw Assistant</h1>
         <p>Version __OPENCLAW_VERSION__ · Home Assistant Ingress</p>
