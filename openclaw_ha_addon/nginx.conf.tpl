@@ -8,9 +8,8 @@ events { worker_connections 1024; }
 http {
   gzip off;
 
-  # HTML responses must stay uncompressed so sub_filter can rewrite them.
-  # The static-asset locations override this with an Accept-Encoding
-  # passthrough so the gateway can serve brotli/gzip (3.4x smaller transfers).
+  # HTML responses must stay uncompressed so sub_filter can rewrite them
+  # (the Control UI HTML carries the ingress prefix into asset URLs).
   proxy_set_header Accept-Encoding "";
   include       /etc/nginx/mime.types;
   default_type  application/octet-stream;
@@ -29,66 +28,22 @@ http {
     ''      close;
   }
 
-  # Infer the HA Ingress base path from the request URI when the supervisor
-  # does not send the X-Ingress-Path header. OpenClaw 2026.8.2 uses this
-  # prefix to resolve WebSocket and asset URLs in the ControlUI.
+  # Ingress prefix of the current request ("/api/hassio_ingress/<token>").
+  # The gateway serves the Control UI rooted at /webui (gateway.controlUi.basePath),
+  # so the gateway emits asset/bootstrap URLs as /webui/... — but in Home Assistant
+  # the browser reaches the app through the ingress prefix, so HTML responses are
+  # rewritten below to $ingress_path_norm-prefixed URLs.
   map $request_uri $ingress_path {
     ~^(/api/hassio_ingress/[^/]+)/    $1;
     default                          $http_x_ingress_path;
   }
 
-  # Conditional prefixes for ControlUI asset rewriting.
-  # If HA Supervisor sends X-Ingress-Path, use the absolute Ingress route.
-  # Otherwise fall back to relative asset URLs so the browser resolves them
-  # under the current /webui/ path (inside HA Ingress or direct nginx access).
-  # Base path WITHOUT trailing slash. OpenClaw's ControlUI appends paths
-  # like "/themes/" and "/assets/" itself, so a trailing slash would
-  # produce double slashes (e.g. /webui//themes/claw.css).
-  # Normalize the ingress path: defend against supervisor variants that
-  # already include the /webui panel path (double-/webui bug, 2026-09-22)
-  # and against the current variant that omits it (asset 404s, 2026-09-23).
-  # All ControlUI prefixes are built as $ingress_path_norm + "/webui/..."
-  # so the browser always resolves assets under the path the page was
-  # loaded from (/api/hassio_ingress/<token>/webui/).
+  # Normalize the ingress path: strip a trailing "/webui" when the supervisor
+  # includes it, and guard against empty (direct nginx access).
   map $ingress_path $ingress_path_norm {
     ""                        "";
     ~^(?<ip_base>.*)/webui/?$  $ip_base;
     default                    $ingress_path;
-  }
-
-  map $ingress_path_norm $control_ui_base_path {
-    ""      "";
-    default "$ingress_path_norm/webui";
-  }
-
-  map $ingress_path_norm $asset_href_prefix {
-    ""      "./assets/";
-    default "$ingress_path_norm/webui/assets/";
-  }
-
-  map $ingress_path_norm $asset_src_prefix {
-    ""      "./assets/";
-    default "$ingress_path_norm/webui/assets/";
-  }
-
-  map $ingress_path_norm $favicon_prefix {
-    ""      "./favicon";
-    default "$ingress_path_norm/webui/favicon";
-  }
-
-  map $ingress_path_norm $apple_prefix {
-    ""      "./apple-touch-icon";
-    default "$ingress_path_norm/webui/apple-touch-icon";
-  }
-
-  map $ingress_path_norm $manifest_prefix {
-    ""      "./manifest.webmanifest";
-    default "$ingress_path_norm/webui/manifest.webmanifest";
-  }
-
-  map $ingress_path_norm $theme_prefix {
-    ""      "./themes/";
-    default "$ingress_path_norm/webui/themes/";
   }
 
   server {
@@ -176,74 +131,6 @@ http {
     # trusted-proxy auth. We run the gateway locally in token-auth mode, so we
     # keep the request as plain local-direct traffic.
 
-    # Static assets served under /webui/ must not require the app bearer
-    # token because HA Supervisor proxies them without injecting that header.
-    # HA Ingress already authenticates the user before forwarding the request.
-    location ^~ /webui/assets/ {
-      proxy_pass http://127.0.0.1:__GATEWAY_INTERNAL_PORT__/assets/;
-      proxy_http_version 1.1;
-      proxy_set_header Host 127.0.0.1:__GATEWAY_INTERNAL_PORT__;
-      proxy_set_header X-Real-IP "";
-      proxy_set_header X-Forwarded-For "";
-      proxy_set_header X-Forwarded-Host "";
-      proxy_set_header X-Forwarded-Proto "";
-      proxy_set_header Forwarded "";
-      proxy_set_header Accept-Encoding $http_accept_encoding;
-      proxy_buffering off;
-    }
-
-    location ^~ /webui/themes/ {
-      proxy_pass http://127.0.0.1:__GATEWAY_INTERNAL_PORT__/themes/;
-      proxy_http_version 1.1;
-      proxy_set_header Host 127.0.0.1:__GATEWAY_INTERNAL_PORT__;
-      proxy_set_header X-Real-IP "";
-      proxy_set_header X-Forwarded-For "";
-      proxy_set_header X-Forwarded-Host "";
-      proxy_set_header X-Forwarded-Proto "";
-      proxy_set_header Forwarded "";
-      proxy_set_header Accept-Encoding $http_accept_encoding;
-      proxy_buffering off;
-    }
-
-    location ^~ /webui/favicon {
-      proxy_pass http://127.0.0.1:__GATEWAY_INTERNAL_PORT__/favicon;
-      proxy_http_version 1.1;
-      proxy_set_header Host 127.0.0.1:__GATEWAY_INTERNAL_PORT__;
-      proxy_set_header X-Real-IP "";
-      proxy_set_header X-Forwarded-For "";
-      proxy_set_header X-Forwarded-Host "";
-      proxy_set_header X-Forwarded-Proto "";
-      proxy_set_header Forwarded "";
-      proxy_set_header Accept-Encoding $http_accept_encoding;
-      proxy_buffering off;
-    }
-
-    location ^~ /webui/apple-touch-icon {
-      proxy_pass http://127.0.0.1:__GATEWAY_INTERNAL_PORT__/apple-touch-icon;
-      proxy_http_version 1.1;
-      proxy_set_header Host 127.0.0.1:__GATEWAY_INTERNAL_PORT__;
-      proxy_set_header X-Real-IP "";
-      proxy_set_header X-Forwarded-For "";
-      proxy_set_header X-Forwarded-Host "";
-      proxy_set_header X-Forwarded-Proto "";
-      proxy_set_header Forwarded "";
-      proxy_set_header Accept-Encoding $http_accept_encoding;
-      proxy_buffering off;
-    }
-
-    location ^~ /webui/manifest.webmanifest {
-      proxy_pass http://127.0.0.1:__GATEWAY_INTERNAL_PORT__/manifest.webmanifest;
-      proxy_http_version 1.1;
-      proxy_set_header Host 127.0.0.1:__GATEWAY_INTERNAL_PORT__;
-      proxy_set_header X-Real-IP "";
-      proxy_set_header X-Forwarded-For "";
-      proxy_set_header X-Forwarded-Host "";
-      proxy_set_header X-Forwarded-Proto "";
-      proxy_set_header Forwarded "";
-      proxy_set_header Accept-Encoding $http_accept_encoding;
-      proxy_buffering off;
-    }
-
     # WebSocket clients (HA Supervisor ingress bridge) request the panel path
     # WITHOUT a trailing slash when the ControlUI stored the gateway URL as
     # .../webui (its normalized localStorage form). The previous implicit
@@ -271,6 +158,10 @@ http {
       proxy_read_timeout 86400s;
       proxy_send_timeout 86400s;
       proxy_buffering off;
+      proxy_hide_header X-Frame-Options;
+      proxy_hide_header Content-Security-Policy;
+      add_header X-Frame-Options "SAMEORIGIN" always;
+      add_header Content-Security-Policy "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https:; media-src 'self' data: blob:; font-src 'self' https://fonts.gstatic.com; worker-src 'self'; connect-src 'self' ws: wss: data: https://api.openai.com https://tweakcn.com; frame-src 'self' http: https:" always;
     }
 
     location ^~ /webui/ {
@@ -278,12 +169,17 @@ http {
       # loading page instead of a raw 502, so the panel explains itself.
       proxy_intercept_errors on;
       error_page 502 503 504 = /loading;
-      proxy_pass http://127.0.0.1:__GATEWAY_INTERNAL_PORT__/;
+      # The gateway serves the Control UI rooted at /webui
+      # (gateway.controlUi.basePath=/webui, set via oc_config_helper).
+      # The ingress prefix is handled by the sub_filter rewrites below:
+      # the browser lives under /api/hassio_ingress/<token>/webui/, so
+      # HTML references to /webui/... must be re-prefixed with the ingress path.
+      proxy_pass http://127.0.0.1:__GATEWAY_INTERNAL_PORT__/webui/;
       proxy_set_header Accept-Encoding identity;
       proxy_http_version 1.1;
       proxy_set_header Upgrade $http_upgrade;
       proxy_set_header Connection $connection_upgrade;
-      # OpenClaw 2026.9.5 identifies loopback requests by the Host header.
+      # OpenClaw identifies loopback requests by the Host header.
       # If we forward the original HA/Nabu Casa hostname, the gateway treats
       # the connection as remote and rejects the WebSocket handshake.
       # Force the loopback Host so the gateway keeps treating this as local.
@@ -313,44 +209,21 @@ http {
       # configurable frame-ancestors list (see github.com/openclaw/openclaw/issues/78577).
       add_header Content-Security-Policy "default-src 'self'; base-uri 'none'; object-src 'none'; frame-ancestors 'self'; script-src 'self' 'unsafe-inline' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; img-src 'self' data: blob: https:; media-src 'self' data: blob:; font-src 'self' https://fonts.gstatic.com; worker-src 'self'; connect-src 'self' ws: wss: data: https://api.openai.com https://tweakcn.com; frame-src 'self' http: https:" always;
 
-      # OpenClaw 2026.8.2+ reads the base path from a data attribute on <html>.
-      # When HA Supervisor sends X-Ingress-Path, set the attribute server-side.
-      # When it doesn't (e.g. iframe/Companion App), a client-side script below
-      # derives the path from window.location.pathname. We replace an existing
-      # empty attribute to avoid duplicate attributes.
-      # sub_filter_types defaults to text/html — the explicit line caused
-      # "duplicate MIME type text/html" warnings on every nginx -t.
+      # The gateway stamps <html data-openclaw-control-ui-base-path="/webui">.
+      # Inside HA Ingress the browser path is /api/hassio_ingress/<token>/webui/,
+      # so re-prefix the attribute (and the URLs the gateway emits) with the
+      # ingress path. Without a prefix (direct nginx access) the untouched
+      # "/webui/..." URLs stay correct.
       sub_filter_once off;
+      sub_filter 'data-openclaw-control-ui-base-path="/webui"' 'data-openclaw-control-ui-base-path="$ingress_path_norm/webui"';
+      sub_filter 'href="/webui/' 'href="$ingress_path_norm/webui/';
+      sub_filter 'src="/webui/' 'src="$ingress_path_norm/webui/';
+      sub_filter '<base href="/webui/"' '<base href="$ingress_path_norm/webui/"';
 
-      sub_filter '<html data-openclaw-control-ui-base-path=""' '<html data-openclaw-control-ui-base-path="$control_ui_base_path"';
-      sub_filter '<html ' '<html data-openclaw-control-ui-base-path="$control_ui_base_path" ';
-
-      # OpenClaw 2026.9.4: when X-Ingress-Path is missing the attribute above is
-      # empty, so the ControlUI falls back to ws://127.0.0.1:18789. We inject a
-      # script immediately after <head> that:
-      #  - Derives the Ingress base path from window.location.pathname.
-      #  - Forces the data attribute on <html> (overwriting any duplicate/empty).
-      #  - Removes stale localStorage gatewayUrl/bootRecord entries that would
-      #    otherwise override the path and keep pointing at 127.0.0.1:18789.
-      # This runs before any ControlUI module evaluates.
-      sub_filter '<head>' '<head><script data-cfasync="false">(function(){var p=window.location.pathname||"/";var i=p.lastIndexOf("/webui/");var b=i>=0?p.slice(0,i+6):"";var e=document.documentElement;var a="data-openclaw-control-ui-base-path";if(b){e.removeAttribute(a);e.setAttribute(a,b);}try{var keys=Object.keys(localStorage);for(var k=0;k<keys.length;k++){var key=keys[k];if(key.indexOf("openclaw.control.gatewayUrl.v1:")===0||key.indexOf("openclaw.control.bootRecord.v1:")===0){var v=localStorage.getItem(key)||"";if(b?v.indexOf(b)<0:v.indexOf("127.0.0.1:18789")>=0){localStorage.removeItem(key);}}}}catch(_){}})();</script>';
-
-      # Rewrite absolute asset links: relative when no Ingress path is known,
-      # absolute under the Ingress path when X-Ingress-Path is sent. nginx
-      # proxies both /webui/assets/* and /api/hassio_ingress/*/webui/assets/*
-      # to the gateway's /assets/* regardless of the route.
-      sub_filter "href=\"/favicon" "href=\"$favicon_prefix";
-      sub_filter "href=\"/apple-touch-icon" "href=\"$apple_prefix";
-      sub_filter "href=\"/manifest.webmanifest" "href=\"$manifest_prefix";
-      sub_filter "href=\"/assets/" "href=\"$asset_href_prefix";
-      sub_filter "src=\"/assets/" "src=\"$asset_src_prefix";
-
-      # OpenClaw loads theme CSS dynamically via base + "/themes/theme.css".
-      # Rewrite the absolute form as well, in case the base path injection fails.
-      sub_filter "href=\"/themes/" "href=\"$theme_prefix";
-
-      # If OpenClaw ever emits <base href="/">, rewrite it analogously.
-      sub_filter '<base href="/"' '<base href="$control_ui_base_path"';
+      # Purging stale localStorage entries left by pre-basePath builds
+      # (gatewayUrl/bootRecord pointing at 127.0.0.1:18789 or at an ingress
+      # path from another token). Runs before the ControlUI modules evaluate.
+      sub_filter '<head>' '<head><script data-cfasync="false">(function(){var p=window.location.pathname||"/";var i=p.lastIndexOf("/webui/");var b=i>=0?p.slice(0,i+6):"";try{var keys=Object.keys(localStorage);for(var k=0;k<keys.length;k++){var key=keys[k];if(key.indexOf("openclaw.control.gatewayUrl.v1:")===0||key.indexOf("openclaw.control.bootRecord.v1:")===0){var v=localStorage.getItem(key)||"";if(b?v.indexOf(b)<0:v.indexOf("127.0.0.1:18789")>=0){localStorage.removeItem(key);}}}}catch(_){}})();</script>';
     }
 
     # Web terminal (ttyd)

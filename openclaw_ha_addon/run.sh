@@ -1663,6 +1663,15 @@ PY
     echo "WARN: Could not set controlUi settings — gateway may reject the Control UI"
 fi
 
+# Serve the Control UI under /webui (gateway.controlUi.basePath). The HA
+# ingress panel opens /webui/ directly; nginx proxies it 1:1 and re-prefixes
+# asset/bootstrap URLs with the ingress path before sending HTML to browsers.
+# The gateway requires a restart to pick this up (read at startup).
+if [ -f "$HELPER_PATH" ] && [ -f "$OPENCLAW_CONFIG_PATH" ]; then
+  python3 "$HELPER_PATH" set-control-ui-base-path "/webui" || \
+    echo "WARN: Could not set controlUi.basePath — gateway will serve the Control UI at /"
+fi
+
 # Apply mDNS settings (OpenClaw native bonjour plugin)
 if [ -f "$HELPER_PATH" ] && [ -f "$OPENCLAW_CONFIG_PATH" ]; then
   python3 "$HELPER_PATH" set-mdns-settings "$MDNS_MODE" || \

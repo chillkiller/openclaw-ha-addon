@@ -29,6 +29,12 @@ ingress: true
 ingress_port: 49200
 panel_title: OpenClaw Assistant
 panel_icon: mdi:robot
+# Sidebar panel visible to all Home Assistant users (Music Assistant pattern),
+# not only administrators. NOTE: the ingress nginx injects the gateway token
+# on /webui/ requests, so panel viewers get a gateway operator session.
+panel_admin: false
+# The sidebar panel opens the Control UI directly instead of the landing page.
+ingress_entry: /webui/
 
 # Supervisor watchdog: restart the app when the Ingress front door stops
 # answering. The probe originates from the Supervisor network (172.30.32.0/23),

@@ -485,6 +485,38 @@ def set_control_ui_origins(
     return False
 
 
+
+def set_control_ui_base_path(base_path: str):
+    """Set gateway.controlUi.basePath (e.g. /webui). Idempotent.
+
+    The Control UI is served under this prefix by the gateway itself and the
+    add-on nginx proxies it 1:1 (see nginx.conf.tpl). Empty string removes the
+    key (UI served at /)."""
+    cfg = read_config() or {}
+    gateway = cfg.setdefault("gateway", {})
+    control_ui = gateway.setdefault("controlUi", {})
+    base_path = (base_path or "").strip()
+    if base_path:
+        if not base_path.startswith("/") or base_path.endswith("/") or "//" in base_path:
+            print("ERROR: basePath must be an absolute path without trailing slash, e.g. /webui")
+            return False
+        if control_ui.get("basePath") == base_path:
+            print("INFO: controlUi.basePath already set")
+            return True
+        control_ui["basePath"] = base_path
+    else:
+        if "basePath" not in control_ui:
+            print("INFO: controlUi.basePath already unset")
+            return True
+        del control_ui["basePath"]
+
+    if write_config(cfg):
+        print(f"INFO: controlUi.basePath -> {base_path or '(removed)'}")
+        return True
+    print("ERROR: Failed to write config")
+    return False
+
+
 def set_mdns_settings(mode: str):
     """
     Configure OpenClaw's bundled Bonjour mDNS discovery.
@@ -675,6 +707,7 @@ def main():
         print("  apply-network-settings <network_mode> <mode> <remote_url> <bind> <port> <internal_port> <openai_api> <auth_mode> <trusted_proxies> <tls_enabled> <tls_auto> <tailscale_mode>")
         print("  apply-gateway-settings <mode> <remote_url> <bind> <port> <openai_api> <auth_mode> <trusted_proxies>  (deprecated)")
         print("  set-control-ui-origins <origins_csv> [additional_csv] [disable_device_auth]")
+        print("  set-control-ui-base-path <base_path>  (e.g. /webui; empty string removes the key)")
         print("  set-mdns-settings <mode> [port] [hostname] [interface]")
         print("  apply-cron-settings <skip_missed_jobs:true|false>")
         print("  apply-blocked-hostnames <csv>")
@@ -759,6 +792,12 @@ def main():
             disable = sys.argv[4].strip().lower() == "true"
         public_origin = sys.argv[5] if len(sys.argv) == 6 else ""
         sys.exit(0 if set_control_ui_origins(origins_csv, additional, disable, public_origin) else 1)
+
+    elif cmd == "set-control-ui-base-path":
+        if len(sys.argv) != 3:
+            print("Usage: oc_config_helper.py set-control-ui-base-path <base_path>  (empty string removes the key)")
+            sys.exit(1)
+        sys.exit(0 if set_control_ui_base_path(sys.argv[2]) else 1)
 
     elif cmd == "set-mdns-settings":
         if len(sys.argv) < 3:
