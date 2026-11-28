@@ -249,12 +249,52 @@ http {
       sub_filter '&quot;basePath&quot;:&quot;/webui&quot;' '&quot;basePath&quot;:&quot;$ingress_path_norm/webui&quot;';
 
       # No injected sidebar chrome: the HA panel chrome (collapsible sidebar
-      # rail, like the rest of HA) is the intended navigation. See REPAIR_STATUS.
+      # rail, like the rest of HA) is the intended navigation.
 
       # Purging stale localStorage entries left by pre-basePath builds
       # (gatewayUrl/bootRecord pointing at 127.0.0.1:18789 or at an ingress
       # path from another token). Runs before the ControlUI modules evaluate.
-      sub_filter '<head>' '<head><script data-cfasync="false">(function(){var p=window.location.pathname||"/";var i=p.lastIndexOf("/webui/");var b=i>=0?p.slice(0,i+6):"";try{var keys=Object.keys(localStorage);for(var k=0;k<keys.length;k++){var key=keys[k];if(key.indexOf("openclaw.control.gatewayUrl.v1:")===0||key.indexOf("openclaw.control.bootRecord.v1:")===0){var v=localStorage.getItem(key)||"";if(b?v.indexOf(b)<0:v.indexOf("127.0.0.1:18789")>=0){localStorage.removeItem(key);}}}}catch(_){}})();</script>';
+      sub_filter '<head>' '<head><script data-cfasync="false">(function(){var p=window.location.pathname||"/";var i=p.lastIndexOf("/webui/");var b=i>=0?p.slice(0,i+6):"";var m=p.match(/^(\/api\/hassio_ingress\/[^/]+)\//);if(m){try{var a=document.documentElement.getAttribute("data-openclaw-control-ui-base-path")||"";if(a.indexOf(m[1])!==0){document.documentElement.setAttribute("data-openclaw-control-ui-base-path",m[1]+"/webui");}}catch(_){}}try{var keys=Object.keys(localStorage);for(var k=0;k<keys.length;k++){var key=keys[k];if(key.indexOf("openclaw.control.gatewayUrl.v1:")===0||key.indexOf("openclaw.control.bootRecord.v1:")===0){var v=localStorage.getItem(key)||"";if(b?v.indexOf(b)<0:v.indexOf("127.0.0.1:18789")>=0){localStorage.removeItem(key);}}}}catch(_){}})();</script>';
+    }
+
+    # Static Control UI assets are served with their upstream precompressed
+    # representation when the browser offers one. Unlike the HTML these change
+    # only with releases (content-hashed names), so they are safe to cache and
+    # must NOT be forced through identity encoding.
+    location ^~ /webui/assets/ {
+      proxy_pass http://127.0.0.1:__GATEWAY_INTERNAL_PORT__/webui/assets/;
+      proxy_http_version 1.1;
+      proxy_set_header Host 127.0.0.1:__GATEWAY_INTERNAL_PORT__;
+      proxy_set_header X-Real-IP "";
+      proxy_set_header X-Forwarded-For "";
+      proxy_set_header X-Forwarded-Host "";
+      proxy_set_header X-Forwarded-Proto "";
+      proxy_set_header Forwarded "";
+      proxy_set_header Accept-Encoding $http_accept_encoding;
+      proxy_hide_header X-Frame-Options;
+      proxy_hide_header Content-Security-Policy;
+      proxy_hide_header Cache-Control;
+      add_header X-Frame-Options "SAMEORIGIN" always;
+      add_header Cache-Control "public, max-age=31536000, immutable";
+      proxy_buffering off;
+    }
+
+    location ^~ /webui/themes/ {
+      proxy_pass http://127.0.0.1:__GATEWAY_INTERNAL_PORT__/webui/themes/;
+      proxy_http_version 1.1;
+      proxy_set_header Host 127.0.0.1:__GATEWAY_INTERNAL_PORT__;
+      proxy_set_header X-Real-IP "";
+      proxy_set_header X-Forwarded-For "";
+      proxy_set_header X-Forwarded-Host "";
+      proxy_set_header X-Forwarded-Proto "";
+      proxy_set_header Forwarded "";
+      proxy_set_header Accept-Encoding $http_accept_encoding;
+      proxy_hide_header X-Frame-Options;
+      proxy_hide_header Content-Security-Policy;
+      proxy_hide_header Cache-Control;
+      add_header X-Frame-Options "SAMEORIGIN" always;
+      add_header Cache-Control "public, max-age=3600";
+      proxy_buffering off;
     }
 
     # Web terminal (ttyd)

@@ -30,6 +30,7 @@ def main():
     internal_gw_port = os.environ.get('GATEWAY_INTERNAL_PORT', '')
     access_mode = os.environ.get('ACCESS_MODE', 'custom')
     network_mode = os.environ.get('NETWORK_MODE', 'ingress_only')
+    gateway_mode = os.environ.get('GATEWAY_MODE', 'local')
     openclaw_version = os.environ.get('OPENCLAW_VERSION', 'unknown')
 
     # Defense-in-depth (audit 2026-10-09): every value interpolated into
@@ -194,6 +195,7 @@ def main():
     landing = landing.replace('__GATEWAY_PUBLIC_URL__', public_url)
     landing = landing.replace('__GW_PUBLIC_URL_PATH__', gw_path)
     landing = landing.replace('__ACCESS_MODE__', access_mode)
+    landing = landing.replace('__GATEWAY_MODE__', gateway_mode)
     landing = landing.replace('__HTTPS_PORT__', https_port if enable_https else '')
     landing = landing.replace('__DISK_TOTAL__', disk_total)
     landing = landing.replace('__DISK_USED__', disk_used)

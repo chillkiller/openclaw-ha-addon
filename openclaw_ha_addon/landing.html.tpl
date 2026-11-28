@@ -7,59 +7,90 @@
   <script>
   (function () {
     'use strict';
-    // Follow the Home Assistant parent theme when running inside the ingress iframe.
-    // Falls back to OS preference otherwise.
-    var isDark = true;
-    try {
-      if (window.parent && window.parent !== window) {
-        var cs = window.parent.getComputedStyle(window.parent.document.documentElement);
-        var bg = (cs.getPropertyValue('--primary-background-color') || '').trim();
-        var txt = (cs.getPropertyValue('--primary-text-color') || '').trim();
-        var card = (cs.getPropertyValue('--card-background-color') || '').trim();
-        var dim = (cs.getPropertyValue('--secondary-text-color') || '').trim();
-        var accent = (cs.getPropertyValue('--primary-color') || '').trim();
-        var divider = (cs.getPropertyValue('--divider-color') || '').trim();
-        if (bg) { document.documentElement.style.setProperty('--ha-bg', bg); }
-        if (card) { document.documentElement.style.setProperty('--ha-card', card); }
-        if (card) { document.documentElement.style.setProperty('--ha-card-2', darken(card, 6)); }
-        if (txt) { document.documentElement.style.setProperty('--ha-text', txt); }
-        if (dim) { document.documentElement.style.setProperty('--ha-text-dim', dim); }
-        if (accent) { document.documentElement.style.setProperty('--ha-accent', accent); }
-        if (divider) { document.documentElement.style.setProperty('--ha-border', divider); }
-        isDark = isDarkColor(bg);
-      } else {
-        isDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-      }
-    } catch (e) {
-      try { isDark = window.matchMedia('(prefers-color-scheme: dark)').matches; } catch (e2) {}
-    }
-    document.documentElement.setAttribute('data-ha-theme', isDark ? 'dark' : 'light');
-    function parseColor(c) {
+    var root = document.documentElement;
+
+    function parseCssColor(c) {
       if (!c) return null;
-      c = String(c).trim().toLowerCase();
-      var m = c.match(/^#([0-9a-f]{3,8})$/i);
-      if (m) {
-        var h = m[1];
-        if (h.length === 3 || h.length === 4) h = h.split('').map(function (x) { return x + x; }).join('');
-        if (h.length >= 6) return [parseInt(h.substr(0, 2), 16), parseInt(h.substr(2, 2), 16), parseInt(h.substr(4, 2), 16)];
-        return null;
-      }
-      m = c.match(/^rgba?\(\s*([\d.]+)[, ]+([\d.]+)[, ]+([\d.]+)/);
-      if (m) return [Math.round(+m[1]), Math.round(+m[2]), Math.round(+m[3])];
+      var probe = document.createElement('span');
+      probe.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none;color:' + c;
+      document.documentElement.appendChild(probe);
+      var resolved = '';
+      try { resolved = window.getComputedStyle(probe).color || ''; } catch (e) {}
+      document.documentElement.removeChild(probe);
+      var m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i.exec(resolved);
+      if (!m) return null;
+      return [Math.round(+m[1]), Math.round(+m[2]), Math.round(+m[3])];
+    }
+    function luminance(rgb) { return (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255; }
+    function shade(rgb, percent) {
+      var t = percent < 0 ? 0 : 255, p = Math.abs(percent) / 100;
+      return 'rgb(' + Math.round((t - rgb[0]) * p + rgb[0]) + ',' +
+                       Math.round((t - rgb[1]) * p + rgb[1]) + ',' +
+                       Math.round((t - rgb[2]) * p + rgb[2]) + ')';
+    }
+    function readParent() {
+      try {
+        if (window.parent && window.parent !== window && window.parent.document && window.parent.document.documentElement) {
+          var cs = window.parent.getComputedStyle(window.parent.document.documentElement);
+          return {
+            bg: (cs.getPropertyValue('--primary-background-color') || '').trim(),
+            card: (cs.getPropertyValue('--card-background-color') || '').trim(),
+            text: (cs.getPropertyValue('--primary-text-color') || '').trim(),
+            dim: (cs.getPropertyValue('--secondary-text-color') || '').trim(),
+            accent: (cs.getPropertyValue('--primary-color') || '').trim(),
+            divider: (cs.getPropertyValue('--divider-color') || '').trim()
+          };
+        }
+      } catch (e) { /* cross-origin: fall through */ }
       return null;
     }
+    function applyTheme() {
+      var parent = readParent();
+      var root = document.documentElement;
+      var dark;
+      if (parent && parent.bg) {
+        root.style.setProperty('--ha-bg', parent.bg);
+        if (parent.card) {
+          root.style.setProperty('--ha-card', parent.card);
+          var rgb = parseCssColor(parent.card);
+          if (rgb) root.style.setProperty('--ha-card-2', shade(rgb, isDarkColor(parent.bg) ? 10 : -6));
+        }
+        if (parent.text) root.style.setProperty('--ha-text', parent.text);
+        if (parent.dim) root.style.setProperty('--ha-text-dim', parent.dim);
+        if (parent.accent) root.style.setProperty('--ha-accent', parent.accent);
+        if (parent.divider) root.style.setProperty('--ha-border', parent.divider);
+        dark = isDarkColor(parent.bg);
+      } else {
+        dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+        root.setAttribute('data-ha-theme', dark ? 'dark' : 'light');
+        return;
+      }
+      root.setAttribute('data-ha-theme', dark ? 'dark' : 'light');
+    }
     function isDarkColor(c) {
-      var rgb = parseColor(c);
-      if (!rgb) return true;
-      var lum = (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255;
-      return lum < 0.5;
+      var rgb = parseCssColor(c);
+      if (!rgb) {
+        return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      }
+      return luminance(rgb) < 0.5;
     }
-    function darken(c, pct) {
-      var rgb = parseColor(c);
-      if (!rgb) return c;
-      var f = Math.max(0, 1 - pct / 100);
-      return 'rgb(' + Math.round(rgb[0]*f) + ',' + Math.round(rgb[1]*f) + ',' + Math.round(rgb[2]*f) + ')';
+    applyTheme();
+    // Follow in-place theme switches in the parent (HA swaps CSS variables /
+    // inline styles on the root element) and OS-level preference changes.
+    try {
+      var parentDoc = window.parent && window.parent.document ? window.parent.document : null;
+      if (parentDoc) {
+        var obs = new MutationObserver(function () { applyTheme(); });
+        obs.observe(parentDoc.documentElement, { attributes: true, attributeFilter: ['style', 'class', 'data-theme', 'data-ha-theme'] });
+        obs.observe(parentDoc.head || parentDoc.documentElement, { childList: true, subtree: true });
+      }
+    } catch (e) { /* ignore */ }
+    if (window.matchMedia) {
+      var mq = window.matchMedia('(prefers-color-scheme: dark)');
+      if (mq.addEventListener) mq.addEventListener('change', applyTheme);
     }
+    // Belt and braces: re-sample periodically (HA may change vars without attributes).
+    setInterval(applyTheme, 2000);
   })();
   </script>
   <title>OpenClaw Assistant</title>
@@ -124,7 +155,7 @@
     .stage{flex:1;position:relative;min-height:0}
     .pane{position:absolute;inset:0;border:0;width:100%;height:100%;background:var(--ha-bg);display:none}
     .pane.active{display:block}
-    .pane.none{display:none;align-items:center;justify-content:center;color:var(--ha-text-dim);font-size:14px;background:var(--bg)}
+    .pane.none{display:none;align-items:center;justify-content:center;color:var(--ha-text-dim);font-size:14px;background:var(--ha-bg)}
     .pane.none.active{display:flex}
 
     @media (max-width:760px){
@@ -184,6 +215,8 @@
   var SHOW_TERMINAL = __SHOW_TERMINAL_JS__;
   var SHOW_DOCS = __SHOW_DOCS_JS__;
   var ACCESS_MODE = '__ACCESS_MODE__';
+  var GATEWAY_MODE = '__GATEWAY_MODE__';
+  var REMOTE = GATEWAY_MODE === 'remote';
   var GATEWAY_TOKEN = '__GATEWAY_TOKEN__';
   var GATEWAY_INTERNAL_PORT = '__GATEWAY_INTERNAL_PORT__';
   var $ = function (id) { return document.getElementById(id); };
@@ -196,10 +229,13 @@
     ? './webui/#token=' + encodeURIComponent(GATEWAY_TOKEN)
     : './webui/';
   var ext = $('linkWebuiExternal');
-  if (ext) ext.setAttribute('href', webuiPath);
+  if (ext) {
+    ext.setAttribute('href', webuiPath);
+    if (!SHOW_WEBUI || REMOTE) ext.style.display = 'none';
+  }
 
   var panes = {
-    webui: { btn: $('tabWebui'), frame: $('paneWebui'), src: webuiPath, enabled: SHOW_WEBUI },
+    webui: { btn: $('tabWebui'), frame: $('paneWebui'), src: webuiPath, enabled: SHOW_WEBUI && !REMOTE },
     terminal: { btn: $('tabTerminal'), frame: $('paneTerminal'), src: './terminal/', enabled: SHOW_TERMINAL },
     docs: { btn: $('tabDocs'), frame: $('paneDocs'), src: './docs/', enabled: SHOW_DOCS }
   };
@@ -247,6 +283,7 @@
     fetch('./api/health', { cache: 'no-store' })
       .then(function (r) { if (!r.ok) throw new Error('ingress'); return r.json(); })
       .then(function () {
+        if (REMOTE) { setState('', 'Remote-Gateway (extern)'); return; }
         if (GATEWAY_INTERNAL_PORT && GATEWAY_INTERNAL_PORT !== '0') {
           return fetch('./webui/healthz', { cache: 'no-store' }).then(function (r) {
             setState(r.ok ? 'ok' : 'err', r.ok ? 'Gateway online' : 'Gateway startet/gestört');
@@ -254,7 +291,7 @@
         }
         setState('ok', 'Ingress online');
       })
-      .catch(function () { setState('err', 'Nicht erreichbar'); });
+      .catch(function () { setState('err', REMOTE ? 'Remote-Gateway' : 'Nicht erreichbar'); });
   }
   poll();
   setInterval(poll, 15000);
