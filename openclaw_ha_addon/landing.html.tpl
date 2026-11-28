@@ -9,17 +9,23 @@
     'use strict';
     var root = document.documentElement;
 
+    // Resolve ANY CSS color (hex, rgb[a], hsl[a], oklch/lab/color(), named)
+    // through a 1x1 canvas — fillStyle normalises whatever the browser accepts.
     function parseCssColor(c) {
       if (!c) return null;
-      var probe = document.createElement('span');
-      probe.style.cssText = 'position:absolute;visibility:hidden;pointer-events:none;color:' + c;
-      document.documentElement.appendChild(probe);
-      var resolved = '';
-      try { resolved = window.getComputedStyle(probe).color || ''; } catch (e) {}
-      document.documentElement.removeChild(probe);
-      var m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i.exec(resolved);
-      if (!m) return null;
-      return [Math.round(+m[1]), Math.round(+m[2]), Math.round(+m[3])];
+      try {
+        var cv = parseCssColor._cv || (parseCssColor._cv = document.createElement('canvas'));
+        var ctx = cv.getContext('2d', { willReadFrequently: true });
+        ctx.clearRect(0, 0, 1, 1);
+        ctx.fillStyle = '#000000';
+        ctx.fillStyle = c;
+        ctx.fillRect(0, 0, 1, 1);
+        var d = ctx.getImageData(0, 0, 1, 1).data;
+        return [d[0], d[1], d[2]];
+      } catch (e) {
+        var m = /rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i.exec(String(c));
+        return m ? [Math.round(+m[1]), Math.round(+m[2]), Math.round(+m[3])] : null;
+      }
     }
     function luminance(rgb) { return (0.2126 * rgb[0] + 0.7152 * rgb[1] + 0.0722 * rgb[2]) / 255; }
     function shade(rgb, percent) {
@@ -44,6 +50,10 @@
       } catch (e) { /* cross-origin: fall through */ }
       return null;
     }
+    function setTheme(v) {
+      var r = document.documentElement;
+      if (r.getAttribute('data-ha-theme') !== v) r.setAttribute('data-ha-theme', v);
+    }
     function applyTheme() {
       var parent = readParent();
       var root = document.documentElement;
@@ -62,10 +72,10 @@
         dark = isDarkColor(parent.bg);
       } else {
         dark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-        root.setAttribute('data-ha-theme', dark ? 'dark' : 'light');
+        setTheme(dark ? 'dark' : 'light');
         return;
       }
-      root.setAttribute('data-ha-theme', dark ? 'dark' : 'light');
+      setTheme(dark ? 'dark' : 'light');
     }
     function isDarkColor(c) {
       var rgb = parseCssColor(c);
@@ -78,13 +88,13 @@
     // Follow in-place theme switches in the parent (HA swaps CSS variables /
     // inline styles on the root element) and OS-level preference changes.
     try {
-      var parentDoc = window.parent && window.parent.document ? window.parent.document : null;
-      if (parentDoc) {
+      if (window.parent && window.parent !== window && window.parent.document) {
         var obs = new MutationObserver(function () { applyTheme(); });
-        obs.observe(parentDoc.documentElement, { attributes: true, attributeFilter: ['style', 'class', 'data-theme', 'data-ha-theme'] });
-        obs.observe(parentDoc.head || parentDoc.documentElement, { childList: true, subtree: true });
+        var pd = window.parent.document;
+        obs.observe(pd.documentElement, { attributes: true, attributeFilter: ['style', 'class', 'data-theme', 'data-ha-theme'] });
+        obs.observe(pd.head || pd.documentElement, { childList: true, subtree: true });
       }
-    } catch (e) { /* ignore */ }
+    } catch (e) { /* cross-origin parent: no observation */ }
     if (window.matchMedia) {
       var mq = window.matchMedia('(prefers-color-scheme: dark)');
       if (mq.addEventListener) mq.addEventListener('change', applyTheme);
