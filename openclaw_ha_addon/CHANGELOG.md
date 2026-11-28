@@ -7,13 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 For a release-facing summary, see the root [CHANGELOG.md](../CHANGELOG.md).
 
-## [0.7.13.51] - 2026-11-27
+## [0.7.13.51] - 2026-11-28
 
-The add-on clears state locks left behind by a crashed gateway before it repairs the retained state, so the state repair is no longer blocked by a lock of a process that no longer exists.
+The add-on clears state locks left behind by a crashed gateway before it repairs the retained state, so the state repair is no longer blocked by a lock of a process that no longer exists. The sidebar panel now opens a built-in tabbed launcher styled after Home Assistant, and the add-on ships the official OpenClaw artwork.
+
+### Added
+
+- The sidebar panel opens a tabbed landing page with Control UI, Terminal and Docs views instead of jumping straight into the Control UI. The page pairs with the gateway automatically on first open, shows a live gateway health indicator, and also offers the CA certificate download and an external Control UI link. The Control UI stays available directly at /webui/.
+- The landing page is styled to match the Home Assistant dark UI and uses the bundled documentation (served at /docs).
+- OpenClaw and the bundled ACP runtime moved to 2026.11.11.
+- The add-on now ships the official OpenClaw artwork as its app icon.
 
 ### Fixed
 
 - Before the state repair, the add-on now recovers a gateway state lock that an earlier crashed run left behind. The runtime keeps a lease of the gateway that owned the state; while such a lease is present the runtime refuses to enter maintenance, so on an installation that had a crashed gateway the repair could never run and the gateway stayed down. The add-on uses the runtime's own recovery command for this case and only acts when the runtime reports an owner lease that is present.
+- The app icon is now served without long-lived caching and with a version query in the landing page, so updated artwork is shown on the next page load instead of after the browser cache expires.
 
 ## [0.7.13.50] - 2026-11-27
 
